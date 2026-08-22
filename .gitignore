@@ -30,3 +30,10 @@ go.work.sum
 # Editor/IDE
 # .idea/
 # .vscode/
+
+# Local AI-assistant state and scratch artifacts. Project documentation such as
+# AGENTS.md and docs/ remains versioned deliberately.
+.agents/
+.codex/
+.ai/
+.ai-work/
