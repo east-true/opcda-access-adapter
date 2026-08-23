@@ -36,11 +36,32 @@ function Invoke-NativeProcess {
         [Parameter(Mandatory = $true)]
         [string]$FilePath,
 
-        [string[]]$ArgumentList = @()
+        [string[]]$ArgumentList = @(),
+
+        [ValidateRange(1, 120)]
+        [int]$TimeoutSeconds = 30
     )
 
-    $process = Start-Process -FilePath $FilePath -ArgumentList $ArgumentList `
-        -PassThru -Wait -NoNewWindow
+    $startInfo = [Diagnostics.ProcessStartInfo]::new()
+    $startInfo.FileName = $FilePath
+    $startInfo.UseShellExecute = $false
+    $startInfo.CreateNoWindow = $true
+    foreach ($argument in $ArgumentList) {
+        [void]$startInfo.ArgumentList.Add($argument)
+    }
+    $process = [Diagnostics.Process]::Start($startInfo)
+    if ($null -eq $process) {
+        throw "could not start $FilePath"
+    }
+    if (-not $process.WaitForExit($TimeoutSeconds * 1000)) {
+        try {
+            $process.Kill($true)
+        }
+        catch {
+            Write-Warning "could not terminate timed-out native process $($process.Id)"
+        }
+        throw "$FilePath exceeded its $TimeoutSeconds second validation timeout"
+    }
     if ($process.ExitCode -ne 0) {
         throw "$FilePath failed with exit code $($process.ExitCode)"
     }
@@ -188,14 +209,18 @@ function Stop-ServerProcesses {
 }
 
 function Register-Server {
+    Write-Host 'Registering OPC Foundation local COM test server'
     Invoke-NativeProcess -FilePath $script:ServerExecutable -ArgumentList @('/RegServer')
     $script:ServerRegistered = $true
+    Write-Host 'Registered OPC Foundation local COM test server'
 }
 
 function Unregister-Server {
+    Write-Host 'Unregistering OPC Foundation local COM test server'
     Stop-ServerProcesses
     Invoke-NativeProcess -FilePath $script:ServerExecutable -ArgumentList @('/UnregServer')
     $script:ServerRegistered = $false
+    Write-Host 'Unregistered OPC Foundation local COM test server'
 }
 
 function Read-Items {
@@ -259,8 +284,10 @@ try {
     foreach ($proxyName in $proxyNames) {
         $proxyPath = Join-Path $script:ServerRoot $proxyName
         Assert-True (Test-Path -LiteralPath $proxyPath) "missing proxy/stub: $proxyName"
+        Write-Host "Registering audited proxy/stub $proxyName"
         Invoke-NativeProcess -FilePath $regsvr32 -ArgumentList @('/s', $proxyPath)
         [void]$registeredProxies.Add($proxyPath)
+        Write-Host "Registered audited proxy/stub $proxyName"
     }
 
     Assert-True (Test-Path -LiteralPath $script:ServerExecutable) 'missing OPC Foundation test server executable'
@@ -288,7 +315,9 @@ try {
     Write-Host "Registered source=$($script:ProgID) architecture=$serverPlatform using local COM"
 
     $adapter = Start-Adapter -WriteEnabled $false -Label 'write-disabled'
+    Write-Host 'Waiting for initial local-COM connection with Write disabled'
     $status = Wait-Connected
+    Write-Host 'Initial local-COM connection established'
     Assert-True ($status.capabilities.browse -eq 'supported') 'Browse capability was not detected'
     Assert-True ([bool]$status.capabilities.read) 'Read capability was not reported'
     Assert-True ([bool]$status.capabilities.write) 'Write capability was not reported'
@@ -337,7 +366,9 @@ try {
     Start-Sleep -Milliseconds 500
 
     $adapter = Start-Adapter -WriteEnabled $true -Label 'write-enabled'
+    Write-Host 'Waiting for local-COM connection with Write explicitly enabled'
     $writeStatus = Wait-Connected
+    Write-Host 'Write-enabled local-COM connection established'
     Assert-True ([bool]$writeStatus.writeEnabled) 'explicit Write enablement was not reported'
 
     $floatRead = Read-Items @('Test/Float')
@@ -396,6 +427,7 @@ try {
     $oldReconnectCount = [uint64]$beforeRestart.runtime.reconnectCount
     Stop-ServerProcesses
     Unregister-Server
+    Write-Host 'OPC DA source intentionally unavailable for reconnect validation'
 
     $outageBody = ConvertTo-RequestJSON ([ordered]@{
         source = 'device'
@@ -421,7 +453,9 @@ try {
     Assert-True $sawDisconnected 'runtime did not expose disconnected/reconnecting state during a real outage'
 
     Register-Server
+    Write-Host 'Waiting for adapter reconnect with a newer connection generation'
     $reconnected = Wait-Connected -MinimumGeneration ($oldGeneration + 1) -TimeoutSeconds 60
+    Write-Host 'Adapter reconnected with a newer connection generation'
     Assert-True ([uint64]$reconnected.source.connectionGeneration -gt $oldGeneration) 'connection generation did not advance after reconnect'
     Assert-True ([uint64]$reconnected.runtime.reconnectCount -gt $oldReconnectCount) 'reconnect count did not advance'
     $afterReconnect = Read-Items @('Test/Int32')
@@ -431,10 +465,12 @@ try {
     $serverProcesses = @(Get-ServerProcesses)
     Assert-True ($serverProcesses.Count -eq 1) 'expected exactly one activated OPC test server process before soak'
     $serverBefore = Get-ResourceSample $serverProcesses[0]
+    Write-Host "Starting bounded Read soak iterations=$SoakIterations"
     for ($iteration = 0; $iteration -lt $SoakIterations; $iteration++) {
         $soakRead = Read-Items @('Test/Int32')
         Assert-True ([bool]$soakRead.results[0].ok) "soak Read failed at iteration $iteration"
     }
+    Write-Host "Completed bounded Read soak iterations=$SoakIterations"
     $adapterAfter = Get-ResourceSample $adapter
     $serverAfterProcesses = @(Get-ServerProcesses)
     Assert-True ($serverAfterProcesses.Count -eq 1) 'expected exactly one activated OPC test server process after soak'

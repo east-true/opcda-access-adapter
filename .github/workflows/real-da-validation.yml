@@ -40,12 +40,12 @@ jobs:
             platform: x64
     steps:
       - name: Check out adapter at the requested revision
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
         with:
           persist-credentials: false
 
       - name: Check out pinned OPC Foundation source
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
         with:
           repository: OPCF-Members/OPC-Classic-CoreComponents
           ref: efe0d1d1ea86a8a727bf26a501a261765e836766
@@ -53,7 +53,7 @@ jobs:
           persist-credentials: false
 
       - name: Set up pinned Go toolchain action
-        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16
         with:
           go-version-file: go.mod
           cache: false
