@@ -25,6 +25,12 @@ recorded in [ADR-0006](../adr/0006-real-da-validation-fixture.md).
 - bounded repeated Reads plus adapter/server handle and private-byte bounds;
 - cleanup of COM server and proxy/stub registrations.
 
+The staged server path intentionally contains no hyphen. The pinned upstream
+sample parses the first `-` or `/` in its entire command line as the start of
+`RegServer`; a hyphen in the executable path would make registration enter the
+normal server loop instead. The harness rejects such a path before execution
+and bounds every registration process to 30 seconds.
+
 The harness does not print or upload process values. Its summary contains only
 operation outcomes, VARTYPE, raw Quality, timestamp presence, HRESULTs,
 iteration count, and bounded resource deltas.

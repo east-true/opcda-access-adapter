@@ -72,7 +72,7 @@ jobs:
           ./scripts/windows/build-opcf-test-server.ps1
           -SourceRoot _test/opc-core
           -BuildRoot "${{ runner.temp }}/opc-core-build-${{ matrix.platform }}"
-          -StageRoot "${{ runner.temp }}/opc-core-stage-${{ matrix.platform }}"
+          -StageRoot "${{ runner.temp }}/opccorestage_${{ matrix.platform }}"
           -Platform "${{ matrix.platform }}"
 
       - name: Validate real local-COM Browse, Read, Write, reconnect, and soak
@@ -82,6 +82,6 @@ jobs:
         run: >-
           ./scripts/windows/validate-real-da.ps1
           -AdapterPath "_test/adapter-${{ matrix.arch }}.exe"
-          -ServerDirectory "${{ runner.temp }}/opc-core-stage-${{ matrix.platform }}"
+          -ServerDirectory "${{ runner.temp }}/opccorestage_${{ matrix.platform }}"
           -AdapterArch "${{ matrix.arch }}"
           -SoakIterations ([int]$env:SOAK_ITERATIONS)

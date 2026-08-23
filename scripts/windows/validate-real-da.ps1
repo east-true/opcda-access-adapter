@@ -253,6 +253,9 @@ New-Item -ItemType Directory -Path $script:WorkingDirectory | Out-Null
 $serverPlatform = if ($AdapterArch -eq '386') { 'x86' } else { 'x64' }
 $script:ServerProcessName = "OpcTestServer_$serverPlatform"
 $script:ServerExecutable = Join-Path $script:ServerRoot "$($script:ServerProcessName).exe"
+if ($script:ServerExecutable.Contains('-')) {
+    throw 'the upstream test server command-line parser requires a registration path without hyphens'
+}
 $script:ProgID = "OPC.$($script:ServerProcessName).1"
 $expectedCLSID = if ($AdapterArch -eq '386') {
     '{F8582CF4-88FB-11DA-A5ED-0060B0692061}'
