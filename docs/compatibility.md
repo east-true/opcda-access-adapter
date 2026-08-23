@@ -68,6 +68,44 @@ adapter private bytes `+5,730,304`, server handles `+4`, and server private
 bytes `+20,480`. VARTYPE, Quality, timestamp presence, HRESULT, Browse,
 Write, outage, and reconnect observations matched the recorded result above.
 
+### Windows HTTP and failure stability result
+
+Workflow run
+[`32634777223`](https://github.com/east-true/opcda-access-adapter/actions/runs/32634777223)
+passed the bounded stability profile on Windows Server 2025 for adapter head
+`ccc28487dfc33e1767e3f42c547a6d59a5ae4ca4` on both native x86/386 and
+x64/amd64. Each architecture passed:
+
+- normal status, exact nested Browse identity, and ordered partial device Read
+  semantics against the real DA fixture;
+- malformed/trailing JSON, unknown fields, invalid UTF-8, unpaired surrogate,
+  embedded NUL, invalid source/filter/method/path, oversized body/batch/ItemID,
+  and excessive Browse-depth rejection;
+- 48 incomplete-header connections plus an oversized header. Windows rejected
+  the oversized header by closing the connection, and the adapter immediately
+  returned a healthy status; all incomplete headers were closed after the
+  configured five-second header timeout;
+- 5,000 no-delay sequential device Reads and 3,200 mixed requests from 16
+  concurrent workers;
+- deterministic overload with all 32 HTTP request slots occupied: the next 16
+  requests returned bounded frontend `QUEUE_FULL`, and status plus ten device
+  Reads succeeded after the blocking connections were closed;
+- three consecutive real source unregister/re-register cycles. No successful
+  stale value was returned, unavailable state was observed, generations
+  advanced through 3, 4, and 5, and the known ItemID was lazy-registered after
+  every recovery;
+- the normal Browse/Read/Write scenario and a final 200-Read bounded soak.
+
+The x86 HTTP profile completed in 10.873s and observed adapter deltas of `+8`
+handles and `+5,640,192` private bytes; server deltas were `0` handles and
+`+45,056` private bytes. The x64 profile completed in 10.153s and observed
+adapter deltas of `+8` handles and `+6,463,488` private bytes; server deltas
+were `+6` handles and `+172,032` private bytes. These samples include the
+failure cycles, stability profile, and final soak and remained below the
+explicit harness ceilings. Both source and built fixture scans reported no
+Microsoft Defender threats. This antivirus result is a bounded observation,
+not proof that arbitrary code is harmless. No process value was logged.
+
 This result validates the scoped v0 path against this specific official test
 fixture only. Third-party/vendor servers and non-Good Quality observations
 remain untested; compatibility must not be inferred for them.

@@ -23,7 +23,13 @@ thread.
 | `OPCDA_HTTP_LISTEN` | `127.0.0.1:8080` | HTTP bind address |
 | `OPCDA_WRITE_ENABLED` | `false` | enable value Write explicitly |
 | `OPCDA_MAX_HTTP_BODY_BYTES` | `1048576` | request body bound |
+| `OPCDA_MAX_HTTP_CONNECTIONS` | `64` | accepted TCP connection bound |
 | `OPCDA_MAX_CONCURRENT_REQUESTS` | `32` | HTTP concurrency bound |
+| `OPCDA_MAX_HTTP_HEADER_BYTES` | `32768` | request header bound |
+| `OPCDA_HTTP_READ_HEADER_TIMEOUT` | `5s` | incomplete-header timeout |
+| `OPCDA_HTTP_READ_TIMEOUT` | `15s` | complete request read timeout |
+| `OPCDA_HTTP_WRITE_TIMEOUT` | `15s` | response write timeout |
+| `OPCDA_HTTP_IDLE_TIMEOUT` | `30s` | keep-alive idle timeout |
 | `OPCDA_REQUEST_DEADLINE` | `10s` | frontend deadline |
 | `OPCDA_RECONNECT_INITIAL` | `1s` | initial reconnect backoff |
 | `OPCDA_RECONNECT_MAX` | `30s` | maximum reconnect backoff |

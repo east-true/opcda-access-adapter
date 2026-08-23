@@ -10,7 +10,12 @@ param(
     [string]$AdapterArch,
 
     [ValidateRange(1, 100000)]
-    [int]$SoakIterations = 200
+    [int]$SoakIterations = 200,
+
+    [string]$StabilityProbePath,
+
+    [ValidateRange(0, 10)]
+    [int]$FailureCycles = 0
 )
 
 $ErrorActionPreference = 'Stop'
@@ -38,7 +43,7 @@ function Invoke-NativeProcess {
 
         [string[]]$ArgumentList = @(),
 
-        [ValidateRange(1, 120)]
+        [ValidateRange(1, 1800)]
         [int]$TimeoutSeconds = 30
     )
 
@@ -46,6 +51,8 @@ function Invoke-NativeProcess {
     $startInfo.FileName = $FilePath
     $startInfo.UseShellExecute = $false
     $startInfo.CreateNoWindow = $true
+    $startInfo.RedirectStandardOutput = $true
+    $startInfo.RedirectStandardError = $true
     foreach ($argument in $ArgumentList) {
         [void]$startInfo.ArgumentList.Add($argument)
     }
@@ -53,6 +60,8 @@ function Invoke-NativeProcess {
     if ($null -eq $process) {
         throw "could not start $FilePath"
     }
+    $standardOutput = $process.StandardOutput.ReadToEndAsync()
+    $standardError = $process.StandardError.ReadToEndAsync()
     if (-not $process.WaitForExit($TimeoutSeconds * 1000)) {
         try {
             $process.Kill($true)
@@ -61,6 +70,14 @@ function Invoke-NativeProcess {
             Write-Warning "could not terminate timed-out native process $($process.Id)"
         }
         throw "$FilePath exceeded its $TimeoutSeconds second validation timeout"
+    }
+    $outputText = $standardOutput.GetAwaiter().GetResult()
+    $errorText = $standardError.GetAwaiter().GetResult()
+    if (-not [string]::IsNullOrWhiteSpace($outputText)) {
+        Write-Host $outputText.TrimEnd()
+    }
+    if (-not [string]::IsNullOrWhiteSpace($errorText)) {
+        Write-Host $errorText.TrimEnd()
     }
     if ($process.ExitCode -ne 0) {
         throw "$FilePath failed with exit code $($process.ExitCode)"
@@ -143,6 +160,13 @@ function Start-Adapter {
     Remove-Item Env:OPCDA_SOURCE_CLSID -ErrorAction SilentlyContinue
     $env:OPCDA_HTTP_LISTEN = '127.0.0.1:18080'
     $env:OPCDA_WRITE_ENABLED = $WriteEnabled.ToString().ToLowerInvariant()
+    $env:OPCDA_MAX_HTTP_CONNECTIONS = '64'
+    $env:OPCDA_MAX_CONCURRENT_REQUESTS = '32'
+    $env:OPCDA_MAX_HTTP_HEADER_BYTES = '32768'
+    $env:OPCDA_HTTP_READ_HEADER_TIMEOUT = '5s'
+    $env:OPCDA_HTTP_READ_TIMEOUT = '15s'
+    $env:OPCDA_HTTP_WRITE_TIMEOUT = '15s'
+    $env:OPCDA_HTTP_IDLE_TIMEOUT = '30s'
     $env:OPCDA_RECONNECT_INITIAL = '200ms'
     $env:OPCDA_RECONNECT_MAX = '2s'
     $env:OPCDA_REQUEST_DEADLINE = '10s'
@@ -243,6 +267,12 @@ function Get-ResourceSample {
 }
 
 $script:AdapterExecutable = (Resolve-Path -LiteralPath $AdapterPath).Path
+$script:StabilityProbeExecutable = if ([string]::IsNullOrWhiteSpace($StabilityProbePath)) {
+    $null
+}
+else {
+    (Resolve-Path -LiteralPath $StabilityProbePath).Path
+}
 $script:ServerRoot = (Resolve-Path -LiteralPath $ServerDirectory).Path
 $script:WorkingDirectory = Join-Path ([IO.Path]::GetTempPath()) "opcda-adapter-real-da-$AdapterArch"
 if (Test-Path -LiteralPath $script:WorkingDirectory) {
@@ -465,9 +495,71 @@ try {
     Assert-True ([bool]$afterReconnect.results[0].ok) 'known ItemID did not lazy re-register after reconnect'
 
     $adapterBefore = Get-ResourceSample $adapter
+    for ($failureCycle = 1; $failureCycle -le $FailureCycles; $failureCycle++) {
+        $cycleStatus = Wait-Connected
+        $cycleGeneration = [uint64]$cycleStatus.source.connectionGeneration
+        $cycleReconnectCount = [uint64]$cycleStatus.runtime.reconnectCount
+        Unregister-Server
+        Write-Host "Stability failure cycle $failureCycle/${FailureCycles}: source unavailable"
+
+        for ($outageAttempt = 0; $outageAttempt -lt 8; $outageAttempt++) {
+            $cycleOutage = $null
+            try {
+                $cycleOutage = Send-AdapterRequest -Method POST -Path '/v1/read' -Body $outageBody
+            }
+            catch {
+                # A bounded transport failure while the source disappears is acceptable.
+            }
+            if ($null -ne $cycleOutage) {
+                $cycleReturnedSuccess = $cycleOutage.Status -eq 200 -and
+                    $null -ne $cycleOutage.JSON -and
+                    $cycleOutage.JSON.results.Count -gt 0 -and
+                    [bool]$cycleOutage.JSON.results[0].ok
+                Assert-True (-not $cycleReturnedSuccess) `
+                    "failure cycle $failureCycle returned a successful stale value during outage attempt $outageAttempt"
+            }
+            Start-Sleep -Milliseconds 50
+        }
+
+        $cycleSawDisconnected = $false
+        $cycleStateDeadline = [DateTime]::UtcNow.AddSeconds(10)
+        do {
+            $cycleState = Send-AdapterRequest -Method GET -Path '/v1/status'
+            if ($cycleState.Status -eq 200 -and $cycleState.JSON.state -in @('disconnected', 'reconnecting')) {
+                $cycleSawDisconnected = $true
+                break
+            }
+            Start-Sleep -Milliseconds 100
+        } while ([DateTime]::UtcNow -lt $cycleStateDeadline)
+        Assert-True $cycleSawDisconnected "failure cycle $failureCycle did not expose unavailable state"
+
+        Register-Server
+        $cycleRecovered = Wait-Connected -MinimumGeneration ($cycleGeneration + 1) -TimeoutSeconds 60
+        Assert-True ([uint64]$cycleRecovered.runtime.reconnectCount -gt $cycleReconnectCount) `
+            "failure cycle $failureCycle did not advance reconnect count"
+        $cycleRead = Read-Items @('Test/Int32')
+        Assert-True ([bool]$cycleRead.results[0].ok) `
+            "failure cycle $failureCycle did not lazy re-register the known ItemID"
+        Write-Host "Stability failure cycle $failureCycle/$FailureCycles recovered generation=$($cycleRecovered.source.connectionGeneration)"
+    }
+
     $serverProcesses = @(Get-ServerProcesses)
     Assert-True ($serverProcesses.Count -eq 1) 'expected exactly one activated OPC test server process before soak'
     $serverBefore = Get-ResourceSample $serverProcesses[0]
+    if ($null -ne $script:StabilityProbeExecutable) {
+        Write-Host 'Starting HTTP stability profile (normal, invalid, anomalous, rapid, concurrent, overload)'
+        Invoke-NativeProcess -FilePath $script:StabilityProbeExecutable -ArgumentList @(
+            '-base-url', $script:BaseURL,
+            '-rapid-requests', '5000',
+            '-workers', '16',
+            '-requests-per-worker', '200',
+            '-overload-requests', '48',
+            '-request-slots', '32',
+            '-slow-connections', '48',
+            '-header-timeout', '5s'
+        ) -TimeoutSeconds 1200
+        Write-Host 'Completed HTTP stability profile'
+    }
     Write-Host "Starting bounded Read soak iterations=$SoakIterations"
     for ($iteration = 0; $iteration -lt $SoakIterations; $iteration++) {
         $soakRead = Read-Items @('Test/Int32')
@@ -488,7 +580,8 @@ try {
     Assert-True ($serverAfter.Handles -lt 2048 -and $serverHandleDelta -lt 128) 'test server handle growth exceeded the validation bound'
     Assert-True ($serverAfter.PrivateBytes -lt 536870912 -and $serverPrivateDelta -lt 67108864) 'test server private-byte growth exceeded the validation bound'
 
-    Write-Host "REAL_DA_VALIDATION_PASS arch=$AdapterArch server=$serverPlatform browse=root+nested read=partial write=disabled+typed+denied reconnect=true soakIterations=$SoakIterations"
+    $stabilityEnabled = $null -ne $script:StabilityProbeExecutable
+    Write-Host "REAL_DA_VALIDATION_PASS arch=$AdapterArch server=$serverPlatform browse=root+nested read=partial write=disabled+typed+denied reconnect=true failureCycles=$FailureCycles stability=$stabilityEnabled soakIterations=$SoakIterations"
     Write-Host "READ_METADATA actualType=$($known.dataType.name) canonicalType=$($known.canonicalDataType.name) qualityRaw=$($known.quality) timestampPresent=$($known.timestampPresent) successHRESULT=$($known.hresult.hex) invalidHRESULT=$($unknown.hresult.hex)"
     Write-Host "RESOURCE_DELTAS adapterHandles=$adapterHandleDelta adapterPrivateBytes=$adapterPrivateDelta serverHandles=$serverHandleDelta serverPrivateBytes=$serverPrivateDelta"
 }
