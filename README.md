@@ -9,9 +9,10 @@ process data.
 The project is in v0 implementation. The dedicated Windows COM foundation,
 internal DA group, lazy AddItems cache, device `IOPCSyncIO::Read`, and HTTP
 `POST /v1/read` are implemented. Optional DA 2.x Browse and
-`POST /v1/browse` are also implemented without an inferred hierarchy. Write
-and reconnect closure remain. It is not production-ready and has not yet been
-validated against a real OPC DA server.
+`POST /v1/browse` are also implemented without an inferred hierarchy. Strict
+typed value `IOPCSyncIO::Write` and `POST /v1/write` are implemented with Write
+disabled by default and no retry/replay. Reconnect closure remains. It is not
+production-ready and has not yet been validated against a real OPC DA server.
 
 ## Scope
 

@@ -15,6 +15,7 @@ type Config struct {
 	MaxConcurrent    int
 	RequestDeadline  time.Duration
 	MaxReadItems     int
+	MaxWriteItems    int
 	MaxBrowseEntries int
 	MaxBrowseDepth   int
 	MaxItemIDBytes   int
@@ -30,6 +31,9 @@ type Server struct {
 func New(runtime opcda.Runtime, config Config) *Server {
 	if config.MaxReadItems <= 0 {
 		config.MaxReadItems = opcda.DefaultLimits().MaxReadItems
+	}
+	if config.MaxWriteItems <= 0 {
+		config.MaxWriteItems = opcda.DefaultLimits().MaxWriteItems
 	}
 	if config.MaxItemIDBytes <= 0 {
 		config.MaxItemIDBytes = opcda.DefaultLimits().MaxItemIDBytes
@@ -70,6 +74,8 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.handleRead(ctx, w, r)
 	case r.Method == http.MethodPost && r.URL.Path == "/v1/browse":
 		s.handleBrowse(ctx, w, r)
+	case r.Method == http.MethodPost && r.URL.Path == "/v1/write":
+		s.handleWrite(ctx, w, r)
 	default:
 		writeError(w, http.StatusNotFound, "NOT_FOUND", "endpoint not found")
 	}
