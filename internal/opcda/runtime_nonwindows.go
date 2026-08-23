@@ -7,7 +7,8 @@ import "context"
 // New starts a non-Windows status-only runtime for development and HTTP
 // contract tests. It never simulates a DA server or returns process data.
 func New(config Config) (Runtime, error) {
-	if err := config.Limits.validate(); err != nil {
+	config = config.withDefaults()
+	if err := config.validate(); err != nil {
 		return nil, err
 	}
 	return &unsupportedRuntime{config: config}, nil

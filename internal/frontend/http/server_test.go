@@ -18,6 +18,8 @@ func (statusRuntime) Status(context.Context) opcda.RuntimeStatus {
 		State:                opcda.RuntimeStateConnected,
 		Source:               opcda.SourceConfig{ProgID: "Example.Server.1"},
 		ConnectionGeneration: 7,
+		ReconnectCount:       3,
+		QueueDepth:           2,
 		Capabilities:         opcda.Capabilities{Browse: "supported", Read: true, Write: true},
 	}
 }
@@ -46,7 +48,7 @@ func TestStatusIncludesRuntimeAndListenerState(t *testing.T) {
 	if got, want := response.Header().Get("Content-Type"), "application/json"; got != want {
 		t.Fatalf("content type = %q, want %q", got, want)
 	}
-	if body := response.Body.String(); body == "" || !containsAll(body, []string{"connected", "Example.Server.1", "connectionGeneration", "listening"}) {
+	if body := response.Body.String(); body == "" || !containsAll(body, []string{"connected", "Example.Server.1", "connectionGeneration", "reconnectCount", "queueDepth", "listening"}) {
 		t.Fatalf("unexpected body: %s", body)
 	}
 	var decoded struct {

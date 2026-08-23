@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"runtime"
 	"syscall"
+	"time"
 	"unsafe"
 )
 
@@ -21,6 +22,7 @@ const (
 	mwmoInputAvailable      = 0x0004
 	pmRemove                = 0x0001
 	waitObject0             = 0
+	waitTimeout             = 258
 	waitFailed              = 0xFFFFFFFF
 )
 
@@ -253,12 +255,26 @@ type windowMessage struct {
 	Private uint32
 }
 
-func waitForDAWork(handle windowsHandle) error {
+func waitForDAWork(handle windowsHandle, timeout time.Duration) error {
+	waitMilliseconds := uint32(infiniteWait)
+	if timeout >= 0 {
+		milliseconds := timeout / time.Millisecond
+		if timeout%time.Millisecond != 0 {
+			milliseconds++
+		}
+		if milliseconds < 1 {
+			milliseconds = 1
+		}
+		if milliseconds >= time.Duration(infiniteWait) {
+			milliseconds = time.Duration(infiniteWait - 1)
+		}
+		waitMilliseconds = uint32(milliseconds)
+	}
 	waitHandle := uintptr(handle)
 	result, _, callErr := procMsgWaitForMultipleObjectsEx.Call(
 		1,
 		uintptr(unsafe.Pointer(&waitHandle)),
-		infiniteWait,
+		uintptr(waitMilliseconds),
 		qsAllInput,
 		mwmoInputAvailable,
 	)
@@ -267,6 +283,8 @@ func waitForDAWork(handle windowsHandle) error {
 		return handle.reset()
 	case waitObject0 + 1:
 		pumpWindowMessages()
+		return nil
+	case waitTimeout:
 		return nil
 	case waitFailed:
 		return fmt.Errorf("MsgWaitForMultipleObjectsEx: %w", callErr)

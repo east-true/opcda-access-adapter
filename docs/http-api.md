@@ -11,7 +11,38 @@ GET /v1/status
 ```
 
 Status reports runtime, source, connection generation, capabilities, Write
-enablement, and listener state. It never contains process values.
+enablement, listener state, queue depth, reconnect count, and any degraded
+reason. It never contains process values. In `degraded` state the reason tells
+the operator to restart the process; the adapter does not terminate a hung COM
+thread.
+
+## Configuration
+
+| Environment variable | Default | Purpose |
+|---|---:|---|
+| `OPCDA_HTTP_LISTEN` | `127.0.0.1:8080` | HTTP bind address |
+| `OPCDA_WRITE_ENABLED` | `false` | enable value Write explicitly |
+| `OPCDA_MAX_HTTP_BODY_BYTES` | `1048576` | request body bound |
+| `OPCDA_MAX_CONCURRENT_REQUESTS` | `32` | HTTP concurrency bound |
+| `OPCDA_REQUEST_DEADLINE` | `10s` | frontend deadline |
+| `OPCDA_RECONNECT_INITIAL` | `1s` | initial reconnect backoff |
+| `OPCDA_RECONNECT_MAX` | `30s` | maximum reconnect backoff |
+| `OPCDA_COM_CALL_WATCHDOG` | `30s` | threshold before fail-fast degraded state |
+| `OPCDA_COMMAND_QUEUE` | `64` | serialized DA command queue bound |
+| `OPCDA_MAX_READ_ITEMS` | `100` | Read batch bound |
+| `OPCDA_MAX_WRITE_ITEMS` | `100` | Write batch bound |
+| `OPCDA_MAX_BROWSE_ENTRIES` | `1000` | Browse result hard limit |
+| `OPCDA_MAX_BROWSE_DEPTH` | `64` | Browse navigation depth bound |
+| `OPCDA_MAX_REGISTERED_ITEMS` | `1024` | lazy item-registration cache bound |
+| `OPCDA_MAX_ITEM_ID_BYTES` | `1024` | exact ItemID UTF-8 byte bound |
+| `OPCDA_MAX_BSTR_CODE_UNITS` | `65536` | source/request BSTR UTF-16 bound |
+
+The runtime also applies the hard per-batch, Browse, ItemID, BSTR, command
+queue, and registration limits recorded in ADR-0001. No recent operation or
+process-value history is retained in memory, so there is no unbounded
+diagnostic ring. Logs go directly to the configured process output and never
+include process values by default; deployment-level collection and rotation
+remain the operator's responsibility.
 
 ## Device Read
 

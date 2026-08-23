@@ -28,10 +28,18 @@ Defaults are intentionally small and can be changed by explicit configuration:
 | registered items | 1,024 |
 | frontend request deadline | 10 seconds |
 | reconnect initial / maximum delay | 1 second / 30 seconds |
+| COM call watchdog | 30 seconds |
 
 The listener is loopback by default and Write remains disabled by default.
 Queue saturation fails the request; it never drops or persists operations.
 In-flight COM calls are never forcibly cancelled or replayed.
+
+Explicit configuration remains subject to startup hard ceilings to prevent an
+invalid environment from causing an oversized allocation: 64 MiB HTTP body,
+1,024 concurrent HTTP requests, 4,096 DA commands, 10,000 Read/Write items,
+100,000 Browse entries, 256 Browse segments, 1,000,000 registered items,
+65,536 ItemID bytes, 1,048,576 BSTR code units, and 24 hours for deadlines,
+reconnect maximum, and the COM watchdog. Values above a ceiling fail startup.
 
 ## Consequences
 
