@@ -2,63 +2,63 @@
 
 ## Current phase
 
-Phase 0 — Repository bootstrap and HTTP lifecycle (ready for PR from
-`chore/bootstrap`).
+Phase 1 — COM Foundation (implemented locally on `feat/com-foundation`; ready
+for PR validation).
 
 ## Current main SHA
 
-`195949b` — design document upload. The authoritative copy is being moved to
-`docs/design.md` in the bootstrap PR.
+`d1f88c3` — merged Phase 0 bootstrap (PR #1). This Phase 1 branch is based on
+that commit.
 
 ## Completed
 
-- Design baseline reviewed in full.
-- Existing Apache-2.0 `LICENSE` confirmed; no license decision is needed.
-- Official Microsoft COM/VARIANT guidance and OPC DA 2.05a interface material
-  identified for use during the Windows implementation.
+- Phase 0 repository bootstrap, OSS documentation, bounded loopback HTTP
+  lifecycle, `GET /v1/status`, CI, and Windows cross-builds merged in PR #1.
+- Dedicated DA goroutine locked to one OS thread.
+- STA `CoInitializeEx`/`CoUninitialize` pairing and message-aware wait loop.
+- ProgID/CLSID resolution and local-only `IOPCServer` activation.
+- Owning-thread `IUnknown::Release`, stop lifecycle, truthful status, and
+  connection generation `1` only after successful activation.
+- Repeated Windows start/stop test and official `IOPCServer` IID assertion.
+- Windows-hosted 386/amd64 test jobs added to CI.
 
 ## In progress
 
-- Go module and DA-native, frontend-independent contract (including HRESULT
-  and VARTYPE preservation primitives).
-- Bounded loopback HTTP lifecycle and `GET /v1/status`; it exposes no fake DA
-  data and reports an unavailable/non-configured runtime truthfully.
-- Root continuation instructions, OSS/security/contribution documentation,
-  compatibility procedure, ADR-0001, and CI.
-- Local assistant-state/scratch patterns are ignored; required repository
-  documents remain versioned.
+- Phase 1 PR, GitHub CI, and merge.
 
 ## Validation results
 
-- `gofmt` completed with no remaining formatting changes.
-- `go test ./...` passed on Linux.
-- `go vet ./...` passed on Linux.
-- `GOOS=windows GOARCH=386 go build ./cmd/adapter` passed (cross-build only).
-- `GOOS=windows GOARCH=amd64 go build ./cmd/adapter` passed (cross-build only).
-- `git diff --check` passed.
-- GitHub CI has not run for this branch yet.
+- PR #1 CI: Linux quality and Windows 386/amd64 cross-build checks passed.
+- Phase 1 `gofmt` completed with no remaining formatting changes.
+- Phase 1 `go test ./...` passed on Linux.
+- Phase 1 `go vet ./...` passed on Linux.
+- Phase 1 Windows 386 and amd64 test binaries cross-compiled successfully.
+- Phase 1 `git diff --check` passed.
+- Windows-hosted COM lifecycle execution is pending Phase 1 CI.
 
 ## Known issues
 
-- No real OPC DA server is available in the current environment.
-- No Windows runner is available locally; Windows artifacts can be cross-built
-  but COM behavior cannot be executed here.
+- Phase 1 intentionally establishes only the base `IOPCServer`; group and
+  operation interfaces arrive in Phase 2.
+- Activation HRESULT is reflected as disconnected state but is not yet
+  included in bounded recent diagnostics.
+- No real OPC DA server or local Windows environment is available here.
 
 ## External blockers
 
 - **BLOCKED:** Real-DA interoperability, reconnect/server-restart validation,
-  x86/x64 runtime validation, and soak testing require a local Windows machine
-  with an installed, licensed/authorized OPC DA server. No simulator will be
-  installed without explicit approval/EULA review.
+  x86/x64 runtime validation with an installed DA server, and soak testing
+  require an authorized local Windows OPC DA environment. No simulator will be
+  installed without explicit approval and EULA review.
 
 ## Next exact tasks
 
-1. Finish and merge Phase 0 after local tests, vet, cross-build, and CI.
-2. Implement the Windows dedicated COM runtime and activation on
-   `feat/com-foundation`.
-3. Implement AddGroup/AddItems/device Read with VARIANT ownership on
-   `feat/da-read`.
+1. Push Phase 1, open its PR, confirm all Linux/Windows checks, and merge.
+2. Implement `IOPCServer::AddGroup`, `IOPCItemMgt::AddItems`, bounded
+   generation-aware registration, and device `IOPCSyncIO::Read` in Phase 2.
+3. Implement lossless HTTP Read encoding and item-level partial failures.
 
 ## Decisions
 
 - [ADR-0001: v0 bounds and runtime defaults](adr/0001-v0-bounds-and-runtime-defaults.md)
+- [ADR-0002: STA runtime and local COM activation](adr/0002-sta-runtime-and-local-com-activation.md)
