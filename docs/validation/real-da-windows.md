@@ -81,3 +81,8 @@ backpressure/recovery, three-cycle source failure, and 200-Read soak profiles
 for both architectures at adapter head
 `ccc28487dfc33e1767e3f42c547a6d59a5ae4ca4`. Exact counts and bounded
 resource deltas are recorded in the compatibility matrix.
+
+Final-main run
+[`32635274825`](https://github.com/east-true/opcda-access-adapter/actions/runs/32635274825)
+repeated and passed the same stability profile for both architectures at merge
+SHA `f55b4bb8e8c092fa2a21f4f35089a14703c81a8d`.

@@ -106,6 +106,18 @@ explicit harness ceilings. Both source and built fixture scans reported no
 Microsoft Defender threats. This antivirus result is a bounded observation,
 not proof that arbitrary code is harmless. No process value was logged.
 
+Final-main workflow run
+[`32635274825`](https://github.com/east-true/opcda-access-adapter/actions/runs/32635274825)
+repeated the entire profile at merge SHA
+`f55b4bb8e8c092fa2a21f4f35089a14703c81a8d`. The x86 profile completed in
+9.322s with adapter deltas of `+16` handles and `+6,725,632` private bytes;
+server deltas were `0` handles and `+32,768` private bytes. The x64 profile
+completed in 10.26s with adapter deltas of `+16` handles and `+5,763,072`
+private bytes; server deltas were `+4` handles and `+143,360` private bytes.
+Both architectures passed all semantic, abnormal-input, timeout, rapid,
+concurrent, backpressure/recovery, source-failure, and soak assertions, and
+both source/output Defender scans found no threats.
+
 This result validates the scoped v0 path against this specific official test
 fixture only. Third-party/vendor servers and non-Good Quality observations
 remain untested; compatibility must not be inferred for them.
