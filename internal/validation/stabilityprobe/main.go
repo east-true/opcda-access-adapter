@@ -426,19 +426,11 @@ func (p probe) overload(count, requestSlots int) error {
 		items[index] = `{"itemId":"Test/Int32"}`
 	}
 	body := []byte(`{"source":"device","items":[` + strings.Join(items, ",") + `]}`)
-	// Earlier concurrent steps intentionally leave keep-alive connections in
-	// the transport pool. Those idle connections still consume the adapter's
-	// independent TCP-connection permits and can prevent all raw blockers from
-	// reaching ServeHTTP. Close them before asserting exact handler saturation.
-	p.client.CloseIdleConnections()
-	blockers, err := openIncompleteBodies(p.baseURL.Host, requestSlots)
+	blockers, err := p.saturateRequestSlots(p.baseURL.Host, requestSlots, 5*time.Second)
 	if err != nil {
-		return err
-	}
-	defer closeConnections(blockers)
-	if err := p.waitForQueueFull(5 * time.Second); err != nil {
 		return fmt.Errorf("saturate request slots: %w", err)
 	}
+	defer closeConnections(blockers)
 
 	requestCount := count - requestSlots
 	start := make(chan struct{})
@@ -489,38 +481,142 @@ func (p probe) overload(count, requestSlots int) error {
 	return p.rapid(10)
 }
 
-func openIncompleteBodies(address string, count int) ([]net.Conn, error) {
-	connections := make([]net.Conn, 0, count)
-	for index := 0; index < count; index++ {
-		connection, err := net.DialTimeout("tcp", address, 2*time.Second)
-		if err != nil {
-			closeConnections(connections)
-			return nil, fmt.Errorf("open incomplete-body connection %d: %w", index, err)
-		}
-		request := "POST /v1/read HTTP/1.1\r\nHost: " + address + "\r\nContent-Type: application/json\r\nContent-Length: 100\r\nConnection: close\r\n\r\n{"
-		if _, err := io.WriteString(connection, request); err != nil {
-			_ = connection.Close()
-			closeConnections(connections)
-			return nil, fmt.Errorf("write incomplete-body connection %d: %w", index, err)
-		}
-		connections = append(connections, connection)
-	}
-	return connections, nil
-}
-
-func (p probe) waitForQueueFull(timeout time.Duration) error {
+// saturateRequestSlots holds incomplete request bodies until the adapter
+// proves its handler semaphore is full. A raw connection can be accepted by
+// the OS and then rejected by the adapter's independent connection bound, so
+// merely opening requestSlots sockets is not sufficient evidence. Candidates
+// that close or answer are replaced under both an attempt and time bound.
+func (p probe) saturateRequestSlots(address string, requestSlots int, timeout time.Duration) ([]net.Conn, error) {
+	p.client.CloseIdleConnections()
 	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
-		status, body, err := p.request(http.MethodGet, "/v1/status", nil, nil)
-		if err == nil && status == http.StatusServiceUnavailable {
-			var decoded errorResponse
-			if json.Unmarshal(body, &decoded) == nil && decoded.Error.Layer == "frontend" && decoded.Error.Code == "QUEUE_FULL" {
-				return nil
+	maximumAttempts := requestSlots * 32
+	blockers := make([]net.Conn, 0, requestSlots)
+	attempts := 0
+	rejected := 0
+	var lastObservation error
+
+	for attempts < maximumAttempts && time.Now().Before(deadline) {
+		if len(blockers) < requestSlots {
+			connection, err := openIncompleteBody(address)
+			attempts++
+			if err != nil {
+				lastObservation = err
+				time.Sleep(10 * time.Millisecond)
+				continue
+			}
+			alive, responded, err := probeIncompleteBody(connection, 25*time.Millisecond)
+			if err != nil {
+				_ = connection.Close()
+				closeConnections(blockers)
+				return nil, err
+			}
+			if alive {
+				blockers = append(blockers, connection)
+				continue
+			}
+			_ = connection.Close()
+			if responded {
+				full, observationErr := p.observeQueueFull()
+				if full {
+					return blockers, nil
+				}
+				lastObservation = observationErr
+			} else {
+				rejected++
+			}
+			time.Sleep(10 * time.Millisecond)
+			continue
+		}
+
+		full, observationErr := p.observeQueueFull()
+		if full {
+			return blockers, nil
+		}
+		lastObservation = observationErr
+		p.client.CloseIdleConnections()
+
+		live := blockers[:0]
+		for _, connection := range blockers {
+			alive, _, err := probeIncompleteBody(connection, 2*time.Millisecond)
+			if err != nil {
+				closeConnections(blockers)
+				return nil, err
+			}
+			if alive {
+				live = append(live, connection)
+			} else {
+				_ = connection.Close()
+				rejected++
 			}
 		}
-		time.Sleep(20 * time.Millisecond)
+		blockers = live
+		time.Sleep(10 * time.Millisecond)
 	}
-	return errors.New("QUEUE_FULL was not observed before timeout")
+
+	closeConnections(blockers)
+	return nil, fmt.Errorf("QUEUE_FULL was not observed: blockers=%d attempts=%d rejected=%d lastObservation=%v",
+		len(blockers), attempts, rejected, lastObservation)
+}
+
+func openIncompleteBody(address string) (net.Conn, error) {
+	connection, err := net.DialTimeout("tcp", address, 2*time.Second)
+	if err != nil {
+		return nil, fmt.Errorf("open incomplete-body connection: %w", err)
+	}
+	request := "POST /v1/read HTTP/1.1\r\nHost: " + address + "\r\nContent-Type: application/json\r\nContent-Length: 100\r\nConnection: close\r\n\r\n{"
+	if _, err := io.WriteString(connection, request); err != nil {
+		_ = connection.Close()
+		return nil, fmt.Errorf("write incomplete-body connection: %w", err)
+	}
+	return connection, nil
+}
+
+// probeIncompleteBody distinguishes a live request that is blocked reading
+// its declared body from a connection that the bounded listener rejected. Any
+// early response is reported separately so its QUEUE_FULL body can be checked
+// through the normal JSON client.
+func probeIncompleteBody(connection net.Conn, timeout time.Duration) (alive, responded bool, result error) {
+	if err := connection.SetReadDeadline(time.Now().Add(timeout)); err != nil {
+		return false, false, err
+	}
+	var firstByte [1]byte
+	read, err := connection.Read(firstByte[:])
+	clearErr := connection.SetReadDeadline(time.Time{})
+	if read > 0 {
+		if clearErr != nil {
+			return false, false, clearErr
+		}
+		return false, true, nil
+	}
+	var networkError net.Error
+	if errors.As(err, &networkError) && networkError.Timeout() {
+		if clearErr != nil {
+			return false, false, clearErr
+		}
+		return true, false, nil
+	}
+	// A bounded listener may reset or close the connection before the client
+	// observes a response. Clearing a deadline can fail on that already-closed
+	// socket; both outcomes mean this candidate is not a live blocker.
+	return false, false, nil
+}
+
+func (p probe) observeQueueFull() (bool, error) {
+	status, body, err := p.request(http.MethodGet, "/v1/status", nil, nil)
+	if err != nil {
+		return false, err
+	}
+	if status != http.StatusServiceUnavailable {
+		return false, nil
+	}
+	var decoded errorResponse
+	if err := json.Unmarshal(body, &decoded); err != nil {
+		return false, err
+	}
+	if decoded.Error.Layer != "frontend" || decoded.Error.Code != "QUEUE_FULL" {
+		return false, fmt.Errorf("unexpected HTTP 503 error %s/%s", decoded.Error.Layer, decoded.Error.Code)
+	}
+	return true, nil
 }
 
 func (p probe) waitConnectedStatus(timeout time.Duration) error {
