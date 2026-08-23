@@ -10,9 +10,10 @@ a claim of broad vendor compatibility or production readiness.
 
 ## Current main SHA
 
-`9e8928d729300a67197da35e7bfee6623a861495` — merged v0 validation
-evidence, long-soak support, and pinned CI toolchain (PR #9). This final status
-record is based on that commit.
+`7319d204e318fc749ea7929372ce2ef8521e3101` — current main before the
+Windows stability PR. The stability evidence below is from PR #11 head
+`ccc28487dfc33e1767e3f42c547a6d59a5ae4ca4` and is not described as final-main
+evidence until that green PR is merged.
 
 ## Completed
 
@@ -38,11 +39,14 @@ record is based on that commit.
 - The immutable compatibility evidence, 100,000-Read bounded soak, and pinned
   normal CI actions/toolchain were merged in PR #9 after all seven checks
   passed.
+- Final v0 status documentation was reconciled through PR #10.
 
 ## In progress
 
-- None. The scoped v0 implementation and official-fixture validation are
-  complete.
+- PR #11 adds bounded HTTP connection/header/time limits and the Windows
+  normal, exceptional, anomalous, rapid, concurrent, overload, and repeated
+  failure stability profile. All seven required checks pass at its current
+  head; merge and final-main confirmation remain.
 
 ## Validation results
 
@@ -87,6 +91,15 @@ record is based on that commit.
   the same SHA. Adapter growth was 386 `+16` handles/`+5,287,936` private
   bytes and amd64 `+18` handles/`+5,730,304` private bytes; source and built
   outputs passed Defender scans and all resource ceilings held.
+- PR #11 run
+  [`32634777223`](https://github.com/east-true/opcda-access-adapter/actions/runs/32634777223)
+  passed on both Windows x86/386 and x64/amd64: strict anomalous-input checks,
+  48 incomplete-header connections, 5,000 rapid Reads, 3,200 mixed requests
+  from 16 workers, deterministic saturation of 32 request slots with 16
+  `QUEUE_FULL` results and recovery, three real source failure/recovery cycles,
+  and a final 200-Read soak. Adapter resource deltas were x86 `+8` handles and
+  `+5,640,192` private bytes, and x64 `+8` handles and `+6,463,488` private
+  bytes; all explicit ceilings held.
 
 ## Final v0 audit
 
@@ -129,7 +142,8 @@ record is based on that commit.
 
 ## Next exact tasks
 
-1. No implementation task remains for the scoped v0.
+1. Merge green PR #11, then repeat normal and real-DA workflows on final main
+   and update this record with the merge SHA.
 2. Before a public `v0.0.0` release, confirm release packaging and security
    reporting; continue to treat the existing Apache-2.0 license as authoritative.
 3. Add third-party compatibility rows only from authorized, executed tests;

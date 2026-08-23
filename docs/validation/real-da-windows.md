@@ -23,6 +23,14 @@ recorded in [ADR-0006](../adr/0006-real-da-validation-fixture.md).
   unavailable behavior, reconnect count, newer connection generation, and
   lazy re-registration;
 - bounded repeated Reads plus adapter/server handle and private-byte bounds;
+- strict HTTP request validation for malformed, invalid UTF-8, oversized, and
+  excessive-depth inputs;
+- incomplete and oversized header handling, configured header timeout, and
+  listener recovery;
+- 5,000 no-delay Reads, 3,200 mixed requests from 16 concurrent workers, and
+  deterministic `QUEUE_FULL` backpressure with 32 occupied request slots;
+- three consecutive source outage/recovery cycles with generation and stale
+  value checks;
 - cleanup of COM server and proxy/stub registrations.
 
 The staged server path intentionally contains no hyphen. The pinned upstream
@@ -65,3 +73,11 @@ Final main run
 [`32632091320`](https://github.com/east-true/opcda-access-adapter/actions/runs/32632091320)
 passed the same 100,000-Read scenario for both architectures at main SHA
 `9e8928d729300a67197da35e7bfee6623a861495`.
+
+Windows stability run
+[`32634777223`](https://github.com/east-true/opcda-access-adapter/actions/runs/32634777223)
+passed the normal, invalid-input, slow-header, rapid, concurrent, deterministic
+backpressure/recovery, three-cycle source failure, and 200-Read soak profiles
+for both architectures at adapter head
+`ccc28487dfc33e1767e3f42c547a6d59a5ae4ca4`. Exact counts and bounded
+resource deltas are recorded in the compatibility matrix.
