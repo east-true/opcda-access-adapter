@@ -2,7 +2,15 @@
 
 ## Execution status
 
-**IN PROGRESS — no local-VM PASS result is recorded yet.**
+**PAUSED — the dedicated local VM was removed before scenario execution; no
+local-VM PASS result is recorded.**
+
+The VM was stopped and deleted on 2026-08-24 because this host did not have
+enough spare capacity to run it alongside another project's VM. Its libvirt
+domain, dedicated network, five dedicated volumes, temporary Windows images,
+and staging services were removed. Preparation observations below are retained
+for provenance only; the environment must be recreated before this gate can
+resume.
 
 GitHub-hosted runner results do not satisfy this procedure. Evidence is valid
 only when produced by the dedicated local KVM/libvirt VM named
@@ -30,18 +38,23 @@ Observed locally on 2026-08-24 (Asia/Seoul):
   `26100`; WinRM Basic and `AllowUnencrypted` are false and its firewall
   remote address is only `192.168.231.1`
 - protected `main` baseline: `ba256bda31c5356da8f4c70c63890994cb005771`
-- locally reproduced dirty validation executables:
+- validation source commit: `da6d4f8f54a80ee9e03eb695393711a3bd6b50cd`
+- locally reproduced validation executables (`go1.26.0`, `-trimpath`, clean
+  VCS metadata):
   - windows/386:
-    `b42fa2cf2d13e5cdf6e8e7ea5f412c32d000d147e7091195261bc5b6f566cbc4`
+    `bba343d81443decc2d00eecb0d880d86ee6ed94fbb783b6dd9129ae19124ca1d`
   - windows/amd64:
-    `7316f3e0249566839eb63f64f9e2fa296528b330069844ebae38e44d9f3c116f`
+    `9a12a96af3335267178d4d1fc59c1adbade6fdad602f5e78138b386bd9ab7f8f`
 - pinned fixture source: `OPCF-Members/OPC-Classic-CoreComponents` commit
   `efe0d1d1ea86a8a727bf26a501a261765e836766`; archive SHA-256
   `ac886fa4be0db4f880aac4981dabf84cb14a45eff7b11ee1bcac5fd9a1b4728f`
 
-Windows security updates, current Defender signatures, full Defender scan,
-source build, test execution, reboot, and cleanup are still in progress. None
-of the preparation observations above is recorded as scenario PASS.
+Windows security updates reached build `26100.33296`, Defender platform
+`4.18.26070.9`, and signature `1.457.306.0`. The VM was removed while the
+signed Build Tools installer was running, before the source build, full
+Defender scan, native test execution, destructive scenarios, and post-test
+reboot could complete. None of the preparation observations above is recorded
+as a scenario PASS.
 
 ## Isolation boundary
 

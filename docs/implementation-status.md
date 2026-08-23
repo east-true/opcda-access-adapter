@@ -51,13 +51,12 @@ before release promotion.
 
 ## In progress
 
-- Local KVM/libvirt validation is in progress on the dedicated
-  `opcda-destructive-review` Windows VM. GitHub-hosted runner evidence is not
-  accepted for this gate. The required normal, abnormal-input, concurrent,
-  source/adapter failure, local COM permission, standard-user, reboot, Defender,
-  and cleanup results are tracked in
-  `docs/validation/local-vm-destructive.md`; no local PASS is recorded until
-  those executions finish.
+- The local KVM/libvirt destructive-validation gate is paused. The dedicated
+  `opcda-destructive-review` VM and all of its dedicated host resources were
+  removed on 2026-08-24 because this host could not run it alongside another
+  project's VM. GitHub-hosted runner evidence is not accepted as a substitute.
+  No local PASS is recorded; exact preparation and interruption evidence is in
+  `docs/validation/local-vm-destructive.md`.
 
 ## Validation results
 
@@ -157,6 +156,10 @@ before release promotion.
 ## External blockers
 
 - None for the scoped v0 completion and official-fixture validation.
+- The additional local destructive-validation gate requires a Windows host or
+  VM capacity that does not contend with the other project currently using
+  this machine. The prior dedicated VM was intentionally deleted before the
+  scenario matrix ran.
 - Compatibility with third-party/vendor DA servers remains untested and must
   not be inferred from the OPC Foundation fixture; validating one requires an
   authorized Windows installation and safe test ItemIDs.
@@ -164,9 +167,10 @@ before release promotion.
 
 ## Next exact tasks
 
-1. Complete the isolated local Windows destructive review, including local
-   COM launch/access/RunAs permission failures, without using a GitHub runner
-   as evidence.
+1. Recreate the isolated Windows environment only when non-contending VM
+   capacity is available, then complete the local destructive review including
+   local COM launch/access/RunAs permission failures. Do not use a GitHub runner
+   as evidence for this gate.
 2. Record exact VM, Defender, x86/x64, load, resource, reboot, DCOM event, and
    cleanup results before proposing a public release.
 3. Continue to treat the existing Apache-2.0 license as authoritative.
