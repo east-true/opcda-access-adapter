@@ -60,3 +60,8 @@ Long-running run
 passed 100,000 device Reads per architecture at adapter head
 `995c387cb977a37ab80ecd0fc5deb2f4a98e191d`. Its bounded resource deltas are
 also recorded in the compatibility matrix.
+
+Final main run
+[`32632091320`](https://github.com/east-true/opcda-access-adapter/actions/runs/32632091320)
+passed the same 100,000-Read scenario for both architectures at main SHA
+`9e8928d729300a67197da35e7bfee6623a861495`.
