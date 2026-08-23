@@ -3,6 +3,7 @@ package opcda
 import (
 	"context"
 	"fmt"
+	"time"
 )
 
 // Runtime is a deliberately DA-specific frontend boundary. It is not a
@@ -17,9 +18,54 @@ type Runtime interface {
 }
 
 type Config struct {
-	Source       SourceConfig
-	WriteEnabled bool
-	Limits       Limits
+	Source           SourceConfig
+	WriteEnabled     bool
+	Limits           Limits
+	ReconnectInitial time.Duration
+	ReconnectMax     time.Duration
+	COMCallWatchdog  time.Duration
+}
+
+const (
+	defaultReconnectInitial = time.Second
+	defaultReconnectMax     = 30 * time.Second
+	defaultCOMCallWatchdog  = 30 * time.Second
+	maximumRuntimeDuration  = 24 * time.Hour
+)
+
+func (config Config) withDefaults() Config {
+	if config.ReconnectInitial == 0 {
+		config.ReconnectInitial = defaultReconnectInitial
+	}
+	if config.ReconnectMax == 0 {
+		config.ReconnectMax = defaultReconnectMax
+	}
+	if config.COMCallWatchdog == 0 {
+		config.COMCallWatchdog = defaultCOMCallWatchdog
+	}
+	return config
+}
+
+func (config Config) validate() error {
+	if err := config.Limits.validate(); err != nil {
+		return err
+	}
+	if config.ReconnectInitial <= 0 || config.ReconnectMax <= 0 || config.COMCallWatchdog <= 0 {
+		return fmt.Errorf("reconnect and COM watchdog durations must be positive")
+	}
+	if config.ReconnectInitial > config.ReconnectMax {
+		return fmt.Errorf("reconnect initial delay must not exceed maximum delay")
+	}
+	if config.ReconnectMax > maximumRuntimeDuration || config.COMCallWatchdog > maximumRuntimeDuration {
+		return fmt.Errorf("reconnect maximum and COM watchdog must not exceed 24 hours")
+	}
+	return nil
+}
+
+// ValidateForConfiguration applies runtime defaults and validates startup
+// bounds without allocating COM or queue resources.
+func (config Config) ValidateForConfiguration() error {
+	return config.withDefaults().validate()
 }
 
 type Limits struct {
@@ -57,5 +103,21 @@ func (limits Limits) validate() error {
 		limits.MaxBSTRCodeUnits <= 0 {
 		return fmt.Errorf("all DA runtime limits must be positive")
 	}
+	if limits.CommandQueue > 4096 ||
+		limits.MaxReadItems > 10000 ||
+		limits.MaxWriteItems > 10000 ||
+		limits.MaxBrowseEntries > 100000 ||
+		limits.MaxBrowseDepth > 256 ||
+		limits.MaxRegisteredItems > 1000000 ||
+		limits.MaxItemIDBytes > 65536 ||
+		limits.MaxBSTRCodeUnits > 1048576 {
+		return fmt.Errorf("one or more DA runtime limits exceed the v0 hard ceiling")
+	}
 	return nil
+}
+
+// ValidateForConfiguration lets the application reject unsafe environment
+// settings before allocating bounded runtime structures.
+func (limits Limits) ValidateForConfiguration() error {
+	return limits.validate()
 }

@@ -31,7 +31,9 @@ type RuntimeStatus struct {
 	State                RuntimeState
 	Source               SourceConfig
 	ConnectionGeneration uint64
+	ReconnectCount       uint64
 	Capabilities         Capabilities
 	WriteEnabled         bool
 	QueueDepth           int
+	DegradedReason       string
 }

@@ -7,10 +7,13 @@ import (
 	"fmt"
 	"runtime"
 	"sync"
+	"sync/atomic"
+	"time"
 )
 
 type daThreadCommand struct {
 	context context.Context
+	name    string
 	run     func(*daThreadSession)
 }
 
@@ -25,6 +28,10 @@ type daThreadSession struct {
 	generation        uint64
 	registrations     *registrationCache
 	nextClientHandle  uint32
+	lastGeneration    uint64
+	reconnectAttempt  uint32
+	reconnectAt       time.Time
+	jitterState       uint64
 }
 
 type windowsRuntime struct {
@@ -34,13 +41,15 @@ type windowsRuntime struct {
 	stop     chan struct{}
 	stopped  chan struct{}
 	stopOnce sync.Once
+	degraded atomic.Bool
 
 	statusMu sync.RWMutex
 	status   RuntimeStatus
 }
 
 func New(config Config) (Runtime, error) {
-	if err := config.Limits.validate(); err != nil {
+	config = config.withDefaults()
+	if err := config.validate(); err != nil {
 		return nil, err
 	}
 	if config.Source.ProgID != "" && config.Source.CLSID != "" {
@@ -93,7 +102,9 @@ func (r *windowsRuntime) runDAThread(started chan<- error) {
 
 	session := &daThreadSession{}
 	defer func() {
+		finishWatchdog := r.beginCOMWatchdog("OPC DA shutdown cleanup")
 		session.disconnect()
+		finishWatchdog()
 		r.updateStatus(func(status *RuntimeStatus) {
 			status.State = RuntimeStateStopped
 			status.Capabilities = Capabilities{Browse: "unavailable"}
@@ -107,25 +118,28 @@ func (r *windowsRuntime) runDAThread(started chan<- error) {
 	} else {
 		r.setState(RuntimeStateConnecting)
 		started <- nil
-		r.connect(session)
+		r.tryConnect(session, false)
 	}
 
 	for {
 		if !r.processReadyCommands(session) {
 			return
 		}
-		if err := waitForDAWork(r.wake); err != nil {
-			r.setState(RuntimeStateDegraded)
+		if !r.degraded.Load() && !session.reconnectAt.IsZero() && !time.Now().Before(session.reconnectAt) {
+			r.tryConnect(session, true)
+			continue
+		}
+		if err := waitForDAWork(r.wake, session.waitDuration(time.Now(), r.degraded.Load())); err != nil {
+			r.markDegraded("DA thread wait failed; process restart is required")
 			return
 		}
 	}
 }
 
-func (r *windowsRuntime) connect(session *daThreadSession) {
+func (r *windowsRuntime) connect(session *daThreadSession) error {
 	clsid, err := resolveSourceCLSID(r.config.Source)
 	if err != nil {
-		r.setState(RuntimeStateDisconnected)
-		return
+		return err
 	}
 	r.updateStatus(func(status *RuntimeStatus) {
 		status.Source.CLSID = clsid.String()
@@ -133,15 +147,13 @@ func (r *windowsRuntime) connect(session *daThreadSession) {
 
 	server, err := coCreateOPCServer(&clsid)
 	if err != nil {
-		r.setState(RuntimeStateDisconnected)
-		return
+		return err
 	}
 	session.server = server
 	serverGroupHandle, itemMgt, err := addDAGroup(server)
 	if err != nil {
 		session.disconnect()
-		r.setState(RuntimeStateDisconnected)
-		return
+		return err
 	}
 	session.serverGroupHandle = serverGroupHandle
 	session.hasServerGroup = true
@@ -149,12 +161,14 @@ func (r *windowsRuntime) connect(session *daThreadSession) {
 	syncIO, err := querySyncIO(itemMgt)
 	if err != nil {
 		session.disconnect()
-		r.setState(RuntimeStateDisconnected)
-		return
+		return err
 	}
 	session.syncIO = syncIO
 	browse, supported, browseErr := queryBrowseInterface(server)
 	switch {
+	case isConnectionLoss(browseErr):
+		session.disconnect()
+		return browseErr
 	case browseErr != nil:
 		session.browseCapability = "unavailable"
 	case !supported:
@@ -163,13 +177,78 @@ func (r *windowsRuntime) connect(session *daThreadSession) {
 		session.browse = browse
 		session.browseCapability = "supported"
 	}
-	session.generation = 1
-	session.registrations = newRegistrationCache(r.config.Limits.MaxRegisteredItems, session.generation)
+	session.beginConnectionGeneration(r.config.Limits.MaxRegisteredItems)
+	session.reconnectAttempt = 0
+	session.reconnectAt = time.Time{}
+	return nil
+}
+
+func (session *daThreadSession) beginConnectionGeneration(maxRegisteredItems int) {
+	session.lastGeneration++
+	session.generation = session.lastGeneration
+	session.registrations = newRegistrationCache(maxRegisteredItems, session.generation)
+}
+
+func (r *windowsRuntime) tryConnect(session *daThreadSession, reconnect bool) {
+	if r.degraded.Load() {
+		return
+	}
+	if reconnect {
+		r.updateStatus(func(status *RuntimeStatus) {
+			status.State = RuntimeStateReconnecting
+			status.ReconnectCount++
+		})
+	} else {
+		r.setState(RuntimeStateConnecting)
+	}
+	finishWatchdog := r.beginCOMWatchdog("OPC DA connect")
+	err := r.connect(session)
+	finishWatchdog()
+	if r.degraded.Load() {
+		return
+	}
+	if err != nil {
+		session.disconnect()
+		r.scheduleReconnect(session)
+		return
+	}
 	r.updateStatus(func(status *RuntimeStatus) {
 		status.State = RuntimeStateConnected
 		status.ConnectionGeneration = session.generation
 		status.Capabilities = Capabilities{Browse: session.browseCapability, Read: true, Write: true}
+		status.DegradedReason = ""
 	})
+}
+
+func (r *windowsRuntime) scheduleReconnect(session *daThreadSession) {
+	r.setState(RuntimeStateDisconnected)
+	delay := reconnectDelay(session.reconnectAttempt, r.config.ReconnectInitial, r.config.ReconnectMax, session.nextJitter())
+	if session.reconnectAttempt < 63 {
+		session.reconnectAttempt++
+	}
+	session.reconnectAt = time.Now().Add(delay)
+}
+
+func (session *daThreadSession) nextJitter() uint64 {
+	if session.jitterState == 0 {
+		session.jitterState = uint64(time.Now().UnixNano()) | 1
+	}
+	value := session.jitterState
+	value ^= value << 13
+	value ^= value >> 7
+	value ^= value << 17
+	session.jitterState = value
+	return value
+}
+
+func (session *daThreadSession) waitDuration(now time.Time, degraded bool) time.Duration {
+	if degraded || session.reconnectAt.IsZero() {
+		return -1
+	}
+	if !now.Before(session.reconnectAt) {
+		return 0
+	}
+	return session.reconnectAt.Sub(now)
 }
 
 func (session *daThreadSession) disconnect() {
@@ -197,12 +276,22 @@ func (session *daThreadSession) disconnect() {
 	}
 	if session.registrations != nil {
 		session.registrations.reset(0)
+		session.registrations = nil
 	}
 	session.generation = 0
 }
 
 func (r *windowsRuntime) processReadyCommands(session *daThreadSession) bool {
 	for {
+		if r.degraded.Load() {
+			select {
+			case <-r.stop:
+				r.setState(RuntimeStateStopping)
+				return false
+			default:
+				return true
+			}
+		}
 		select {
 		case <-r.stop:
 			r.setState(RuntimeStateStopping)
@@ -210,7 +299,9 @@ func (r *windowsRuntime) processReadyCommands(session *daThreadSession) bool {
 		case command := <-r.commands:
 			r.updateQueueDepth()
 			if command.context.Err() == nil {
+				finishWatchdog := r.beginCOMWatchdog(command.name)
 				command.run(session)
+				finishWatchdog()
 			}
 		default:
 			r.updateQueueDepth()
@@ -258,8 +349,10 @@ func (r *windowsRuntime) Browse(ctx context.Context, request BrowseRequest) (Bro
 	responses := make(chan response, 1)
 	command := daThreadCommand{
 		context: ctx,
+		name:    "Browse",
 		run: func(session *daThreadSession) {
 			result, err := session.browseAddressSpace(request, r.config.Limits)
+			r.handleOperationFailure(session, err)
 			responses <- response{result: result, err: err}
 		},
 	}
@@ -308,12 +401,14 @@ func (r *windowsRuntime) ReadBatch(ctx context.Context, request ReadRequest) ([]
 	responses := make(chan response, 1)
 	command := daThreadCommand{
 		context: ctx,
+		name:    "Read",
 		run: func(session *daThreadSession) {
 			if session.syncIO == nil || session.registrations == nil {
 				responses <- response{err: NewAdapterError(CodeRuntimeUnavailable, "OPC DA runtime is not connected")}
 				return
 			}
 			results, err := session.readDevice(request.Items, r.config.Limits.MaxBSTRCodeUnits)
+			r.handleOperationFailure(session, err)
 			responses <- response{results: results, err: err}
 		},
 	}
@@ -362,12 +457,14 @@ func (r *windowsRuntime) WriteBatch(ctx context.Context, items []WriteItem) ([]W
 	responses := make(chan response, 1)
 	command := daThreadCommand{
 		context: ctx,
+		name:    "Write",
 		run: func(session *daThreadSession) {
 			if session.syncIO == nil || session.registrations == nil {
 				responses <- response{err: NewAdapterError(CodeRuntimeUnavailable, "OPC DA runtime is not connected")}
 				return
 			}
 			results, err := session.writeValues(items, r.config.Limits.MaxBSTRCodeUnits)
+			r.handleOperationFailure(session, err)
 			responses <- response{results: results, err: err}
 		},
 	}
@@ -399,6 +496,15 @@ func (r *windowsRuntime) Shutdown(ctx context.Context) error {
 }
 
 func (r *windowsRuntime) enqueue(ctx context.Context, command daThreadCommand) error {
+	if r.degraded.Load() {
+		return NewAdapterError(CodeRuntimeUnavailable, "OPC DA runtime is degraded; process restart is required")
+	}
+	r.statusMu.RLock()
+	state := r.status.State
+	r.statusMu.RUnlock()
+	if state != RuntimeStateConnected {
+		return NewAdapterError(CodeRuntimeUnavailable, "OPC DA runtime is not connected")
+	}
 	select {
 	case <-ctx.Done():
 		return &AdapterError{Code: CodeRuntimeDeadline, Message: "request deadline exceeded before enqueue", Cause: ctx.Err()}
@@ -408,12 +514,54 @@ func (r *windowsRuntime) enqueue(ctx context.Context, command daThreadCommand) e
 	case r.commands <- command:
 		r.updateQueueDepth()
 		if err := r.wake.signal(); err != nil {
-			return &AdapterError{Code: CodeRuntimeUnavailable, Message: "failed to wake DA runtime", Cause: err}
+			r.markDegraded("failed to wake the DA thread; process restart is required")
+			return &AdapterError{
+				Code:    CodeRuntimeUnavailable,
+				Message: command.name + " queue wake failed; source outcome may be unknown and process restart is required",
+				Cause:   err,
+			}
 		}
 		return nil
 	default:
 		return NewAdapterError(CodeQueueFull, "DA command queue is full")
 	}
+}
+
+func (r *windowsRuntime) handleOperationFailure(session *daThreadSession, err error) {
+	if !isConnectionLoss(err) || r.degraded.Load() {
+		return
+	}
+	session.disconnect()
+	r.scheduleReconnect(session)
+}
+
+func (r *windowsRuntime) beginCOMWatchdog(operation string) func() {
+	done := make(chan struct{})
+	var once sync.Once
+	timer := time.NewTimer(r.config.COMCallWatchdog)
+	go func() {
+		select {
+		case <-timer.C:
+			r.markDegraded(operation + " exceeded the COM call watchdog; process restart is required")
+		case <-done:
+		}
+	}()
+	return func() {
+		once.Do(func() {
+			if timer.Stop() {
+				close(done)
+			}
+		})
+	}
+}
+
+func (r *windowsRuntime) markDegraded(reason string) {
+	r.degraded.Store(true)
+	r.updateStatus(func(status *RuntimeStatus) {
+		status.State = RuntimeStateDegraded
+		status.Capabilities = Capabilities{Browse: "unavailable"}
+		status.DegradedReason = reason
+	})
 }
 
 func (r *windowsRuntime) setState(state RuntimeState) {

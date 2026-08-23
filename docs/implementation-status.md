@@ -2,13 +2,13 @@
 
 ## Current phase
 
-Phase 4 — strict typed value Write (implemented locally on `feat/da-write`;
-ready for PR validation).
+Phase 5 — reliability and v0 closure (implemented locally on
+`feat/v0-reliability`; ready for PR validation).
 
 ## Current main SHA
 
-`cf98eb1` — merged Phase 3 Browse (PR #4). This Phase 4 branch is based on that
-commit.
+`2f83821` — merged Phase 4 typed Write (PR #5). This Phase 5 branch is based on
+that commit.
 
 ## Completed
 
@@ -27,10 +27,19 @@ commit.
   encodings before source work.
 - Write remains disabled by default. The endpoint returns HTTP 403 without
   calling `WriteBatch` while disabled.
+- Phase 4 strict typed value Write merged in PR #5 with all Linux/Windows
+  checks green.
+- Official COM/RPC disconnect HRESULTs trigger bounded jittered exponential
+  reconnect on the same DA thread. Each successful connection increments a
+  monotonic generation and starts with no registered handles.
+- Disconnected/reconnecting and watchdog-degraded runtimes fail new operations
+  before queue admission. No stale process value is retained or returned.
+- The COM-call watchdog reports `degraded` without terminating the owning
+  thread or replaying an ambiguous Write.
 
 ## In progress
 
-- Phase 4 PR, GitHub Windows execution, CI, and merge.
+- Phase 5 PR, GitHub Windows execution, CI, and merge.
 
 ## Validation results
 
@@ -38,8 +47,12 @@ commit.
   VariantClear, and scalar width tests; merged.
 - PR #4: all five checks passed, including Windows 386/amd64 Browse tests;
   merged.
-- Phase 4 `gofmt`, `go test ./...`, and `go vet ./...` passed on Linux.
-- Phase 4 Windows 386/amd64 test binaries cross-compiled and vet passed.
+- PR #5: all five checks passed. Windows 386/amd64 executed exact Write
+  VARIANT, BSTR ownership/cleanup, and scalar-width tests; merged.
+- Phase 5 `gofmt`, `go test ./...`, `go vet ./...`, Linux race tests, and 20
+  repeated unit-suite runs passed.
+- Phase 5 Windows 386/amd64 test binaries cross-compiled, vet passed, and both
+  adapter executables built. Actual Windows execution awaits PR CI.
 - Actual vendor root/nested/flat Browse remains externally blocked.
 
 ## Known issues
@@ -49,7 +62,10 @@ commit.
   populated by an unbounded registration scan.
 - The zero-FILETIME rule and current scalar support remain pending real-server
   validation as recorded in ADR-0003.
-- Reconnect, diagnostic bounds, and COM-hang degraded policy remain.
+- The reconnect HRESULT set is deliberately conservative and may need an ADR
+  update after a vendor demonstrates another documented disconnect result.
+- In-process recovery from a permanently hung COM call is impossible without
+  violating COM ownership; v0 honestly requires a process restart.
 
 ## External blockers
 
@@ -60,11 +76,11 @@ commit.
 
 ## Next exact tasks
 
-1. Push Phase 4, run Linux/Windows checks, and merge only when green.
-2. Implement bounded reconnect/backoff, generation invalidation, disconnected
-   fail-fast, and degraded COM-hang policy in Phase 5.
-3. Complete reliability tests, shutdown/resource checks, operator docs, and
-   honest real-DA/soak blocker recording.
+1. Complete Phase 5 Linux/race/vet and Windows 386/amd64 execution checks.
+2. Push Phase 5, merge only after all required checks are green, and update
+   this document to the merged main SHA.
+3. Run the real-DA compatibility procedure when an authorized local server is
+   available; otherwise retain `V0 REAL-DA VALIDATION BLOCKED`.
 
 ## Decisions
 
@@ -72,3 +88,4 @@ commit.
 - [ADR-0002: STA runtime and local COM activation](adr/0002-sta-runtime-and-local-com-activation.md)
 - [ADR-0003: v0 Read types and FILETIME presence](adr/0003-read-types-and-filetime-presence.md)
 - [ADR-0004: strict typed value Write](adr/0004-strict-typed-value-write.md)
+- [ADR-0005: reconnect and COM-hang policy](adr/0005-reconnect-and-com-hang-policy.md)

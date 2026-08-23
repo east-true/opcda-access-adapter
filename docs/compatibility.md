@@ -5,6 +5,11 @@
 No real OPC DA server has been tested. A build or mock test is not an
 interoperability result.
 
+GitHub-hosted Windows VMs execute the Windows-only COM allocation, apartment,
+VARIANT, BSTR, queue, watchdog, and lifecycle tests on both 386 and amd64.
+Those are platform/ABI results only: the runner has no OPC DA server and is
+not listed as a compatible DA implementation.
+
 | DA Server | Version | Windows | Server bitness | Adapter arch | Connect | Browse | Read | Write | Reconnect | Notes |
 |---|---|---|---|---|---|---|---|---|---|---|
 | _No result yet_ | — | — | — | — | NOT RUN | NOT RUN | NOT RUN | NOT RUN | NOT RUN | Requires an authorized local DA server |
@@ -31,8 +36,17 @@ interoperability result.
    test item, verify type mismatch and access-denied behavior, then a typed
    value Write.
 6. Restart the DA server, observe an unavailable result during disconnect,
-   then verify reconnect and that old handles are not reused.
+   then verify `disconnected` during backoff/`reconnecting` during an attempt,
+   an increased reconnect count, a strictly newer connection generation, and
+   lazy re-registration rather than old-handle reuse. Do not accept any
+   last-good value during the outage.
 7. Repeat the required scenarios for each applicable adapter architecture and
    record actual PASS/FAIL/BLOCKED results in the table above.
+8. For soak validation, repeatedly exercise a bounded safe Read batch while
+   monitoring process private bytes, handle count, goroutine count, and
+   request errors. Exercise Browse and an authorized safe Write at controlled
+   intervals. Do not persist response values; record only duration, counts,
+   resource deltas, and failure metadata. A VM without an installed real DA
+   server cannot satisfy this step.
 
 Do not place process values in this document.

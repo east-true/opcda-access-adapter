@@ -97,7 +97,12 @@ func (s *Server) handleStatus(ctx context.Context, w http.ResponseWriter) {
 			Subscribe bool   `json:"subscribe"`
 		} `json:"capabilities"`
 		WriteEnabled bool `json:"writeEnabled"`
-		Frontend     struct {
+		Runtime      struct {
+			QueueDepth     int    `json:"queueDepth"`
+			ReconnectCount uint64 `json:"reconnectCount"`
+			DegradedReason string `json:"degradedReason,omitempty"`
+		} `json:"runtime"`
+		Frontend struct {
 			HTTP struct {
 				Listening bool `json:"listening"`
 			} `json:"http"`
@@ -125,6 +130,15 @@ func (s *Server) handleStatus(ctx context.Context, w http.ResponseWriter) {
 			Subscribe: status.Capabilities.Subscribe,
 		},
 		WriteEnabled: status.WriteEnabled,
+		Runtime: struct {
+			QueueDepth     int    `json:"queueDepth"`
+			ReconnectCount uint64 `json:"reconnectCount"`
+			DegradedReason string `json:"degradedReason,omitempty"`
+		}{
+			QueueDepth:     status.QueueDepth,
+			ReconnectCount: status.ReconnectCount,
+			DegradedReason: status.DegradedReason,
+		},
 		Frontend: struct {
 			HTTP struct {
 				Listening bool `json:"listening"`
