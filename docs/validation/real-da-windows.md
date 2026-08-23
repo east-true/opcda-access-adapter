@@ -39,10 +39,24 @@ iteration count, and bounded resource deltas.
 
 Repository maintainers can dispatch `.github/workflows/real-da-validation.yml`
 from GitHub Actions. The default is 200 bounded Read iterations per
-architecture. A same-repository pull request that changes this workflow,
-validation scripts, or validation records also runs it. Fork pull requests do
-not execute the privileged COM registration job.
+architecture, and the explicit maximum is 100,000 per architecture so a
+long-running resource check remains bounded. A same-repository pull request
+that changes this workflow, validation scripts, or validation records also
+runs it. Fork pull requests do not execute the privileged COM registration
+job.
 
 Passing the workflow is evidence only after the exact GitHub run URL and
 commit SHA are recorded in `docs/compatibility.md`. A workflow definition or
 cross-build alone is not a compatibility result.
+
+The first recorded passing result is run
+[`32628886186`](https://github.com/east-true/opcda-access-adapter/actions/runs/32628886186)
+for adapter head `5267aec6e05f98dff5da4721ded6315e5a2ba990`. See the compatibility
+matrix for the observations, source pin, executable hashes, and resource
+deltas.
+
+Long-running run
+[`32630548279`](https://github.com/east-true/opcda-access-adapter/actions/runs/32630548279)
+passed 100,000 device Reads per architecture at adapter head
+`995c387cb977a37ab80ecd0fc5deb2f4a98e191d`. Its bounded resource deltas are
+also recorded in the compatibility matrix.

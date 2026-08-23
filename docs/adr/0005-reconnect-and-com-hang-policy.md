@@ -1,6 +1,6 @@
 # ADR-0005: reconnect and COM-hang policy
 
-- Status: Accepted, pending real-server validation
+- Status: Accepted; reconnect validated against the official fixture
 - Date: 2026-08-23
 
 ## Context
@@ -47,5 +47,13 @@ Recovery is bounded and does not flood the server. A disconnect is normally
 detected by the next source operation; v0 does not add a polling health group
 or synthetic read. An unrecognized vendor-specific disconnect HRESULT remains
 a source error until an actual compatibility result justifies adding it.
+
+The Windows x86 and x64 official-fixture run stopped and unregistered the
+active local COM server, observed no successful stale Read, exposed
+disconnected/reconnecting state, then re-registered the server and observed a
+newer generation, increased reconnect count, and successful lazy item
+re-registration. Vendor-specific disconnect HRESULT coverage remains
+intentionally unclaimed.
+
 The watchdog provides honest operator visibility but cannot make an unsafe
 in-process COM hang recoverable; hard subprocess isolation remains out of v0.

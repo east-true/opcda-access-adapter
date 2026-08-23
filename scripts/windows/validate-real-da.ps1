@@ -9,7 +9,7 @@ param(
     [ValidateSet('386', 'amd64')]
     [string]$AdapterArch,
 
-    [ValidateRange(1, 5000)]
+    [ValidateRange(1, 100000)]
     [int]$SoakIterations = 200
 )
 

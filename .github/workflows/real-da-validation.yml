@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       soak_iterations:
-        description: Bounded Read iterations per architecture
+        description: Bounded Read iterations per architecture (1-100000)
         required: true
         default: "200"
         type: string

@@ -2,17 +2,62 @@
 
 ## Matrix
 
-No real OPC DA server has been tested. A build or mock test is not an
-interoperability result.
-
-GitHub-hosted Windows VMs execute the Windows-only COM allocation, apartment,
-VARIANT, BSTR, queue, watchdog, and lifecycle tests on both 386 and amd64.
-Those are platform/ABI results only: the runner has no OPC DA server and is
-not listed as a compatible DA implementation.
+The matrix records only executed real local-COM results. Unit doubles,
+cross-builds, and Windows ABI tests are not interoperability results.
 
 | DA Server | Version | Windows | Server bitness | Adapter arch | Connect | Browse | Read | Write | Reconnect | Notes |
 |---|---|---|---|---|---|---|---|---|---|---|
-| _No result yet_ | — | — | — | — | NOT RUN | NOT RUN | NOT RUN | NOT RUN | NOT RUN | Requires an authorized local DA server |
+| OPC Foundation OPC Classic Core Components TestServer | source commit `efe0d1d1` | Server 2025 | x86 | 386 | PASS | PASS | PASS | PASS | PASS | DA 2.05a source-built fixture; [run evidence](https://github.com/east-true/opcda-access-adapter/actions/runs/32628886186) |
+| OPC Foundation OPC Classic Core Components TestServer | source commit `efe0d1d1` | Server 2025 | x64 | amd64 | PASS | PASS | PASS | PASS | PASS | DA 2.05a source-built fixture; [run evidence](https://github.com/east-true/opcda-access-adapter/actions/runs/32628886186) |
+
+## Recorded result: OPC Foundation DA 2.05a fixture
+
+- Executed: 2026-08-23 on ephemeral GitHub-hosted Windows Server 2025 VMs.
+- Adapter head: `5267aec6e05f98dff5da4721ded6315e5a2ba990`; tested pull-request
+  merge tree: `a97fc2d58bdfb4e1470e2f869d3dfbbf6681b61d`.
+- Server source: `OPCF-Members/OPC-Classic-CoreComponents` at pinned commit
+  `efe0d1d1ea86a8a727bf26a501a261765e836766`.
+- Security boundary: source and built outputs both passed Microsoft Defender
+  custom scans. The source/build audit and the limits of this evidence are in
+  ADR-0006; antivirus and static review do not prove arbitrary code harmless.
+- Both architectures connected through local COM, detected Browse, returned
+  the exact nested ItemIDs, preserved partial Read ordering, rejected Write by
+  default, enforced a strict type mismatch, completed an explicitly enabled
+  typed value Write, and preserved a source-denied Write result.
+- The recorded Read metadata on both architectures was actual/canonical
+  `VT_I4`, raw Quality `192` (`0x00C0`), source timestamp present, successful
+  item HRESULT `0x00000000`, and invalid-ItemID HRESULT `0xC0040007`
+  (`OPC_E_UNKNOWNITEMID`). The read/write item exposed canonical `VT_R4` and
+  access rights raw `3`; the read-only item exposed canonical `VT_BSTR`, access
+  rights raw `1`, and `OPC_E_BADRIGHTS` (`0xC0040006`) on Write.
+- During a real server stop/unregistration the adapter returned no successful
+  stale value, exposed disconnected/reconnecting state, advanced reconnect
+  count and connection generation after re-registration, and lazy-registered
+  the known ItemID again.
+- Each architecture completed 200 bounded device Reads. Observed resource
+  deltas were: 386 adapter handles `+8`, private bytes `+1,835,008`, server
+  handles `0`, server private bytes `0`; amd64 adapter handles `+8`, private
+  bytes `+1,978,368`, server handles `0`, server private bytes `0`.
+- Fixture executable SHA-256 for run `32628886186`: x86
+  `35B18E2542131907A256929FE1C5A54B204CAB8421AA9F90305E6C8B6583F681`;
+  x64 `C715BFA24DE1414D6CC1E8A6B5F61FEE42530EB43A619BC6BD5185A7B0F6DDF7`.
+
+### Long-running resource result
+
+Workflow run
+[`32630548279`](https://github.com/east-true/opcda-access-adapter/actions/runs/32630548279)
+at adapter head `995c387cb977a37ab80ecd0fc5deb2f4a98e191d` repeated the complete
+scenario and then passed 100,000 device Reads per architecture. The x86 job
+took 3m04s overall and observed adapter handles `+18`, adapter private bytes
+`+5,373,952`, server handles `0`, and server private bytes `-208,896`.
+The x64 job took 3m40s overall and observed adapter handles `+18`, adapter
+private bytes `+5,787,648`, server handles `+4`, and server private bytes
+`+12,288`. All were below the explicit absolute and growth ceilings; no
+operation failed and no process value was logged.
+
+This result validates the scoped v0 path against this specific official test
+fixture only. Third-party/vendor servers and non-Good Quality observations
+remain untested; compatibility must not be inferred for them.
 
 ## Real-DA validation procedure
 
