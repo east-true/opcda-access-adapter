@@ -1,0 +1,87 @@
+name: Real OPC DA validation
+
+on:
+  workflow_dispatch:
+    inputs:
+      soak_iterations:
+        description: Bounded Read iterations per architecture
+        required: true
+        default: "200"
+        type: string
+  pull_request:
+    branches: [main]
+    paths:
+      - .github/workflows/real-da-validation.yml
+      - scripts/windows/**
+      - docs/validation/**
+      - docs/compatibility.md
+      - docs/implementation-status.md
+
+permissions:
+  contents: read
+
+concurrency:
+  group: real-da-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    if: github.event_name == 'workflow_dispatch' || github.event.pull_request.head.repo.full_name == github.repository
+    name: OPC Foundation DA 2.05a (${{ matrix.arch }})
+    runs-on: windows-2025
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: 386
+            platform: x86
+          - arch: amd64
+            platform: x64
+    steps:
+      - name: Check out adapter at the requested revision
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+
+      - name: Check out pinned OPC Foundation source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: OPCF-Members/OPC-Classic-CoreComponents
+          ref: efe0d1d1ea86a8a727bf26a501a261765e836766
+          path: _test/opc-core
+          persist-credentials: false
+
+      - name: Set up pinned Go toolchain action
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: Build adapter
+        shell: pwsh
+        env:
+          GOOS: windows
+          GOARCH: ${{ matrix.arch }}
+          CGO_ENABLED: "0"
+        run: go build -trimpath -o "_test/adapter-${{ matrix.arch }}.exe" ./cmd/adapter
+
+      - name: Audit, Defender-scan, and build OPC Foundation test server
+        shell: pwsh
+        run: >-
+          ./scripts/windows/build-opcf-test-server.ps1
+          -SourceRoot _test/opc-core
+          -BuildRoot "${{ runner.temp }}/opc-core-build-${{ matrix.platform }}"
+          -StageRoot "${{ runner.temp }}/opc-core-stage-${{ matrix.platform }}"
+          -Platform "${{ matrix.platform }}"
+
+      - name: Validate real local-COM Browse, Read, Write, reconnect, and soak
+        shell: pwsh
+        env:
+          SOAK_ITERATIONS: ${{ inputs.soak_iterations || '200' }}
+        run: >-
+          ./scripts/windows/validate-real-da.ps1
+          -AdapterPath "_test/adapter-${{ matrix.arch }}.exe"
+          -ServerDirectory "${{ runner.temp }}/opc-core-stage-${{ matrix.platform }}"
+          -AdapterArch "${{ matrix.arch }}"
+          -SoakIterations ([int]$env:SOAK_ITERATIONS)

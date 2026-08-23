@@ -50,3 +50,16 @@ not listed as a compatible DA implementation.
    server cannot satisfy this step.
 
 Do not place process values in this document.
+
+## Automated isolated fixture
+
+The manual `Real OPC DA validation` GitHub workflow builds the OPC Foundation
+DA 2.05a test server from a pinned, reviewed source commit and registers it by
+local COM on an ephemeral Windows VM. It covers both native x86/386 and
+x64/amd64 paths. See the [execution procedure](validation/real-da-windows.md)
+and [fixture/supply-chain decision](adr/0006-real-da-validation-fixture.md).
+
+The workflow file existing in the repository is not a test result. Add a row
+to the matrix only after an actual run passes, and include its immutable run
+URL and commit SHA. Never copy response values into the matrix or workflow
+logs.

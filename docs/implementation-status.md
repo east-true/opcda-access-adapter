@@ -4,13 +4,14 @@
 
 **V0 IMPLEMENTATION COMPLETE**
 
-**V0 REAL-DA VALIDATION BLOCKED** — no authorized, installed local OPC DA
-server and safe validation ItemIDs are available in the current environment.
+**V0 REAL-DA VALIDATION IN PROGRESS** — an isolated Windows validation path is
+being added for the MIT-licensed OPC Foundation DA 2.05a test server. No result
+is claimed until the workflow has actually passed and its run is recorded.
 
 ## Current main SHA
 
-`f0f03ed41a516d2ce5fd3b62c6ca889f202e6a00` — merged Phase 5 reliability
-closure (PR #6). This documentation branch is based on that commit.
+`06c38c3c700fde3cea69865d29b485532068b899` — merged v0 closure documentation
+(PR #7). The real-DA validation branch is based on that commit.
 
 ## Completed
 
@@ -29,16 +30,18 @@ closure (PR #6). This documentation branch is based on that commit.
   monotonic connection generation, stale-handle invalidation, disconnected and
   degraded fail-fast, COM-call watchdog, hard resource ceilings, and closure
   documentation merged in PR #6.
+- The honest v0 implementation closure and remaining real-server blocker were
+  recorded in PR #7.
 
 ## In progress
 
-- No v0 implementation work remains within the available environment.
-- Real-server compatibility validation can resume when an authorized local DA
-  server, architecture, and safe Read/Write ItemIDs are supplied.
+- Supply-chain review, Windows VM automation, and real local-COM validation
+  against the pinned OPC Foundation test server are being implemented on
+  `test/real-da-validation`.
 
 ## Validation results
 
-- PRs #1 through #6 were merged only after all required checks passed.
+- PRs #1 through #7 were merged only after all required checks passed.
 - Main CI run `32623072909` passed at the Phase 5 merge SHA with five checks:
   Linux formatting/test/vet, Windows 386 build, Windows amd64 build, Windows
   386 test, and Windows amd64 test.
@@ -70,25 +73,19 @@ closure (PR #6). This documentation branch is based on that commit.
 
 ## External blockers
 
-- **BLOCKED:** Real OPC DA connect, root/nested/flat Browse, known/invalid item
-  Read, source VARTYPE/Quality/Timestamp observation, safe Write/write-denied,
-  server restart/reconnect, stale-handle behavior against a vendor, installed
-  server x86/x64 compatibility, and real process-resource soak.
-- A Windows VM alone does not remove this blocker; it must contain an
-  authorized installed OPC DA server. No proprietary simulator or
-  license-restricted binary was installed.
+- Compatibility with third-party/vendor DA servers remains untested and must
+  not be inferred from the OPC Foundation fixture.
+- No proprietary simulator or license-restricted binary is authorized or used.
 
 ## Next exact tasks
 
-1. Provide an authorized Windows environment with a local OPC DA server,
-   source ProgID/CLSID, applicable adapter architecture, known safe Read items,
-   and an explicitly authorized safe Write item if Write validation is wanted.
-2. Execute `docs/compatibility.md`, record only honest PASS/FAIL/BLOCKED
-   results, and fix any observed ABI, ownership, or vendor behavior defects
-   through a new focused PR.
-3. Mark `V0 VALIDATED` only after real Browse/Read/Write, restart/reconnect,
-   V/Q/T, architecture, and soak evidence exists. Do not begin gRPC or OPC UA
-   before that validation decision.
+1. Merge the audited validation workflow only after its normal CI and isolated
+   real-DA jobs pass on both architectures.
+2. Record the exact run, server commit, V/Q/T/HRESULT observations, reconnect,
+   and resource results in `docs/compatibility.md`; fix any observed adapter
+   defect through a focused PR.
+3. Audit every v0 completion requirement and mark `V0 VALIDATED` only when the
+   evidence is sufficient. Do not infer vendor-wide compatibility.
 
 ## Decisions
 
@@ -97,3 +94,4 @@ closure (PR #6). This documentation branch is based on that commit.
 - [ADR-0003: v0 Read types and FILETIME presence](adr/0003-read-types-and-filetime-presence.md)
 - [ADR-0004: strict typed value Write](adr/0004-strict-typed-value-write.md)
 - [ADR-0005: reconnect and COM-hang policy](adr/0005-reconnect-and-com-hang-policy.md)
+- [ADR-0006: real-DA validation fixture and supply-chain controls](adr/0006-real-da-validation-fixture.md)
