@@ -7,8 +7,8 @@ cross-builds, and Windows ABI tests are not interoperability results.
 
 | DA Server | Version | Windows | Server bitness | Adapter arch | Connect | Browse | Read | Write | Reconnect | Notes |
 |---|---|---|---|---|---|---|---|---|---|---|
-| OPC Foundation OPC Classic Core Components TestServer | source commit `efe0d1d1` | Server 2025 | x86 | 386 | PASS | PASS | PASS | PASS | PASS | DA 2.05a source-built fixture; [run evidence](https://github.com/east-true/opcda-access-adapter/actions/runs/32628886186) |
-| OPC Foundation OPC Classic Core Components TestServer | source commit `efe0d1d1` | Server 2025 | x64 | amd64 | PASS | PASS | PASS | PASS | PASS | DA 2.05a source-built fixture; [run evidence](https://github.com/east-true/opcda-access-adapter/actions/runs/32628886186) |
+| OPC Foundation OPC Classic Core Components TestServer | source commit `efe0d1d1` | Server 2025 | x86 | 386 | PASS | PASS | PASS | PASS | PASS | DA 2.05a source-built fixture; [final-main evidence](https://github.com/east-true/opcda-access-adapter/actions/runs/32632091320) |
+| OPC Foundation OPC Classic Core Components TestServer | source commit `efe0d1d1` | Server 2025 | x64 | amd64 | PASS | PASS | PASS | PASS | PASS | DA 2.05a source-built fixture; [final-main evidence](https://github.com/east-true/opcda-access-adapter/actions/runs/32632091320) |
 
 ## Recorded result: OPC Foundation DA 2.05a fixture
 
@@ -54,6 +54,19 @@ The x64 job took 3m40s overall and observed adapter handles `+18`, adapter
 private bytes `+5,787,648`, server handles `+4`, and server private bytes
 `+12,288`. All were below the explicit absolute and growth ceilings; no
 operation failed and no process value was logged.
+
+### Final main confirmation
+
+Workflow run
+[`32632091320`](https://github.com/east-true/opcda-access-adapter/actions/runs/32632091320)
+repeated the complete 100,000-Read scenario at main SHA
+`9e8928d729300a67197da35e7bfee6623a861495`. Both source and built-output
+Defender scans found no threats. The x86 result observed adapter handles
+`+16`, adapter private bytes `+5,287,936`, server handles `0`, and server
+private bytes `-200,704`; the x64 result observed adapter handles `+18`,
+adapter private bytes `+5,730,304`, server handles `+4`, and server private
+bytes `+20,480`. VARTYPE, Quality, timestamp presence, HRESULT, Browse,
+Write, outage, and reconnect observations matched the recorded result above.
 
 This result validates the scoped v0 path against this specific official test
 fixture only. Third-party/vendor servers and non-Good Quality observations

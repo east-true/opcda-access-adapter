@@ -10,9 +10,9 @@ a claim of broad vendor compatibility or production readiness.
 
 ## Current main SHA
 
-`6dc45a90eba43d58e772afc5bb0e59d1d0853195` — merged isolated real-DA
-validation workflow and harness (PR #8). This validation-record branch is
-based on that commit.
+`9e8928d729300a67197da35e7bfee6623a861495` — merged v0 validation
+evidence, long-soak support, and pinned CI toolchain (PR #9). This final status
+record is based on that commit.
 
 ## Completed
 
@@ -35,15 +35,18 @@ based on that commit.
   recorded in PR #7.
 - The audited source-build workflow and real local-COM validation harness were
   merged in PR #8 after all normal and real-DA checks passed.
+- The immutable compatibility evidence, 100,000-Read bounded soak, and pinned
+  normal CI actions/toolchain were merged in PR #9 after all seven checks
+  passed.
 
 ## In progress
 
-- Recording the immutable validation evidence and completing the final v0
-  requirement audit on `docs/v0-validation`.
+- None. The scoped v0 implementation and official-fixture validation are
+  complete.
 
 ## Validation results
 
-- PRs #1 through #7 were merged only after all required checks passed.
+- PRs #1 through #9 were merged only after all required checks passed.
 - Main CI run `32623072909` passed at the Phase 5 merge SHA with five checks:
   Linux formatting/test/vet, Windows 386 build, Windows amd64 build, Windows
   386 test, and Windows amd64 test.
@@ -74,6 +77,30 @@ based on that commit.
   architecture. Adapter handle growth was `+18` on each; private-byte growth
   was `+5,373,952` on 386 and `+5,787,648` on amd64, all within the explicit
   harness ceilings. Server deltas also remained within their bounds.
+- Final-main CI run
+  [`32632024080`](https://github.com/east-true/opcda-access-adapter/actions/runs/32632024080)
+  passed formatting, Linux tests, vet, both Windows builds, and both native
+  Windows test jobs at main SHA `9e8928d729300a67197da35e7bfee6623a861495`.
+- Final-main real-DA run
+  [`32632091320`](https://github.com/east-true/opcda-access-adapter/actions/runs/32632091320)
+  passed the full scenario plus 100,000 device Reads on each architecture at
+  the same SHA. Adapter growth was 386 `+16` handles/`+5,287,936` private
+  bytes and amd64 `+18` handles/`+5,730,304` private bytes; source and built
+  outputs passed Defender scans and all resource ceilings held.
+
+## Final v0 audit
+
+- All Appendix B implementation items in `docs/design.md` have code, unit or
+  Windows-platform coverage, and the scoped x86/x64 real-server result above.
+- Production Go code has no third-party module dependency, process-data file
+  or database persistence, non-DA source, extra frontend transport, or plugin
+  path.
+- The only production logs are bounded lifecycle/configuration/listener
+  metadata; Read and Write values are not logged.
+- Default loopback binding, default-disabled value-only Write, hard resource
+  ceilings, serialized COM ownership, explicit cleanup, partial HRESULTs,
+  reconnect generation invalidation, and no-stale-value outage behavior were
+  rechecked against code and tests.
 
 ## Known issues
 
@@ -102,14 +129,14 @@ based on that commit.
 
 ## Next exact tasks
 
-1. Merge this validation record only after normal CI and both isolated real-DA
-   jobs pass again.
-2. Dispatch the real-DA workflow on the final main SHA and retain its immutable
-   run URL in the final report.
-3. Before a public `v0.0.0` release, confirm release packaging and security
+1. No implementation task remains for the scoped v0.
+2. Before a public `v0.0.0` release, confirm release packaging and security
    reporting; continue to treat the existing Apache-2.0 license as authoritative.
-4. Add third-party compatibility rows only from authorized, executed tests;
+3. Add third-party compatibility rows only from authorized, executed tests;
    do not infer vendor-wide compatibility from the official fixture.
+4. When an authorized server exposes non-Good Quality, an absent timestamp, or
+   additional supported scalar types, add exact observations without changing
+   source semantics.
 
 ## Decisions
 
