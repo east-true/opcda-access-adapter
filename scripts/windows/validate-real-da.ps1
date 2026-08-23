@@ -258,10 +258,10 @@ if ($script:ServerExecutable.Contains('-')) {
 }
 $script:ProgID = "OPC.$($script:ServerProcessName).1"
 $expectedCLSID = if ($AdapterArch -eq '386') {
-    '{F8582CF4-88FB-11DA-A5ED-0060B0692061}'
+    '{F8582CF3-88FB-11DA-A5ED-0060B0692061}'
 }
 else {
-    '{F8582CF9-88FB-11DA-A5ED-0060B0692061}'
+    '{F8582CF8-88FB-11DA-A5ED-0060B0692061}'
 }
 $registryView = if ($AdapterArch -eq '386') {
     [Microsoft.Win32.RegistryView]::Registry32
