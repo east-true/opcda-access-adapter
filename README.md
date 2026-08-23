@@ -66,6 +66,12 @@ normalization, persistence, and plugin systems are deliberately out of scope.
 The repository does not bundle an OPC DA server or a prebuilt vendor runtime.
 There is no stable binary release yet.
 
+Release-shaped builds expose their exact source revision:
+
+```powershell
+.\opcda-access-adapter.exe --version
+```
+
 ## Quick start
 
 Clone and build on the Windows machine that hosts the DA server:
@@ -169,6 +175,7 @@ source pins, observed DA metadata, resource deltas, and untested conditions.
 | [HTTP API](docs/http-api.md) | Endpoints, JSON contracts, configuration, limits, and errors |
 | [Compatibility](docs/compatibility.md) | Executed server results and honest compatibility scope |
 | [Windows validation](docs/validation/real-da-windows.md) | Reproducible real-DA VM procedure |
+| [Release procedure](docs/releasing.md) | Dry runs, publication gates, checksums, and attestations |
 | [Implementation status](docs/implementation-status.md) | Current SHA, completed phases, risks, and next work |
 | [ADRs](docs/adr/) | Runtime, type, Write, reconnect, bounds, and fixture decisions |
 

@@ -25,6 +25,35 @@ jobs:
       - name: Vet
         run: go vet ./...
 
+  release-package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Build release-shaped archives
+        run: ./scripts/release/package.sh v0.0.0-dev dist "$GITHUB_SHA"
+      - name: Verify archives and embedded metadata
+        run: |
+          test "$(find dist -maxdepth 1 -type f -name '*.zip' | wc -l)" -eq 2
+          (cd dist && sha256sum --check SHA256SUMS)
+          mkdir "${{ runner.temp }}/release-inspect"
+          for archive in dist/*.zip; do
+            unzip -tq "$archive"
+            unzip -q "$archive" -d "${{ runner.temp }}/release-inspect"
+          done
+          test "$(find "${{ runner.temp }}/release-inspect" -type f -name 'opcda-access-adapter.exe' | wc -l)" -eq 2
+          while IFS= read -r executable; do
+            strings "$executable" | grep -Fx -- "v0.0.0-dev"
+            strings "$executable" | grep -Fx -- "$GITHUB_SHA"
+          done < <(find "${{ runner.temp }}/release-inspect" -type f -name 'opcda-access-adapter.exe' | sort)
+          go version -m "${{ runner.temp }}/release-inspect/opcda-access-adapter_0.0.0-dev_windows_386/opcda-access-adapter.exe" | grep -F 'GOARCH=386'
+          go version -m "${{ runner.temp }}/release-inspect/opcda-access-adapter_0.0.0-dev_windows_amd64/opcda-access-adapter.exe" | grep -F 'GOARCH=amd64'
+
   windows-build:
     strategy:
       fail-fast: false

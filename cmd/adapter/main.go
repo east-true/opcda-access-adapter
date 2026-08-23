@@ -13,6 +13,9 @@ import (
 )
 
 func main() {
+	if printVersion(os.Args[1:], os.Stdout) {
+		return
+	}
 	config, err := app.LoadConfig()
 	if err != nil {
 		slog.Error("invalid configuration", "error", err)
