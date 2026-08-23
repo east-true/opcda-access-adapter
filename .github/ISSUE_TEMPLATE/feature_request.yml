@@ -1,0 +1,23 @@
+name: Feature request
+description: Propose an in-scope improvement.
+title: "feature: "
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        The v0 boundary is OPC DA only, local COM only, and HTTP/JSON only.
+        Requests for OPC UA, gRPC, other source protocols, persistence, mapping, or aggregation are out of scope.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What user problem does this solve?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposal
+    validations:
+      required: true

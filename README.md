@@ -1,8 +1,15 @@
 # OPC DA Access Adapter
 
-A thin, DA-native HTTP access adapter for one local OPC DA server. It is being
-built to expose OPC DA without renaming tags, normalizing values, or storing
-process data.
+[![CI](https://github.com/east-true/opcda-access-adapter/actions/workflows/ci.yml/badge.svg)](https://github.com/east-true/opcda-access-adapter/actions/workflows/ci.yml)
+[![Real DA validation](https://github.com/east-true/opcda-access-adapter/actions/workflows/real-da-validation.yml/badge.svg)](https://github.com/east-true/opcda-access-adapter/actions/workflows/real-da-validation.yml)
+[![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
+
+A thin, DA-native HTTP access adapter for one local OPC DA server. It exposes
+OPC DA to modern applications without renaming tags, normalizing values, or
+storing process data.
+
+This is a Windows-only, pre-1.0 project. It is intended for controlled
+environments where the adapter and the DA server run on the same machine.
 
 ## Current status
 
@@ -31,19 +38,44 @@ for the exact server commit, adapter commit, observations, and run evidence.
 This repository does not implement OPC UA, gRPC, Subscribe, persistence, tag
 mapping, scaling, normalization, an asset model, or multi-server aggregation.
 
-## Run
+## Quick start
 
 The listener defaults to `127.0.0.1:8080`; it never binds externally unless
 configured explicitly.
 
 ```powershell
+# Build on Windows (Go 1.26 or newer)
+go build -trimpath -o adapter.exe ./cmd/adapter
+
 $env:OPCDA_SOURCE_PROG_ID = "Vendor.Server.1"
-go run ./cmd/adapter
+.\adapter.exe
 Invoke-RestMethod http://127.0.0.1:8080/v1/status
 ```
 
 Use exactly one of `OPCDA_SOURCE_PROG_ID` or `OPCDA_SOURCE_CLSID`. Other
-configuration is documented in the implementation status and ADR records.
+configuration, bounds, and explicit Write enablement are documented in the
+[HTTP API guide](docs/http-api.md).
+
+The adapter does not include an OPC DA server. A real server and its authorized
+test configuration are required for interoperability testing.
+
+## Development
+
+The repository is developed and tested on Linux plus Windows CI runners. The
+production COM path is Windows-only; Linux runs cover transport, validation,
+and platform-independent logic.
+
+```text
+gofmt -w .
+go test ./...
+go vet ./...
+GOOS=windows GOARCH=386 go build ./cmd/adapter
+GOOS=windows GOARCH=amd64 go build ./cmd/adapter
+```
+
+Read [CONTRIBUTING.md](CONTRIBUTING.md) before opening a pull request. Changes
+to scope, source semantics, limits, or runtime policy require design review and
+an ADR.
 
 ## Documentation
 
@@ -51,8 +83,18 @@ configuration is documented in the implementation status and ADR records.
 - [Implementation status](docs/implementation-status.md)
 - [Compatibility matrix and test procedure](docs/compatibility.md)
 - [v0 HTTP API](docs/http-api.md)
+- [Windows validation procedure](docs/validation/real-da-windows.md)
 - [Contributing](CONTRIBUTING.md)
 - [Security policy](SECURITY.md)
+
+## Project status
+
+The scoped v0 implementation and the official OPC Foundation DA 2.05a fixture
+validation are complete. The compatibility result is limited to the exact
+fixture and environments documented in [docs/compatibility.md](docs/compatibility.md);
+it is not a certification of all OPC DA servers or a production-readiness
+claim. Third-party compatibility results are added only after an authorized,
+repeatable test.
 
 ## License
 
