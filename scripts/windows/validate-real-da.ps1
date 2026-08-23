@@ -51,6 +51,8 @@ function Invoke-NativeProcess {
     $startInfo.FileName = $FilePath
     $startInfo.UseShellExecute = $false
     $startInfo.CreateNoWindow = $true
+    $startInfo.RedirectStandardOutput = $true
+    $startInfo.RedirectStandardError = $true
     foreach ($argument in $ArgumentList) {
         [void]$startInfo.ArgumentList.Add($argument)
     }
@@ -58,6 +60,8 @@ function Invoke-NativeProcess {
     if ($null -eq $process) {
         throw "could not start $FilePath"
     }
+    $standardOutput = $process.StandardOutput.ReadToEndAsync()
+    $standardError = $process.StandardError.ReadToEndAsync()
     if (-not $process.WaitForExit($TimeoutSeconds * 1000)) {
         try {
             $process.Kill($true)
@@ -66,6 +70,14 @@ function Invoke-NativeProcess {
             Write-Warning "could not terminate timed-out native process $($process.Id)"
         }
         throw "$FilePath exceeded its $TimeoutSeconds second validation timeout"
+    }
+    $outputText = $standardOutput.GetAwaiter().GetResult()
+    $errorText = $standardError.GetAwaiter().GetResult()
+    if (-not [string]::IsNullOrWhiteSpace($outputText)) {
+        Write-Host $outputText.TrimEnd()
+    }
+    if (-not [string]::IsNullOrWhiteSpace($errorText)) {
+        Write-Host $errorText.TrimEnd()
     }
     if ($process.ExitCode -ne 0) {
         throw "$FilePath failed with exit code $($process.ExitCode)"
