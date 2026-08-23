@@ -10,9 +10,10 @@ a claim of broad vendor compatibility or production readiness.
 
 ## Current main SHA
 
-`c0f56f746dd77c5d85e387cd5e99c60f50ef3e7d` — current protected `main` after
-the pinned setup-go v7 dependency update (PR #12). The most recent recorded
-real-DA executable evidence remains the stability revision identified below.
+`ba256bda31c5356da8f4c70c63890994cb005771` — current protected `main` after
+release-readiness packaging (PR #19). No public tag or GitHub Release has been
+created. The local destructive review below is deliberately being completed
+before release promotion.
 
 ## Completed
 
@@ -43,12 +44,20 @@ real-DA executable evidence remains the stability revision identified below.
   backpressure, abnormal-input/short-cycle/concurrent-load probes, and three
   consecutive real source failure/recovery cycles were merged in PR #11 after
   all seven checks passed.
+- Release archives, checksums, embedded version metadata, non-publishing dry
+  runs, artifact attestations, and maintainer documentation were merged in PR
+  #19 after all eight required checks passed. The merge did not create a tag or
+  release.
 
 ## In progress
 
-- Release-readiness work adds reproducible Windows archives, embedded
-  version/commit metadata, checksums, artifact attestations, a non-publishing
-  dry run, and maintainer documentation. No release or tag has been created.
+- Local KVM/libvirt validation is in progress on the dedicated
+  `opcda-destructive-review` Windows VM. GitHub-hosted runner evidence is not
+  accepted for this gate. The required normal, abnormal-input, concurrent,
+  source/adapter failure, local COM permission, standard-user, reboot, Defender,
+  and cleanup results are tracked in
+  `docs/validation/local-vm-destructive.md`; no local PASS is recorded until
+  those executions finish.
 
 ## Validation results
 
@@ -155,9 +164,11 @@ real-DA executable evidence remains the stability revision identified below.
 
 ## Next exact tasks
 
-1. Complete and review release packaging without creating a public tag.
-2. Perform an isolated destructive Windows review, including local DCOM/COM
-   launch and access permission failures, before proposing a public release.
+1. Complete the isolated local Windows destructive review, including local
+   COM launch/access/RunAs permission failures, without using a GitHub runner
+   as evidence.
+2. Record exact VM, Defender, x86/x64, load, resource, reboot, DCOM event, and
+   cleanup results before proposing a public release.
 3. Continue to treat the existing Apache-2.0 license as authoritative.
 4. Add third-party compatibility rows only from authorized, executed tests;
    do not infer vendor-wide compatibility from the official fixture.

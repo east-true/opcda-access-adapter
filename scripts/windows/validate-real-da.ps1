@@ -15,7 +15,15 @@ param(
     [string]$StabilityProbePath,
 
     [ValidateRange(0, 10)]
-    [int]$FailureCycles = 0
+    [int]$FailureCycles = 0,
+
+    [switch]$Destructive,
+
+    [ValidateRange(0, 20)]
+    [int]$AdapterCrashCycles = 0,
+
+    [ValidatePattern('^[A-Za-z0-9._]{1,32}$')]
+    [string]$RunLabel = 'default'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -53,9 +61,24 @@ function Invoke-NativeProcess {
     $startInfo.CreateNoWindow = $true
     $startInfo.RedirectStandardOutput = $true
     $startInfo.RedirectStandardError = $true
-    foreach ($argument in $ArgumentList) {
-        [void]$startInfo.ArgumentList.Add($argument)
-    }
+    # ProcessStartInfo.ArgumentList is unavailable in Windows PowerShell 5.1.
+    # Quote with the CommandLineToArgvW/MSVC rules so this validation script
+    # runs on a stock Windows Server VM as well as PowerShell 7 runners.
+    $quotedArguments = @($ArgumentList | ForEach-Object {
+        $argument = [string]$_
+        if ($argument.Length -eq 0) {
+            '""'
+        }
+        elseif ($argument -notmatch '[\s"]') {
+            $argument
+        }
+        else {
+            $escaped = [regex]::Replace($argument, '(\\*)"', '$1$1\"')
+            $escaped = [regex]::Replace($escaped, '(\\+)$', '$1$1')
+            '"' + $escaped + '"'
+        }
+    })
+    $startInfo.Arguments = $quotedArguments -join ' '
     $process = [Diagnostics.Process]::Start($startInfo)
     if ($null -eq $process) {
         throw "could not start $FilePath"
@@ -221,6 +244,193 @@ function Wait-Connected {
     throw "adapter did not connect with generation >= $MinimumGeneration within $TimeoutSeconds seconds"
 }
 
+function Wait-SourceFailure {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string[]]$ExpectedHRESULTs,
+
+        [int]$TimeoutSeconds = 30
+    )
+
+    $deadline = [DateTime]::UtcNow.AddSeconds($TimeoutSeconds)
+    do {
+        try {
+            $response = Send-AdapterRequest -Method GET -Path '/v1/status'
+            if ($response.Status -eq 200 -and
+                $response.JSON.state -in @('connecting', 'disconnected', 'reconnecting') -and
+                $null -ne $response.JSON.source.lastError -and
+                $null -ne $response.JSON.source.lastError.hresult) {
+                $observed = [string]$response.JSON.source.lastError.hresult.hex
+                if ($observed -in $ExpectedHRESULTs) {
+                    return $response.JSON
+                }
+                throw "unexpected source HRESULT $observed while waiting for $($ExpectedHRESULTs -join ', ')"
+            }
+        }
+        catch {
+            if ($_.Exception.Message.StartsWith('unexpected source HRESULT')) {
+                throw
+            }
+            # The listener may still be starting. No response body is logged.
+        }
+        Start-Sleep -Milliseconds 200
+    } while ([DateTime]::UtcNow -lt $deadline)
+
+    throw "adapter did not expose source HRESULT $($ExpectedHRESULTs -join ', ') within $TimeoutSeconds seconds"
+}
+
+function Get-RegistryValueSnapshot {
+    param(
+        [Parameter(Mandatory = $true)]
+        [Microsoft.Win32.RegistryKey]$Key,
+
+        [Parameter(Mandatory = $true)]
+        [string]$Name
+    )
+
+    if ($Name -notin $Key.GetValueNames()) {
+        return [pscustomobject]@{ Exists = $false; Value = $null; Kind = $null }
+    }
+    return [pscustomobject]@{
+        Exists = $true
+        Value = $Key.GetValue($Name, $null, [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)
+        Kind = $Key.GetValueKind($Name)
+    }
+}
+
+function Restore-RegistryValue {
+    param(
+        [Parameter(Mandatory = $true)]
+        [Microsoft.Win32.RegistryKey]$Key,
+
+        [Parameter(Mandatory = $true)]
+        [string]$Name,
+
+        [Parameter(Mandatory = $true)]
+        [object]$Snapshot
+    )
+
+    if ($Snapshot.Exists) {
+        $Key.SetValue($Name, $Snapshot.Value, $Snapshot.Kind)
+    }
+    else {
+        $Key.DeleteValue($Name, $false)
+    }
+    $Key.Flush()
+}
+
+function Convert-SDDLToBinary {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$SDDL
+    )
+
+    $descriptor = [Security.AccessControl.RawSecurityDescriptor]::new($SDDL)
+    $bytes = [byte[]]::new($descriptor.BinaryLength)
+    $descriptor.GetBinaryForm($bytes, 0)
+    return $bytes
+}
+
+function Invoke-DestructiveCOMPermissionValidation {
+    param(
+        [Parameter(Mandatory = $true)]
+        [Microsoft.Win32.RegistryView]$RegistryView,
+
+        [Parameter(Mandatory = $true)]
+        [string]$AppID
+    )
+
+    $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
+    $currentSID = $identity.User.Value
+    $machineClasses = [Microsoft.Win32.RegistryKey]::OpenBaseKey(
+        [Microsoft.Win32.RegistryHive]::LocalMachine,
+        $RegistryView
+    )
+    $appKey = $null
+    try {
+        $appKey = $machineClasses.OpenSubKey("SOFTWARE\Classes\AppID\$AppID", $true)
+        Assert-True ($null -ne $appKey) "AppID $AppID is missing from the expected registry view"
+
+        $launchSnapshot = Get-RegistryValueSnapshot -Key $appKey -Name 'LaunchPermission'
+        $accessSnapshot = Get-RegistryValueSnapshot -Key $appKey -Name 'AccessPermission'
+        $runAsSnapshot = Get-RegistryValueSnapshot -Key $appKey -Name 'RunAs'
+        $permissionAdapter = $null
+        try {
+            # COM_RIGHTS_EXECUTE | EXECUTE_LOCAL | ACTIVATE_LOCAL. The explicit
+            # user deny wins over group membership; no remote right is present.
+            $launchDeny = Convert-SDDLToBinary "O:BAG:BAD:(D;;0x0000000B;;;$currentSID)(A;;0x0000000B;;;SY)(A;;0x0000000B;;;BA)"
+            $appKey.SetValue('LaunchPermission', $launchDeny, [Microsoft.Win32.RegistryValueKind]::Binary)
+            $appKey.Flush()
+            Stop-ServerProcesses
+            $permissionAdapter = Start-Adapter -WriteEnabled $false -Label 'launch-denied'
+            $denied = Wait-SourceFailure -ExpectedHRESULTs @('0x80070005')
+            Assert-True ($denied.source.lastError.operation -eq 'CoCreateInstance(IOPCServer)') `
+                'Launch denial did not identify CoCreateInstance'
+            Restore-RegistryValue -Key $appKey -Name 'LaunchPermission' -Snapshot $launchSnapshot
+            $recovered = Wait-Connected -TimeoutSeconds 60
+            Assert-True ($null -eq $recovered.source.lastError) `
+                'successful reconnect did not clear the source diagnostic'
+            Write-Host 'DESTRUCTIVE_COM_LAUNCH_DENIAL_PASS hresult=0x80070005 recovered=true remoteRights=false'
+            Stop-Adapter $permissionAdapter
+            $permissionAdapter = $null
+
+            # The pinned fixture initializes its own process security. Record
+            # whether an AppID AccessPermission deny is enforced or overridden;
+            # either way the registry value must be restored exactly.
+            $accessDeny = Convert-SDDLToBinary "O:BAG:BAD:(D;;0x00000003;;;$currentSID)(A;;0x00000003;;;SY)(A;;0x00000003;;;BA)"
+            $appKey.SetValue('AccessPermission', $accessDeny, [Microsoft.Win32.RegistryValueKind]::Binary)
+            $appKey.Flush()
+            Stop-ServerProcesses
+            $permissionAdapter = Start-Adapter -WriteEnabled $false -Label 'access-denied'
+            $accessOutcome = 'server-process-security-overrode-appid'
+            try {
+                [void](Wait-Connected -TimeoutSeconds 15)
+            }
+            catch {
+                $accessDenied = Wait-SourceFailure -ExpectedHRESULTs @('0x80070005')
+                Assert-True ($accessDenied.source.lastError.operation -eq 'CoCreateInstance(IOPCServer)') `
+                    'Access denial did not identify CoCreateInstance'
+                $accessOutcome = 'appid-access-denied'
+            }
+            Restore-RegistryValue -Key $appKey -Name 'AccessPermission' -Snapshot $accessSnapshot
+            if ($accessOutcome -eq 'appid-access-denied') {
+                [void](Wait-Connected -TimeoutSeconds 60)
+            }
+            Write-Host "DESTRUCTIVE_COM_ACCESS_PERMISSION_OBSERVED outcome=$accessOutcome restored=true remoteRights=false"
+            Stop-Adapter $permissionAdapter
+            $permissionAdapter = $null
+
+            # A deliberately nonexistent RunAs identity must fail closed. Do
+            # not configure or log a password for this negative test.
+            $appKey.SetValue('RunAs', '.\opcda-review-missing-account', [Microsoft.Win32.RegistryValueKind]::String)
+            $appKey.Flush()
+            Stop-ServerProcesses
+            $permissionAdapter = Start-Adapter -WriteEnabled $false -Label 'runas-invalid'
+            $runAsDenied = Wait-SourceFailure -ExpectedHRESULTs @('0x8000401A', '0x8007052E', '0x80080005')
+            Assert-True ($runAsDenied.source.lastError.operation -eq 'CoCreateInstance(IOPCServer)') `
+                'RunAs failure did not identify CoCreateInstance'
+            $runAsHRESULT = [string]$runAsDenied.source.lastError.hresult.hex
+            Restore-RegistryValue -Key $appKey -Name 'RunAs' -Snapshot $runAsSnapshot
+            [void](Wait-Connected -TimeoutSeconds 60)
+            Write-Host "DESTRUCTIVE_COM_RUNAS_FAILURE_PASS hresult=$runAsHRESULT recovered=true credentialStored=false"
+        }
+        finally {
+            Stop-Adapter $permissionAdapter
+            Restore-RegistryValue -Key $appKey -Name 'LaunchPermission' -Snapshot $launchSnapshot
+            Restore-RegistryValue -Key $appKey -Name 'AccessPermission' -Snapshot $accessSnapshot
+            Restore-RegistryValue -Key $appKey -Name 'RunAs' -Snapshot $runAsSnapshot
+            Stop-ServerProcesses
+        }
+    }
+    finally {
+        if ($null -ne $appKey) {
+            $appKey.Dispose()
+        }
+        $machineClasses.Dispose()
+        $identity.Dispose()
+    }
+}
+
 function Get-ServerProcesses {
     return @(Get-Process -Name $script:ServerProcessName -ErrorAction SilentlyContinue)
 }
@@ -274,7 +484,7 @@ else {
     (Resolve-Path -LiteralPath $StabilityProbePath).Path
 }
 $script:ServerRoot = (Resolve-Path -LiteralPath $ServerDirectory).Path
-$script:WorkingDirectory = Join-Path ([IO.Path]::GetTempPath()) "opcda-adapter-real-da-$AdapterArch"
+$script:WorkingDirectory = Join-Path ([IO.Path]::GetTempPath()) "opcda-adapter-real-da-$AdapterArch-$RunLabel"
 if (Test-Path -LiteralPath $script:WorkingDirectory) {
     throw "validation working directory already exists: $script:WorkingDirectory"
 }
@@ -292,6 +502,12 @@ $expectedCLSID = if ($AdapterArch -eq '386') {
 }
 else {
     '{F8582CF8-88FB-11DA-A5ED-0060B0692061}'
+}
+$script:AppID = if ($AdapterArch -eq '386') {
+    '{F8582CF4-88FB-11DA-A5ED-0060B0692061}'
+}
+else {
+    '{F8582CF9-88FB-11DA-A5ED-0060B0692061}'
 }
 $registryView = if ($AdapterArch -eq '386') {
     [Microsoft.Win32.RegistryView]::Registry32
@@ -347,6 +563,12 @@ try {
 
     Write-Host "Registered source=$($script:ProgID) architecture=$serverPlatform using local COM"
 
+    if ($Destructive.IsPresent) {
+        Write-Host 'Starting destructive local COM permission validation'
+        Invoke-DestructiveCOMPermissionValidation -RegistryView $registryView -AppID $script:AppID
+        Write-Host 'Completed destructive local COM permission validation'
+    }
+
     $adapter = Start-Adapter -WriteEnabled $false -Label 'write-disabled'
     Write-Host 'Waiting for initial local-COM connection with Write disabled'
     $status = Wait-Connected
@@ -356,6 +578,11 @@ try {
     Assert-True ([bool]$status.capabilities.write) 'Write capability was not reported'
     Assert-True (-not [bool]$status.writeEnabled) 'Write unexpectedly started enabled'
     Assert-True ([bool]$status.frontend.http.listening) 'HTTP listener was not reported as listening'
+    $adapterListeners = @(Get-NetTCPConnection -State Listen -OwningProcess $adapter.Id -ErrorAction SilentlyContinue)
+    Assert-True ($adapterListeners.Count -eq 1) 'adapter did not expose exactly one TCP listener'
+    Assert-True ($adapterListeners[0].LocalAddress -eq '127.0.0.1' -and
+        [int]$adapterListeners[0].LocalPort -eq 18080) `
+        'default validation listener was reachable beyond IPv4 loopback'
 
     $disabledResponse = Send-AdapterRequest -Method POST -Path '/v1/write' -Body '{}'
     $disabled = Require-Status -Response $disabledResponse -Expected 403 -Operation 'disabled Write'
@@ -473,6 +700,24 @@ try {
         [bool]$outageResponse.JSON.results[0].ok
     Assert-True (-not $returnedStaleSuccess) 'Read returned a successful value while the DA server was unavailable'
 
+    # A Write submitted after the source is unavailable must fail immediately
+    # and must not be retained for replay after reconnect. The fixture starts
+    # Test/Float at 3.14159, so 17.25 is an unambiguous replay marker.
+    $outageWriteBody = ConvertTo-RequestJSON ([ordered]@{
+        items = @([ordered]@{
+            itemId = 'Test/Float'
+            dataType = 'VT_R4'
+            valueEncoding = 'json'
+            value = 17.25
+        })
+    })
+    $outageWriteResponse = Send-AdapterRequest -Method POST -Path '/v1/write' -Body $outageWriteBody
+    Assert-True ($outageWriteResponse.Status -ne 200) `
+        'Write submitted during a source outage unexpectedly returned an item result'
+    Assert-True ($outageWriteResponse.JSON.error.layer -eq 'adapter' -and
+        $outageWriteResponse.JSON.error.code -eq 'RUNTIME_UNAVAILABLE') `
+        'Write submitted during a source outage did not fail as RUNTIME_UNAVAILABLE'
+
     $sawDisconnected = $false
     $stateDeadline = [DateTime]::UtcNow.AddSeconds(10)
     do {
@@ -493,6 +738,26 @@ try {
     Assert-True ([uint64]$reconnected.runtime.reconnectCount -gt $oldReconnectCount) 'reconnect count did not advance'
     $afterReconnect = Read-Items @('Test/Int32')
     Assert-True ([bool]$afterReconnect.results[0].ok) 'known ItemID did not lazy re-register after reconnect'
+    $afterReconnectFloat = Read-Items @('Test/Float')
+    Assert-True ([bool]$afterReconnectFloat.results[0].ok -and
+        [double]$afterReconnectFloat.results[0].value -ne 17.25) `
+        'outage Write marker appeared after reconnect, indicating forbidden replay'
+
+    for ($crashCycle = 1; $crashCycle -le $AdapterCrashCycles; $crashCycle++) {
+        Stop-Adapter $adapter
+        $adapter = $null
+        Start-Sleep -Milliseconds 100
+        $adapter = Start-Adapter -WriteEnabled $true -Label "forced-restart-$crashCycle"
+        $crashRecovered = Wait-Connected -TimeoutSeconds 60
+        Assert-True ([uint64]$crashRecovered.source.connectionGeneration -eq 1) `
+            "forced adapter restart $crashCycle retained a prior-process connection generation"
+        $crashRead = Read-Items @('Test/Int32')
+        Assert-True ([bool]$crashRead.results[0].ok) `
+            "forced adapter restart $crashCycle did not recover a known ItemID"
+        Assert-True (@(Get-ServerProcesses).Count -eq 1) `
+            "forced adapter restart $crashCycle left an unexpected DA server process count"
+        Write-Host "Destructive adapter restart $crashCycle/$AdapterCrashCycles recovered generation=1"
+    }
 
     $adapterBefore = Get-ResourceSample $adapter
     for ($failureCycle = 1; $failureCycle -le $FailureCycles; $failureCycle++) {
@@ -556,7 +821,8 @@ try {
             '-overload-requests', '48',
             '-request-slots', '32',
             '-slow-connections', '48',
-            '-header-timeout', '5s'
+            '-header-timeout', '5s',
+            '-body-timeout', '15s'
         ) -TimeoutSeconds 1200
         Write-Host 'Completed HTTP stability profile'
     }
@@ -580,8 +846,12 @@ try {
     Assert-True ($serverAfter.Handles -lt 2048 -and $serverHandleDelta -lt 128) 'test server handle growth exceeded the validation bound'
     Assert-True ($serverAfter.PrivateBytes -lt 536870912 -and $serverPrivateDelta -lt 67108864) 'test server private-byte growth exceeded the validation bound'
 
+    $valueLogMatches = @(Get-ChildItem -LiteralPath $script:WorkingDirectory -Filter 'adapter-*.log' -File |
+        Select-String -SimpleMatch -Pattern '"value":', '"valueEncoding":')
+    Assert-True ($valueLogMatches.Count -eq 0) 'adapter logs contained a process-value JSON field'
+
     $stabilityEnabled = $null -ne $script:StabilityProbeExecutable
-    Write-Host "REAL_DA_VALIDATION_PASS arch=$AdapterArch server=$serverPlatform browse=root+nested read=partial write=disabled+typed+denied reconnect=true failureCycles=$FailureCycles stability=$stabilityEnabled soakIterations=$SoakIterations"
+    Write-Host "REAL_DA_VALIDATION_PASS arch=$AdapterArch server=$serverPlatform browse=root+nested read=partial write=disabled+typed+denied reconnect=true failureCycles=$FailureCycles destructive=$($Destructive.IsPresent) adapterCrashCycles=$AdapterCrashCycles stability=$stabilityEnabled soakIterations=$SoakIterations"
     Write-Host "READ_METADATA actualType=$($known.dataType.name) canonicalType=$($known.canonicalDataType.name) qualityRaw=$($known.quality) timestampPresent=$($known.timestampPresent) successHRESULT=$($known.hresult.hex) invalidHRESULT=$($unknown.hresult.hex)"
     Write-Host "RESOURCE_DELTAS adapterHandles=$adapterHandleDelta adapterPrivateBytes=$adapterPrivateDelta serverHandles=$serverHandleDelta serverPrivateBytes=$serverPrivateDelta"
 }

@@ -27,6 +27,14 @@ type Capabilities struct {
 	Subscribe bool
 }
 
+// SourceDiagnostic is bounded operational metadata about the most recent
+// source-level failure. It never contains an ItemID or process value.
+type SourceDiagnostic struct {
+	Operation      string
+	HRESULT        HRESULT
+	HRESULTPresent bool
+}
+
 type RuntimeStatus struct {
 	State                RuntimeState
 	Source               SourceConfig
@@ -36,4 +44,6 @@ type RuntimeStatus struct {
 	WriteEnabled         bool
 	QueueDepth           int
 	DegradedReason       string
+	LastSourceError      SourceDiagnostic
+	LastSourceErrorSet   bool
 }

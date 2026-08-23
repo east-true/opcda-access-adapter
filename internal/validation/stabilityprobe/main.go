@@ -4,6 +4,7 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"encoding/json"
 	"errors"
@@ -29,6 +30,7 @@ type options struct {
 	requestSlots     int
 	slowConnections  int
 	headerTimeout    time.Duration
+	bodyTimeout      time.Duration
 }
 
 type probe struct {
@@ -95,6 +97,7 @@ func main() {
 	flag.IntVar(&configured.requestSlots, "request-slots", 32, "configured maximum concurrent HTTP requests")
 	flag.IntVar(&configured.slowConnections, "slow-connections", 48, "incomplete-header connections")
 	flag.DurationVar(&configured.headerTimeout, "header-timeout", 5*time.Second, "configured adapter header timeout")
+	flag.DurationVar(&configured.bodyTimeout, "body-timeout", 15*time.Second, "configured adapter request-body read timeout")
 	flag.Parse()
 
 	if err := validateOptions(configured); err != nil {
@@ -122,7 +125,9 @@ func main() {
 	}{
 		{name: "normal semantics", run: p.normal},
 		{name: "invalid and anomalous requests", run: p.anomalies},
+		{name: "malformed HTTP protocol requests", run: p.protocolAnomalies},
 		{name: "slow and oversized headers", run: func() error { return p.slowHeaders(configured.slowConnections, configured.headerTimeout) }},
+		{name: "slow request bodies", run: func() error { return p.slowBodies(configured.requestSlots/2, configured.bodyTimeout) }},
 		{name: "rapid sequential requests", run: func() error { return p.rapid(configured.rapidRequests) }},
 		{name: "mixed concurrent requests", run: func() error { return p.concurrent(configured.workers, configured.requestsPerWork) }},
 		{name: "bounded overload and recovery", run: func() error { return p.overload(configured.overloadRequests, configured.requestSlots) }},
@@ -135,9 +140,58 @@ func main() {
 		}
 		fmt.Printf("STABILITY_STEP_PASS name=%q duration=%s\n", step.name, time.Since(stepStarted).Round(time.Millisecond))
 	}
-	fmt.Printf("HTTP_STABILITY_PASS rapid=%d mixed=%d overload=%d slowConnections=%d duration=%s\n",
+	fmt.Printf("HTTP_STABILITY_PASS rapid=%d mixed=%d overload=%d slowHeaders=%d slowBodies=%d duration=%s\n",
 		configured.rapidRequests, configured.workers*configured.requestsPerWork,
-		configured.overloadRequests, configured.slowConnections, time.Since(started).Round(time.Millisecond))
+		configured.overloadRequests, configured.slowConnections, configured.requestSlots/2,
+		time.Since(started).Round(time.Millisecond))
+}
+
+func (p probe) protocolAnomalies() error {
+	address := p.baseURL.Host
+	requests := []string{
+		"POST /v1/read HTTP/1.1\r\nHost: " + address + "\r\nContent-Type: application/json\r\nContent-Length: 2\r\nContent-Length: 3\r\n\r\n{}",
+		"POST /v1/read HTTP/1.1\r\nHost: " + address + "\r\nContent-Type: application/json\r\nContent-Length: 1\r\nTransfer-Encoding: chunked\r\n\r\n0\r\n\r\n",
+		"POST /v1/read HTTP/1.1\r\nHost: " + address + "\r\nTransfer-Encoding: chunked\r\n\r\nZ\r\ninvalid\r\n0\r\n\r\n",
+		"GET /v1/status HTTP/1.1\r\nHost: " + address + "\r\nX-Invalid: a\x00b\r\n\r\n",
+		"GE T /v1/status HTTP/1.1\r\nHost: " + address + "\r\n\r\n",
+	}
+	for index, request := range requests {
+		if err := expectRawHTTPRejection(address, request); err != nil {
+			return fmt.Errorf("malformed HTTP case %d: %w", index, err)
+		}
+		if err := p.connectedStatus(); err != nil {
+			return fmt.Errorf("status did not recover after malformed HTTP case %d: %w", index, err)
+		}
+	}
+	return nil
+}
+
+func expectRawHTTPRejection(address, request string) error {
+	connection, err := net.DialTimeout("tcp", address, 2*time.Second)
+	if err != nil {
+		return err
+	}
+	defer connection.Close()
+	if _, err := io.WriteString(connection, request); err != nil {
+		return err
+	}
+	if tcpConnection, ok := connection.(*net.TCPConn); ok {
+		_ = tcpConnection.CloseWrite()
+	}
+	if err := connection.SetReadDeadline(time.Now().Add(3 * time.Second)); err != nil {
+		return err
+	}
+	statusLine, err := bufio.NewReader(connection).ReadString('\n')
+	if err != nil && statusLine == "" {
+		// Closing or resetting a syntactically invalid request is an explicit
+		// rejection and is permitted by net/http.
+		return nil
+	}
+	fields := strings.Fields(statusLine)
+	if len(fields) < 2 || len(fields[1]) != 3 || fields[1][0] != '4' {
+		return fmt.Errorf("request was not rejected with connection close or HTTP 4xx")
+	}
+	return nil
 }
 
 func validateOptions(configured options) error {
@@ -147,7 +201,8 @@ func validateOptions(configured options) error {
 		configured.overloadRequests < 33 || configured.overloadRequests > 63 ||
 		configured.requestSlots < 1 || configured.requestSlots >= configured.overloadRequests ||
 		configured.slowConnections < 1 || configured.slowConnections > 63 ||
-		configured.headerTimeout < time.Second || configured.headerTimeout > time.Minute {
+		configured.headerTimeout < time.Second || configured.headerTimeout > time.Minute ||
+		configured.bodyTimeout < time.Second || configured.bodyTimeout > time.Minute {
 		return errors.New("one or more values are outside their safe validation bounds")
 	}
 	return nil
@@ -365,6 +420,37 @@ func closeConnections(connections []net.Conn) {
 	for _, connection := range connections {
 		_ = connection.Close()
 	}
+}
+
+func (p probe) slowBodies(count int, bodyTimeout time.Duration) error {
+	connections := make([]net.Conn, 0, count)
+	for index := 0; index < count; index++ {
+		connection, err := openIncompleteBody(p.baseURL.Host)
+		if err != nil {
+			closeConnections(connections)
+			return fmt.Errorf("open slow-body connection %d: %w", index, err)
+		}
+		connections = append(connections, connection)
+	}
+	if err := p.connectedStatus(); err != nil {
+		closeConnections(connections)
+		return fmt.Errorf("normal status starved by slow bodies: %w", err)
+	}
+	time.Sleep(bodyTimeout + time.Second)
+	for index, connection := range connections {
+		if err := connection.SetReadDeadline(time.Now().Add(time.Second)); err != nil {
+			closeConnections(connections)
+			return err
+		}
+		_, readErr := io.Copy(io.Discard, connection)
+		var networkError net.Error
+		if errors.As(readErr, &networkError) && networkError.Timeout() {
+			closeConnections(connections)
+			return fmt.Errorf("slow-body connection %d remained open past timeout", index)
+		}
+	}
+	closeConnections(connections)
+	return p.connectedStatus()
 }
 
 func (p probe) rapid(count int) error {

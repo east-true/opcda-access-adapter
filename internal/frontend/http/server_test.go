@@ -21,6 +21,12 @@ func (statusRuntime) Status(context.Context) opcda.RuntimeStatus {
 		ReconnectCount:       3,
 		QueueDepth:           2,
 		Capabilities:         opcda.Capabilities{Browse: "supported", Read: true, Write: true},
+		LastSourceErrorSet:   true,
+		LastSourceError: opcda.SourceDiagnostic{
+			Operation:      "CoCreateInstance(IOPCServer)",
+			HRESULT:        opcda.HRESULT(-2147024891),
+			HRESULTPresent: true,
+		},
 	}
 }
 func (statusRuntime) Browse(context.Context, opcda.BrowseRequest) (opcda.BrowseResult, error) {
@@ -48,7 +54,7 @@ func TestStatusIncludesRuntimeAndListenerState(t *testing.T) {
 	if got, want := response.Header().Get("Content-Type"), "application/json"; got != want {
 		t.Fatalf("content type = %q, want %q", got, want)
 	}
-	if body := response.Body.String(); body == "" || !containsAll(body, []string{"connected", "Example.Server.1", "connectionGeneration", "reconnectCount", "queueDepth", "listening"}) {
+	if body := response.Body.String(); body == "" || !containsAll(body, []string{"connected", "Example.Server.1", "connectionGeneration", "reconnectCount", "queueDepth", "CoCreateInstance(IOPCServer)", "0x80070005", "listening"}) {
 		t.Fatalf("unexpected body: %s", body)
 	}
 	var decoded struct {

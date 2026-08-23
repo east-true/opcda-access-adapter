@@ -83,12 +83,25 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleStatus(ctx context.Context, w http.ResponseWriter) {
 	status := s.runtime.Status(ctx)
+	type sourceErrorResponse struct {
+		Operation string              `json:"operation"`
+		HRESULT   *opcda.HRESULTValue `json:"hresult,omitempty"`
+	}
+	var lastSourceError *sourceErrorResponse
+	if status.LastSourceErrorSet {
+		lastSourceError = &sourceErrorResponse{Operation: status.LastSourceError.Operation}
+		if status.LastSourceError.HRESULTPresent {
+			representation := status.LastSourceError.HRESULT.Representation()
+			lastSourceError.HRESULT = &representation
+		}
+	}
 	response := struct {
 		State  string `json:"state"`
 		Source struct {
-			ProgID               string `json:"progId,omitempty"`
-			CLSID                string `json:"clsid,omitempty"`
-			ConnectionGeneration uint64 `json:"connectionGeneration"`
+			ProgID               string               `json:"progId,omitempty"`
+			CLSID                string               `json:"clsid,omitempty"`
+			ConnectionGeneration uint64               `json:"connectionGeneration"`
+			LastError            *sourceErrorResponse `json:"lastError,omitempty"`
 		} `json:"source"`
 		Capabilities struct {
 			Browse    string `json:"browse"`
@@ -110,13 +123,15 @@ func (s *Server) handleStatus(ctx context.Context, w http.ResponseWriter) {
 	}{
 		State: string(status.State),
 		Source: struct {
-			ProgID               string `json:"progId,omitempty"`
-			CLSID                string `json:"clsid,omitempty"`
-			ConnectionGeneration uint64 `json:"connectionGeneration"`
+			ProgID               string               `json:"progId,omitempty"`
+			CLSID                string               `json:"clsid,omitempty"`
+			ConnectionGeneration uint64               `json:"connectionGeneration"`
+			LastError            *sourceErrorResponse `json:"lastError,omitempty"`
 		}{
 			ProgID:               status.Source.ProgID,
 			CLSID:                status.Source.CLSID,
 			ConnectionGeneration: status.ConnectionGeneration,
+			LastError:            lastSourceError,
 		},
 		Capabilities: struct {
 			Browse    string `json:"browse"`

@@ -17,3 +17,9 @@ The v0 HTTP listener defaults to loopback and Write is disabled by default.
 The project does not claim a production authentication, authorization, or TLS
 model. Exposing it beyond the local machine is an operator decision that must
 be protected by an appropriate deployment boundary.
+
+The adapter requests only in-process or same-machine COM activation. It does
+not request remote DCOM. Windows AppID Launch/Activation, Access, server
+identity, and 32/64-bit registry-view considerations are documented in
+[Windows COM security and permissions](docs/security-windows.md). Do not
+weaken machine-wide DCOM defaults to troubleshoot one server.
