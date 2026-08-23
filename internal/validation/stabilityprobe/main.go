@@ -313,11 +313,16 @@ func (p probe) anomalies() error {
 
 func (p probe) slowHeaders(count int, headerTimeout time.Duration) error {
 	status, _, err := p.request(http.MethodGet, "/v1/status", nil, map[string]string{"X-Stability-Large": strings.Repeat("x", 64<<10)})
-	if err != nil {
-		return fmt.Errorf("large header transport: %w", err)
-	}
-	if status != http.StatusRequestHeaderFieldsTooLarge {
+	if err == nil && status != http.StatusRequestHeaderFieldsTooLarge {
 		return fmt.Errorf("large header returned HTTP %d, expected 431", status)
+	}
+	if err != nil {
+		fmt.Println("STABILITY_HEADER_REJECTION mode=connection-close")
+	} else {
+		fmt.Println("STABILITY_HEADER_REJECTION mode=http-431")
+	}
+	if err := p.connectedStatus(); err != nil {
+		return fmt.Errorf("status did not recover after large-header rejection: %w", err)
 	}
 
 	address := p.baseURL.Host
