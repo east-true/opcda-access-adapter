@@ -1,6 +1,6 @@
 # ADR-0003: v0 Read types and FILETIME presence
 
-- Status: Accepted, pending real-server validation
+- Status: Accepted; non-zero FILETIME validated, absence sentinel pending
 - Date: 2026-08-23
 
 ## Context
@@ -30,5 +30,8 @@ revised transparently if a server demonstrates different source semantics.
 Clients can distinguish numeric widths through VARTYPE and do not lose 64-bit
 integer precision in JSON. SAFEARRAY, DECIMAL, DATE, and CY values fail
 explicitly until a lossless representation and corresponding tests exist.
-The zero-FILETIME rule preserves absence without synthesizing data, but remains
-an interoperability risk until real DA results are available.
+The zero-FILETIME rule preserves absence without synthesizing data. The
+official DA 2.05a fixture validation observed a non-zero source FILETIME and
+correctly exposed `timestampPresent: true` on both architectures. It did not
+exercise an all-zero FILETIME, so the absence sentinel remains an explicit
+interoperability risk pending an observed server result.

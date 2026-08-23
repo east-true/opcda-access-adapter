@@ -46,3 +46,9 @@ not execute the privileged COM registration job.
 Passing the workflow is evidence only after the exact GitHub run URL and
 commit SHA are recorded in `docs/compatibility.md`. A workflow definition or
 cross-build alone is not a compatibility result.
+
+The first recorded passing result is run
+[`32628886186`](https://github.com/east-true/opcda-access-adapter/actions/runs/32628886186)
+for adapter head `5267aec6e05f98dff5da4721ded6315e5a2ba990`. See the compatibility
+matrix for the observations, source pin, executable hashes, and resource
+deltas.
