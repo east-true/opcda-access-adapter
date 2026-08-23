@@ -10,10 +10,9 @@ a claim of broad vendor compatibility or production readiness.
 
 ## Current main SHA
 
-`f55b4bb8e8c092fa2a21f4f35089a14703c81a8d` — merged Windows HTTP and DA
-stability validation (PR #11). This status record is based on that executable
-revision; a later documentation-only merge does not change the validated
-adapter binary.
+`c0f56f746dd77c5d85e387cd5e99c60f50ef3e7d` — current protected `main` after
+the pinned setup-go v7 dependency update (PR #12). The most recent recorded
+real-DA executable evidence remains the stability revision identified below.
 
 ## Completed
 
@@ -47,8 +46,9 @@ adapter binary.
 
 ## In progress
 
-- None. The scoped v0 implementation, official-fixture validation, and bounded
-  Windows stability profile are complete.
+- Release-readiness work adds reproducible Windows archives, embedded
+  version/commit metadata, checksums, artifact attestations, a non-publishing
+  dry run, and maintainer documentation. No release or tag has been created.
 
 ## Validation results
 
@@ -155,12 +155,13 @@ adapter binary.
 
 ## Next exact tasks
 
-1. No implementation or stability-validation task remains for the scoped v0.
-2. Before a public `v0.0.0` release, confirm release packaging and security
-   reporting; continue to treat the existing Apache-2.0 license as authoritative.
-3. Add third-party compatibility rows only from authorized, executed tests;
+1. Complete and review release packaging without creating a public tag.
+2. Perform an isolated destructive Windows review, including local DCOM/COM
+   launch and access permission failures, before proposing a public release.
+3. Continue to treat the existing Apache-2.0 license as authoritative.
+4. Add third-party compatibility rows only from authorized, executed tests;
    do not infer vendor-wide compatibility from the official fixture.
-4. When an authorized server exposes non-Good Quality, an absent timestamp, or
+5. When an authorized server exposes non-Good Quality, an absent timestamp, or
    additional supported scalar types, add exact observations without changing
    source semantics.
 
