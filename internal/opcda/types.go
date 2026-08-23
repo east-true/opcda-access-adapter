@@ -14,8 +14,9 @@ const (
 )
 
 type DAAccessRights struct {
-	Read  bool `json:"read"`
-	Write bool `json:"write"`
+	Raw   uint32 `json:"raw"`
+	Read  bool   `json:"read"`
+	Write bool   `json:"write"`
 }
 
 // DAValue represents a scalar value copied out of a COM VARIANT. Value holds
@@ -38,10 +39,14 @@ type ReadRequest struct {
 }
 
 type ReadResult struct {
-	ItemID    DAItemID
-	Value     *DAValue
-	HRESULT   HRESULT
-	ErrorCode string
+	ItemID         DAItemID
+	Value          *DAValue
+	VarType        *DAVarType
+	CanonicalType  *DAVarType
+	AccessRights   *DAAccessRights
+	HRESULT        HRESULT
+	HRESULTPresent bool
+	ErrorCode      string
 }
 
 type BrowseFilter string
@@ -84,7 +89,8 @@ type WriteItem struct {
 }
 
 type WriteResult struct {
-	ItemID    DAItemID
-	HRESULT   HRESULT
-	ErrorCode string
+	ItemID         DAItemID
+	HRESULT        HRESULT
+	HRESULTPresent bool
+	ErrorCode      string
 }

@@ -26,14 +26,19 @@ const (
 
 var (
 	ole32    = syscall.NewLazyDLL("ole32.dll")
+	oleaut32 = syscall.NewLazyDLL("oleaut32.dll")
 	user32   = syscall.NewLazyDLL("user32.dll")
 	kernel32 = syscall.NewLazyDLL("kernel32.dll")
 
-	procCoInitializeEx   = ole32.NewProc("CoInitializeEx")
-	procCoUninitialize   = ole32.NewProc("CoUninitialize")
-	procCLSIDFromProgID  = ole32.NewProc("CLSIDFromProgID")
-	procCLSIDFromString  = ole32.NewProc("CLSIDFromString")
-	procCoCreateInstance = ole32.NewProc("CoCreateInstance")
+	procCoInitializeEx    = ole32.NewProc("CoInitializeEx")
+	procCoUninitialize    = ole32.NewProc("CoUninitialize")
+	procCLSIDFromProgID   = ole32.NewProc("CLSIDFromProgID")
+	procCLSIDFromString   = ole32.NewProc("CLSIDFromString")
+	procCoCreateInstance  = ole32.NewProc("CoCreateInstance")
+	procCoTaskMemFree     = ole32.NewProc("CoTaskMemFree")
+	procVariantClear      = oleaut32.NewProc("VariantClear")
+	procSysAllocStringLen = oleaut32.NewProc("SysAllocStringLen")
+	procSysStringLen      = oleaut32.NewProc("SysStringLen")
 
 	procCreateEventW = kernel32.NewProc("CreateEventW")
 	procSetEvent     = kernel32.NewProc("SetEvent")
@@ -68,25 +73,21 @@ func (g guid) String() string {
 		g.Data4[4], g.Data4[5], g.Data4[6], g.Data4[7])
 }
 
-type iUnknown struct {
-	VTable *iUnknownVTable
-}
-
 type iUnknownVTable struct {
 	QueryInterface uintptr
 	AddRef         uintptr
 	Release        uintptr
 }
 
-func (unknown *iUnknown) release() uint32 {
-	if unknown == nil || unknown.VTable == nil || unknown.VTable.Release == 0 {
+func releaseCOM(object unsafe.Pointer, release uintptr) uint32 {
+	if object == nil || release == 0 {
 		return 0
 	}
 	result, _, _ := syscall.SyscallN(
-		unknown.VTable.Release,
-		uintptr(unsafe.Pointer(unknown)),
+		release,
+		uintptr(object),
 	)
-	runtime.KeepAlive(unknown)
+	runtime.KeepAlive(object)
 	return uint32(result)
 }
 
@@ -150,8 +151,8 @@ func resolveSourceCLSID(source SourceConfig) (guid, error) {
 	return clsid, nil
 }
 
-func coCreateOPCServer(clsid *guid) (*iUnknown, error) {
-	var server *iUnknown
+func coCreateOPCServer(clsid *guid) (*iopcServer, error) {
+	var server *iopcServer
 	result, _, _ := procCoCreateInstance.Call(
 		uintptr(unsafe.Pointer(clsid)),
 		0,
@@ -167,6 +168,42 @@ func coCreateOPCServer(clsid *guid) (*iUnknown, error) {
 		return nil, fmt.Errorf("CoCreateInstance(IOPCServer) returned a nil interface")
 	}
 	return server, nil
+}
+
+func coTaskMemFree(pointer unsafe.Pointer) {
+	if pointer != nil {
+		procCoTaskMemFree.Call(uintptr(pointer))
+	}
+}
+
+func variantClear(value *variant) error {
+	result, _, _ := procVariantClear.Call(uintptr(unsafe.Pointer(value)))
+	runtime.KeepAlive(value)
+	if hr := hresultFromCall(result); hr.Failed() {
+		return &comCallError{Operation: "VariantClear", HRESULT: hr}
+	}
+	return nil
+}
+
+func bstrLength(value unsafe.Pointer) uint32 {
+	length, _, _ := procSysStringLen.Call(uintptr(value))
+	return uint32(length)
+}
+
+func allocateBSTR(units []uint16) (uintptr, error) {
+	var pointer uintptr
+	if len(units) == 0 {
+		pointer, _, _ = procSysAllocStringLen.Call(0, 0)
+	} else {
+		pointer, _, _ = procSysAllocStringLen.Call(
+			uintptr(unsafe.Pointer(&units[0])), uintptr(len(units)),
+		)
+		runtime.KeepAlive(units)
+	}
+	if pointer == 0 {
+		return 0, fmt.Errorf("SysAllocStringLen failed")
+	}
+	return pointer, nil
 }
 
 type windowsHandle uintptr

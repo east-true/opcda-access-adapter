@@ -6,11 +6,11 @@ process data.
 
 ## Current status
 
-The project is in v0 implementation. The bootstrap and dedicated Windows COM
-foundation are implemented, including local-only activation and owning-thread
-cleanup. DA group, Read, Browse, and Write operations are added in subsequent
-phases. It is not production-ready and has not yet been validated against a
-real OPC DA server.
+The project is in v0 implementation. The dedicated Windows COM foundation,
+internal DA group, lazy AddItems cache, device `IOPCSyncIO::Read`, and HTTP
+`POST /v1/read` are implemented. Browse, Write, and reconnect closure remain.
+It is not production-ready and has not yet been validated against a real OPC
+DA server.
 
 ## Scope
 
@@ -42,6 +42,7 @@ configuration is documented in the implementation status and ADR records.
 - [Design baseline](docs/design.md)
 - [Implementation status](docs/implementation-status.md)
 - [Compatibility matrix and test procedure](docs/compatibility.md)
+- [v0 HTTP API](docs/http-api.md)
 - [Contributing](CONTRIBUTING.md)
 - [Security policy](SECURITY.md)
 
