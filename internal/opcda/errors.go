@@ -15,6 +15,7 @@ const (
 	CodeBrowseUnsupported         ErrorCode = "BROWSE_UNSUPPORTED"
 	CodeBrowseResultLimitExceeded ErrorCode = "BROWSE_RESULT_LIMIT_EXCEEDED"
 	CodeUnsupportedVarType        ErrorCode = "UNSUPPORTED_VARTYPE"
+	CodeTypeMismatch              ErrorCode = "TYPE_MISMATCH"
 	CodeInvalidValue              ErrorCode = "INVALID_VALUE"
 	CodeItemIDTooLong             ErrorCode = "ITEM_ID_TOO_LONG"
 	CodeBSTRTooLong               ErrorCode = "BSTR_TOO_LONG"

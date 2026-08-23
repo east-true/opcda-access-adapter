@@ -286,11 +286,13 @@ func writeOperationError(w stdhttp.ResponseWriter, err error) {
 	if adapterError, ok := opcda.AsAdapterError(err); ok {
 		status := stdhttp.StatusServiceUnavailable
 		switch adapterError.Code {
-		case opcda.CodeInvalidRequest, opcda.CodeRequestLimitExceeded, opcda.CodeItemIDTooLong:
+		case opcda.CodeInvalidRequest, opcda.CodeRequestLimitExceeded, opcda.CodeItemIDTooLong, opcda.CodeInvalidValue, opcda.CodeBSTRTooLong:
 			status = stdhttp.StatusBadRequest
+		case opcda.CodeWriteDisabled:
+			status = stdhttp.StatusForbidden
 		case opcda.CodeRuntimeDeadline:
 			status = stdhttp.StatusGatewayTimeout
-		case opcda.CodeBrowseUnsupported, opcda.CodeBrowseResultLimitExceeded:
+		case opcda.CodeBrowseUnsupported, opcda.CodeBrowseResultLimitExceeded, opcda.CodeUnsupportedVarType:
 			status = stdhttp.StatusUnprocessableEntity
 		}
 		writeLayerError(w, status, "adapter", adapterError.Code, adapterError.Message, nil)

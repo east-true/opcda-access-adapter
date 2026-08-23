@@ -35,6 +35,7 @@ func New(config Config, runtime opcda.Runtime) (*Service, error) {
 		MaxConcurrent:    config.MaxConcurrentRequests,
 		RequestDeadline:  config.RequestDeadline,
 		MaxReadItems:     config.Runtime.Limits.MaxReadItems,
+		MaxWriteItems:    config.Runtime.Limits.MaxWriteItems,
 		MaxBrowseEntries: config.Runtime.Limits.MaxBrowseEntries,
 		MaxBrowseDepth:   config.Runtime.Limits.MaxBrowseDepth,
 		MaxItemIDBytes:   config.Runtime.Limits.MaxItemIDBytes,

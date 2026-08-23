@@ -328,11 +328,60 @@ func (r *windowsRuntime) ReadBatch(ctx context.Context, request ReadRequest) ([]
 	}
 }
 
-func (r *windowsRuntime) WriteBatch(context.Context, []WriteItem) ([]WriteResult, error) {
+func (r *windowsRuntime) WriteBatch(ctx context.Context, items []WriteItem) ([]WriteResult, error) {
 	if !r.config.WriteEnabled {
 		return nil, NewAdapterError(CodeWriteDisabled, "write is disabled")
 	}
-	return nil, NewAdapterError(CodeRuntimeUnavailable, "OPC DA Write is not initialized")
+	if len(items) == 0 {
+		return nil, NewAdapterError(CodeInvalidRequest, "Write requires at least one item")
+	}
+	if len(items) > r.config.Limits.MaxWriteItems {
+		return nil, NewAdapterError(CodeRequestLimitExceeded, "Write item limit exceeded")
+	}
+	for _, item := range items {
+		if item.ItemID == "" {
+			return nil, NewAdapterError(CodeInvalidRequest, "itemId must not be empty")
+		}
+		for _, character := range item.ItemID {
+			if character == 0 {
+				return nil, NewAdapterError(CodeInvalidRequest, "itemId must not contain NUL")
+			}
+		}
+		if len([]byte(item.ItemID)) > r.config.Limits.MaxItemIDBytes {
+			return nil, NewAdapterError(CodeItemIDTooLong, "itemId exceeds configured limit")
+		}
+		if err := validateWriteValue(item.VarType, item.Value, r.config.Limits.MaxBSTRCodeUnits); err != nil {
+			return nil, err
+		}
+	}
+
+	type response struct {
+		results []WriteResult
+		err     error
+	}
+	responses := make(chan response, 1)
+	command := daThreadCommand{
+		context: ctx,
+		run: func(session *daThreadSession) {
+			if session.syncIO == nil || session.registrations == nil {
+				responses <- response{err: NewAdapterError(CodeRuntimeUnavailable, "OPC DA runtime is not connected")}
+				return
+			}
+			results, err := session.writeValues(items, r.config.Limits.MaxBSTRCodeUnits)
+			responses <- response{results: results, err: err}
+		},
+	}
+	if err := r.enqueue(ctx, command); err != nil {
+		return nil, err
+	}
+	select {
+	case response := <-responses:
+		return response.results, response.err
+	case <-ctx.Done():
+		// An in-flight COM Write is deliberately not cancelled or replayed. The
+		// buffered response channel lets the owning DA thread finish safely.
+		return nil, &AdapterError{Code: CodeRuntimeDeadline, Message: "Write deadline exceeded; source outcome may be unknown", Cause: ctx.Err()}
+	}
 }
 
 func (r *windowsRuntime) Shutdown(ctx context.Context) error {
