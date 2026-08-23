@@ -14,6 +14,8 @@ type Config struct {
 	MaxBodyBytes    int64
 	MaxConcurrent   int
 	RequestDeadline time.Duration
+	MaxReadItems    int
+	MaxItemIDBytes  int
 }
 
 type Server struct {
@@ -24,6 +26,12 @@ type Server struct {
 }
 
 func New(runtime opcda.Runtime, config Config) *Server {
+	if config.MaxReadItems <= 0 {
+		config.MaxReadItems = opcda.DefaultLimits().MaxReadItems
+	}
+	if config.MaxItemIDBytes <= 0 {
+		config.MaxItemIDBytes = opcda.DefaultLimits().MaxItemIDBytes
+	}
 	return &Server{
 		runtime:  runtime,
 		config:   config,
@@ -50,6 +58,8 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case r.Method == http.MethodGet && r.URL.Path == "/v1/status":
 		s.handleStatus(ctx, w)
+	case r.Method == http.MethodPost && r.URL.Path == "/v1/read":
+		s.handleRead(ctx, w, r)
 	default:
 		writeError(w, http.StatusNotFound, "NOT_FOUND", "endpoint not found")
 	}
@@ -116,21 +126,28 @@ func writeJSON(w http.ResponseWriter, status int, body any) {
 }
 
 func writeError(w http.ResponseWriter, status int, code opcda.ErrorCode, message string) {
+	writeLayerError(w, status, "frontend", code, message, nil)
+}
+
+func writeLayerError(w http.ResponseWriter, status int, layer string, code opcda.ErrorCode, message string, hresult *opcda.HRESULTValue) {
 	writeJSON(w, status, struct {
 		Error struct {
-			Layer   string `json:"layer"`
-			Code    string `json:"code"`
-			Message string `json:"message"`
+			Layer   string              `json:"layer"`
+			Code    string              `json:"code"`
+			Message string              `json:"message"`
+			HRESULT *opcda.HRESULTValue `json:"hresult,omitempty"`
 		} `json:"error"`
 	}{
 		Error: struct {
-			Layer   string `json:"layer"`
-			Code    string `json:"code"`
-			Message string `json:"message"`
+			Layer   string              `json:"layer"`
+			Code    string              `json:"code"`
+			Message string              `json:"message"`
+			HRESULT *opcda.HRESULTValue `json:"hresult,omitempty"`
 		}{
-			Layer:   "frontend",
+			Layer:   layer,
 			Code:    string(code),
 			Message: message,
+			HRESULT: hresult,
 		},
 	})
 }

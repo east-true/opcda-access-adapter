@@ -17,6 +17,8 @@ const (
 	CodeUnsupportedVarType        ErrorCode = "UNSUPPORTED_VARTYPE"
 	CodeInvalidValue              ErrorCode = "INVALID_VALUE"
 	CodeItemIDTooLong             ErrorCode = "ITEM_ID_TOO_LONG"
+	CodeBSTRTooLong               ErrorCode = "BSTR_TOO_LONG"
+	CodeRegisteredItemLimit       ErrorCode = "REGISTERED_ITEM_LIMIT_EXCEEDED"
 )
 
 // AdapterError identifies an adapter/runtime failure without replacing source
@@ -42,6 +44,25 @@ func NewAdapterError(code ErrorCode, message string) *AdapterError {
 
 func AsAdapterError(err error) (*AdapterError, bool) {
 	var target *AdapterError
+	if errors.As(err, &target) {
+		return target, true
+	}
+	return nil, false
+}
+
+// SourceError is a method-level COM/OPC DA failure. Per-item HRESULTs remain
+// in batch results and are not promoted to this request-level error.
+type SourceError struct {
+	Operation string
+	HRESULT   HRESULT
+}
+
+func (e *SourceError) Error() string {
+	return e.Operation + " failed: " + e.HRESULT.Hex()
+}
+
+func AsSourceError(err error) (*SourceError, bool) {
+	var target *SourceError
 	if errors.As(err, &target) {
 		return target, true
 	}

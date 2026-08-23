@@ -15,7 +15,14 @@ type daThreadCommand struct {
 }
 
 type daThreadSession struct {
-	server *iUnknown
+	server            *iopcServer
+	serverGroupHandle uint32
+	hasServerGroup    bool
+	itemMgt           *iopcItemMgt
+	syncIO            *iopcSyncIO
+	generation        uint64
+	registrations     *registrationCache
+	nextClientHandle  uint32
 }
 
 type windowsRuntime struct {
@@ -31,8 +38,8 @@ type windowsRuntime struct {
 }
 
 func New(config Config) (Runtime, error) {
-	if config.Limits.CommandQueue <= 0 {
-		return nil, fmt.Errorf("DA command queue limit must be positive")
+	if err := config.Limits.validate(); err != nil {
+		return nil, err
 	}
 	if config.Source.ProgID != "" && config.Source.CLSID != "" {
 		return nil, fmt.Errorf("configure exactly one source ProgID or CLSID")
@@ -84,10 +91,7 @@ func (r *windowsRuntime) runDAThread(started chan<- error) {
 
 	session := &daThreadSession{}
 	defer func() {
-		if session.server != nil {
-			session.server.release()
-			session.server = nil
-		}
+		session.disconnect()
 		r.updateStatus(func(status *RuntimeStatus) {
 			status.State = RuntimeStateStopped
 			status.Capabilities = Capabilities{Browse: "unavailable"}
@@ -131,12 +135,53 @@ func (r *windowsRuntime) connect(session *daThreadSession) {
 		return
 	}
 	session.server = server
+	serverGroupHandle, itemMgt, err := addDAGroup(server)
+	if err != nil {
+		session.disconnect()
+		r.setState(RuntimeStateDisconnected)
+		return
+	}
+	session.serverGroupHandle = serverGroupHandle
+	session.hasServerGroup = true
+	session.itemMgt = itemMgt
+	syncIO, err := querySyncIO(itemMgt)
+	if err != nil {
+		session.disconnect()
+		r.setState(RuntimeStateDisconnected)
+		return
+	}
+	session.syncIO = syncIO
+	session.generation = 1
+	session.registrations = newRegistrationCache(r.config.Limits.MaxRegisteredItems, session.generation)
 	r.updateStatus(func(status *RuntimeStatus) {
 		status.State = RuntimeStateConnected
-		status.ConnectionGeneration = 1
-		// AddGroup and operation interfaces are established in Phase 2.
-		status.Capabilities = Capabilities{Browse: "unavailable"}
+		status.ConnectionGeneration = session.generation
+		status.Capabilities = Capabilities{Browse: "unavailable", Read: true, Write: true}
 	})
+}
+
+func (session *daThreadSession) disconnect() {
+	if session.syncIO != nil {
+		session.syncIO.release()
+		session.syncIO = nil
+	}
+	if session.itemMgt != nil {
+		session.itemMgt.release()
+		session.itemMgt = nil
+	}
+	if session.hasServerGroup {
+		_ = removeDAGroup(session.server, session.serverGroupHandle)
+	}
+	session.serverGroupHandle = 0
+	session.hasServerGroup = false
+	if session.server != nil {
+		session.server.release()
+		session.server = nil
+	}
+	if session.registrations != nil {
+		session.registrations.reset(0)
+	}
+	session.generation = 0
 }
 
 func (r *windowsRuntime) processReadyCommands(session *daThreadSession) bool {
@@ -169,8 +214,58 @@ func (*windowsRuntime) Browse(context.Context, BrowseRequest) (BrowseResult, err
 	return BrowseResult{}, NewAdapterError(CodeRuntimeUnavailable, "OPC DA Browse is not initialized")
 }
 
-func (*windowsRuntime) ReadBatch(context.Context, ReadRequest) ([]ReadResult, error) {
-	return nil, NewAdapterError(CodeRuntimeUnavailable, "OPC DA Read is not initialized")
+func (r *windowsRuntime) ReadBatch(ctx context.Context, request ReadRequest) ([]ReadResult, error) {
+	if request.Source == "" {
+		request.Source = DADataSourceDevice
+	}
+	if request.Source != DADataSourceDevice {
+		return nil, NewAdapterError(CodeInvalidRequest, "v0 Read source must be device")
+	}
+	if len(request.Items) == 0 {
+		return nil, NewAdapterError(CodeInvalidRequest, "Read requires at least one item")
+	}
+	if len(request.Items) > r.config.Limits.MaxReadItems {
+		return nil, NewAdapterError(CodeRequestLimitExceeded, "Read item limit exceeded")
+	}
+	for _, itemID := range request.Items {
+		if itemID == "" {
+			return nil, NewAdapterError(CodeInvalidRequest, "itemId must not be empty")
+		}
+		for _, character := range itemID {
+			if character == 0 {
+				return nil, NewAdapterError(CodeInvalidRequest, "itemId must not contain NUL")
+			}
+		}
+		if len([]byte(itemID)) > r.config.Limits.MaxItemIDBytes {
+			return nil, NewAdapterError(CodeItemIDTooLong, "itemId exceeds configured limit")
+		}
+	}
+
+	type response struct {
+		results []ReadResult
+		err     error
+	}
+	responses := make(chan response, 1)
+	command := daThreadCommand{
+		context: ctx,
+		run: func(session *daThreadSession) {
+			if session.syncIO == nil || session.registrations == nil {
+				responses <- response{err: NewAdapterError(CodeRuntimeUnavailable, "OPC DA runtime is not connected")}
+				return
+			}
+			results, err := session.readDevice(request.Items, r.config.Limits.MaxBSTRCodeUnits)
+			responses <- response{results: results, err: err}
+		},
+	}
+	if err := r.enqueue(ctx, command); err != nil {
+		return nil, err
+	}
+	select {
+	case response := <-responses:
+		return response.results, response.err
+	case <-ctx.Done():
+		return nil, &AdapterError{Code: CodeRuntimeDeadline, Message: "Read deadline exceeded", Cause: ctx.Err()}
+	}
 }
 
 func (r *windowsRuntime) WriteBatch(context.Context, []WriteItem) ([]WriteResult, error) {
@@ -191,6 +286,24 @@ func (r *windowsRuntime) Shutdown(ctx context.Context) error {
 		return nil
 	case <-ctx.Done():
 		return ctx.Err()
+	}
+}
+
+func (r *windowsRuntime) enqueue(ctx context.Context, command daThreadCommand) error {
+	select {
+	case <-ctx.Done():
+		return &AdapterError{Code: CodeRuntimeDeadline, Message: "request deadline exceeded before enqueue", Cause: ctx.Err()}
+	default:
+	}
+	select {
+	case r.commands <- command:
+		r.updateQueueDepth()
+		if err := r.wake.signal(); err != nil {
+			return &AdapterError{Code: CodeRuntimeUnavailable, Message: "failed to wake DA runtime", Cause: err}
+		}
+		return nil
+	default:
+		return NewAdapterError(CodeQueueFull, "DA command queue is full")
 	}
 }
 
