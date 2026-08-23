@@ -68,6 +68,12 @@ based on that commit.
   source-provided timestamp, successful HRESULT `0x00000000`, and invalid
   ItemID HRESULT `0xC0040007`. Exact evidence and bounded resource deltas are
   recorded in `docs/compatibility.md` without process values.
+- Long-running workflow run
+  [`32630548279`](https://github.com/east-true/opcda-access-adapter/actions/runs/32630548279)
+  repeated the full scenario and passed 100,000 device Reads on each
+  architecture. Adapter handle growth was `+18` on each; private-byte growth
+  was `+5,373,952` on 386 and `+5,787,648` on amd64, all within the explicit
+  harness ceilings. Server deltas also remained within their bounds.
 
 ## Known issues
 

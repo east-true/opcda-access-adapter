@@ -54,3 +54,9 @@ The first recorded passing result is run
 for adapter head `5267aec6e05f98dff5da4721ded6315e5a2ba990`. See the compatibility
 matrix for the observations, source pin, executable hashes, and resource
 deltas.
+
+Long-running run
+[`32630548279`](https://github.com/east-true/opcda-access-adapter/actions/runs/32630548279)
+passed 100,000 device Reads per architecture at adapter head
+`995c387cb977a37ab80ecd0fc5deb2f4a98e191d`. Its bounded resource deltas are
+also recorded in the compatibility matrix.

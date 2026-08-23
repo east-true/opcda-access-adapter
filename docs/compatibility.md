@@ -38,9 +38,22 @@ cross-builds, and Windows ABI tests are not interoperability results.
   deltas were: 386 adapter handles `+8`, private bytes `+1,835,008`, server
   handles `0`, server private bytes `0`; amd64 adapter handles `+8`, private
   bytes `+1,978,368`, server handles `0`, server private bytes `0`.
-- Fixture executable SHA-256: x86
+- Fixture executable SHA-256 for run `32628886186`: x86
   `35B18E2542131907A256929FE1C5A54B204CAB8421AA9F90305E6C8B6583F681`;
   x64 `C715BFA24DE1414D6CC1E8A6B5F61FEE42530EB43A619BC6BD5185A7B0F6DDF7`.
+
+### Long-running resource result
+
+Workflow run
+[`32630548279`](https://github.com/east-true/opcda-access-adapter/actions/runs/32630548279)
+at adapter head `995c387cb977a37ab80ecd0fc5deb2f4a98e191d` repeated the complete
+scenario and then passed 100,000 device Reads per architecture. The x86 job
+took 3m04s overall and observed adapter handles `+18`, adapter private bytes
+`+5,373,952`, server handles `0`, and server private bytes `-208,896`.
+The x64 job took 3m40s overall and observed adapter handles `+18`, adapter
+private bytes `+5,787,648`, server handles `+4`, and server private bytes
+`+12,288`. All were below the explicit absolute and growth ceilings; no
+operation failed and no process value was logged.
 
 This result validates the scoped v0 path against this specific official test
 fixture only. Third-party/vendor servers and non-Good Quality observations
