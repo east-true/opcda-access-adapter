@@ -17,7 +17,11 @@ Defaults are intentionally small and can be changed by explicit configuration:
 |---|---:|
 | HTTP listener | `127.0.0.1:8080` |
 | HTTP body | 1 MiB |
+| accepted HTTP connections | 64 |
 | concurrent HTTP requests | 32 |
+| HTTP request headers | 32 KiB |
+| HTTP header / request read timeout | 5 seconds / 15 seconds |
+| HTTP response write / idle timeout | 15 seconds / 30 seconds |
 | DA command queue | 64 |
 | Read items per request | 100 |
 | Write items per request | 100 |
@@ -36,10 +40,12 @@ In-flight COM calls are never forcibly cancelled or replayed.
 
 Explicit configuration remains subject to startup hard ceilings to prevent an
 invalid environment from causing an oversized allocation: 64 MiB HTTP body,
-1,024 concurrent HTTP requests, 4,096 DA commands, 10,000 Read/Write items,
+2,048 accepted connections, 1,024 concurrent HTTP requests, 1 MiB request
+headers, 4,096 DA commands, 10,000 Read/Write items,
 100,000 Browse entries, 256 Browse segments, 1,000,000 registered items,
-65,536 ItemID bytes, 1,048,576 BSTR code units, and 24 hours for deadlines,
-reconnect maximum, and the COM watchdog. Values above a ceiling fail startup.
+65,536 ItemID bytes, 1,048,576 BSTR code units, and 24 hours for all HTTP
+timeouts, deadlines, reconnect maximum, and the COM watchdog. Values above a
+ceiling fail startup.
 
 ## Consequences
 

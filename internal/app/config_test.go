@@ -10,7 +10,9 @@ func TestDefaultConfigIsBoundedAndLoopback(t *testing.T) {
 	if config.HTTPListenAddress != "127.0.0.1:8080" {
 		t.Fatalf("listen address = %q", config.HTTPListenAddress)
 	}
-	if config.MaxHTTPBodyBytes <= 0 || config.MaxConcurrentRequests <= 0 || config.Runtime.Limits.CommandQueue <= 0 {
+	if config.MaxHTTPBodyBytes <= 0 || config.MaxHTTPConnections <= 0 || config.MaxConcurrentRequests <= 0 ||
+		config.MaxHTTPHeaderBytes <= 0 || config.HTTPReadHeaderTimeout <= 0 || config.HTTPReadTimeout <= 0 ||
+		config.HTTPWriteTimeout <= 0 || config.HTTPIdleTimeout <= 0 || config.Runtime.Limits.CommandQueue <= 0 {
 		t.Fatal("expected positive bounded defaults")
 	}
 	if config.WriteEnabled {
@@ -49,5 +51,30 @@ func TestLoadConfigRejectsUnsafeHTTPCeiling(t *testing.T) {
 	t.Setenv("OPCDA_MAX_CONCURRENT_REQUESTS", "1025")
 	if _, err := LoadConfig(); err == nil {
 		t.Fatal("HTTP concurrency above hard ceiling was accepted")
+	}
+}
+
+func TestLoadConfigAppliesHTTPTransportBounds(t *testing.T) {
+	t.Setenv("OPCDA_MAX_HTTP_CONNECTIONS", "17")
+	t.Setenv("OPCDA_MAX_HTTP_HEADER_BYTES", "16384")
+	t.Setenv("OPCDA_HTTP_READ_HEADER_TIMEOUT", "2s")
+	t.Setenv("OPCDA_HTTP_READ_TIMEOUT", "3s")
+	t.Setenv("OPCDA_HTTP_WRITE_TIMEOUT", "4s")
+	t.Setenv("OPCDA_HTTP_IDLE_TIMEOUT", "5s")
+	config, err := LoadConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if config.MaxHTTPConnections != 17 || config.MaxHTTPHeaderBytes != 16384 ||
+		config.HTTPReadHeaderTimeout != 2*time.Second || config.HTTPReadTimeout != 3*time.Second ||
+		config.HTTPWriteTimeout != 4*time.Second || config.HTTPIdleTimeout != 5*time.Second {
+		t.Fatalf("HTTP transport bounds not applied: %+v", config)
+	}
+}
+
+func TestLoadConfigRejectsUnsafeHTTPConnectionCeiling(t *testing.T) {
+	t.Setenv("OPCDA_MAX_HTTP_CONNECTIONS", "2049")
+	if _, err := LoadConfig(); err == nil {
+		t.Fatal("HTTP connections above hard ceiling were accepted")
 	}
 }

@@ -44,7 +44,14 @@ func New(config Config, runtime opcda.Runtime) (*Service, error) {
 		config:  config,
 		runtime: runtime,
 		http:    httpServer,
-		server:  &stdhttp.Server{Handler: httpServer},
+		server: &stdhttp.Server{
+			Handler:           httpServer,
+			ReadHeaderTimeout: config.HTTPReadHeaderTimeout,
+			ReadTimeout:       config.HTTPReadTimeout,
+			WriteTimeout:      config.HTTPWriteTimeout,
+			IdleTimeout:       config.HTTPIdleTimeout,
+			MaxHeaderBytes:    config.MaxHTTPHeaderBytes,
+		},
 	}, nil
 }
 
@@ -58,12 +65,52 @@ func (s *Service) Start() error {
 	if err != nil {
 		return fmt.Errorf("listen on %s: %w", s.config.HTTPListenAddress, err)
 	}
+	listener = newBoundedListener(listener, s.config.MaxHTTPConnections)
 	s.listener = listener
 	s.http.SetListening(true)
 	go func() {
 		_ = s.server.Serve(listener)
 	}()
 	return nil
+}
+
+// boundedListener limits accepted TCP connections independently from the
+// handler concurrency bound. This prevents incomplete headers and slow bodies
+// from growing connection state without limit.
+type boundedListener struct {
+	net.Listener
+	permits chan struct{}
+}
+
+func newBoundedListener(listener net.Listener, maximum int) net.Listener {
+	return &boundedListener{Listener: listener, permits: make(chan struct{}, maximum)}
+}
+
+func (l *boundedListener) Accept() (net.Conn, error) {
+	for {
+		connection, err := l.Listener.Accept()
+		if err != nil {
+			return nil, err
+		}
+		select {
+		case l.permits <- struct{}{}:
+			return &boundedConnection{Conn: connection, release: func() { <-l.permits }}, nil
+		default:
+			_ = connection.Close()
+		}
+	}
+}
+
+type boundedConnection struct {
+	net.Conn
+	once    sync.Once
+	release func()
+}
+
+func (c *boundedConnection) Close() error {
+	err := c.Conn.Close()
+	c.once.Do(c.release)
+	return err
 }
 
 func (s *Service) Address() string {
