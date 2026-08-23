@@ -41,12 +41,7 @@ type readHTTPResult struct {
 func (s *Server) handleRead(ctx context.Context, w stdhttp.ResponseWriter, request *stdhttp.Request) {
 	var decoded readHTTPRequest
 	if err := s.decodeRequestBody(w, request, &decoded); err != nil {
-		var maxBytesError *stdhttp.MaxBytesError
-		if errors.As(err, &maxBytesError) {
-			writeError(w, stdhttp.StatusRequestEntityTooLarge, opcda.CodeRequestBodyTooLarge, "request body exceeds configured limit")
-			return
-		}
-		writeError(w, stdhttp.StatusBadRequest, opcda.CodeInvalidRequest, err.Error())
+		writeDecodeError(w, err)
 		return
 	}
 	if decoded.Source == "" {
@@ -98,6 +93,15 @@ func (s *Server) handleRead(ctx context.Context, w stdhttp.ResponseWriter, reque
 	writeJSON(w, stdhttp.StatusOK, struct {
 		Results []readHTTPResult `json:"results"`
 	}{Results: encoded})
+}
+
+func writeDecodeError(w stdhttp.ResponseWriter, err error) {
+	var maxBytesError *stdhttp.MaxBytesError
+	if errors.As(err, &maxBytesError) {
+		writeError(w, stdhttp.StatusRequestEntityTooLarge, opcda.CodeRequestBodyTooLarge, "request body exceeds configured limit")
+		return
+	}
+	writeError(w, stdhttp.StatusBadRequest, opcda.CodeInvalidRequest, err.Error())
 }
 
 type exactJSONString string
@@ -286,6 +290,8 @@ func writeOperationError(w stdhttp.ResponseWriter, err error) {
 			status = stdhttp.StatusBadRequest
 		case opcda.CodeRuntimeDeadline:
 			status = stdhttp.StatusGatewayTimeout
+		case opcda.CodeBrowseUnsupported, opcda.CodeBrowseResultLimitExceeded:
+			status = stdhttp.StatusUnprocessableEntity
 		}
 		writeLayerError(w, status, "adapter", adapterError.Code, adapterError.Message, nil)
 		return

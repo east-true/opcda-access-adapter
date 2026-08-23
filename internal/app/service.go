@@ -31,11 +31,13 @@ func New(config Config, runtime opcda.Runtime) (*Service, error) {
 		}
 	}
 	httpServer := frontend.New(runtime, frontend.Config{
-		MaxBodyBytes:    config.MaxHTTPBodyBytes,
-		MaxConcurrent:   config.MaxConcurrentRequests,
-		RequestDeadline: config.RequestDeadline,
-		MaxReadItems:    config.Runtime.Limits.MaxReadItems,
-		MaxItemIDBytes:  config.Runtime.Limits.MaxItemIDBytes,
+		MaxBodyBytes:     config.MaxHTTPBodyBytes,
+		MaxConcurrent:    config.MaxConcurrentRequests,
+		RequestDeadline:  config.RequestDeadline,
+		MaxReadItems:     config.Runtime.Limits.MaxReadItems,
+		MaxBrowseEntries: config.Runtime.Limits.MaxBrowseEntries,
+		MaxBrowseDepth:   config.Runtime.Limits.MaxBrowseDepth,
+		MaxItemIDBytes:   config.Runtime.Limits.MaxItemIDBytes,
 	})
 	return &Service{
 		config:  config,

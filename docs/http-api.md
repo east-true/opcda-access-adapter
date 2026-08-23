@@ -64,5 +64,34 @@ Error bodies distinguish `frontend`, `adapter`, and `source` layers. Source
 method errors include the raw HRESULT. Item errors are not replaced by a
 generic request error.
 
-Browse and typed value Write are documented as their implementation phases
-land. There is no Subscribe endpoint in v0.
+## Browse
+
+```text
+POST /v1/browse
+Content-Type: application/json
+```
+
+```json
+{
+  "path": ["Channel1", "Device1"],
+  "filter": "all"
+}
+```
+
+`path: []` means root. The path is a navigation sequence, not an ItemID and
+is never used to infer one. `filter` is `all`, `branch`, or `item` and defaults
+to `all`.
+
+The runtime resets a hierarchical server to root and walks each source browse
+name serially on the DA thread. Flat namespaces accept only the root path.
+Item entries use the exact ItemID returned by `GetItemID`; branch entries do
+not invent an ItemID. Canonical type and access rights are omitted when this
+Browse interface does not supply them.
+
+`IOPCBrowseServerAddressSpace` is optional. A server returning
+`E_NOINTERFACE` reports Browse as `unsupported`, while known-ItemID Read stays
+available. Exceeding the hard entry limit fails with
+`BROWSE_RESULT_LIMIT_EXCEEDED`; results are never silently truncated.
+
+Typed value Write is documented when its implementation phase lands. There is
+no Subscribe endpoint in v0.

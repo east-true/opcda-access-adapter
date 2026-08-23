@@ -20,6 +20,8 @@ type daThreadSession struct {
 	hasServerGroup    bool
 	itemMgt           *iopcItemMgt
 	syncIO            *iopcSyncIO
+	browse            *iopcBrowseServerAddressSpace
+	browseCapability  string
 	generation        uint64
 	registrations     *registrationCache
 	nextClientHandle  uint32
@@ -151,16 +153,31 @@ func (r *windowsRuntime) connect(session *daThreadSession) {
 		return
 	}
 	session.syncIO = syncIO
+	browse, supported, browseErr := queryBrowseInterface(server)
+	switch {
+	case browseErr != nil:
+		session.browseCapability = "unavailable"
+	case !supported:
+		session.browseCapability = "unsupported"
+	default:
+		session.browse = browse
+		session.browseCapability = "supported"
+	}
 	session.generation = 1
 	session.registrations = newRegistrationCache(r.config.Limits.MaxRegisteredItems, session.generation)
 	r.updateStatus(func(status *RuntimeStatus) {
 		status.State = RuntimeStateConnected
 		status.ConnectionGeneration = session.generation
-		status.Capabilities = Capabilities{Browse: "unavailable", Read: true, Write: true}
+		status.Capabilities = Capabilities{Browse: session.browseCapability, Read: true, Write: true}
 	})
 }
 
 func (session *daThreadSession) disconnect() {
+	if session.browse != nil {
+		session.browse.release()
+		session.browse = nil
+	}
+	session.browseCapability = "unavailable"
 	if session.syncIO != nil {
 		session.syncIO.release()
 		session.syncIO = nil
@@ -210,8 +227,51 @@ func (r *windowsRuntime) Status(context.Context) RuntimeStatus {
 	return status
 }
 
-func (*windowsRuntime) Browse(context.Context, BrowseRequest) (BrowseResult, error) {
-	return BrowseResult{}, NewAdapterError(CodeRuntimeUnavailable, "OPC DA Browse is not initialized")
+func (r *windowsRuntime) Browse(ctx context.Context, request BrowseRequest) (BrowseResult, error) {
+	if request.Filter == "" {
+		request.Filter = BrowseFilterAll
+	}
+	if request.Filter != BrowseFilterAll && request.Filter != BrowseFilterBranch && request.Filter != BrowseFilterItem {
+		return BrowseResult{}, NewAdapterError(CodeInvalidRequest, "browse filter must be all, branch, or item")
+	}
+	if len(request.Path) > r.config.Limits.MaxBrowseDepth {
+		return BrowseResult{}, NewAdapterError(CodeRequestLimitExceeded, "Browse path depth limit exceeded")
+	}
+	for _, segment := range request.Path {
+		if segment == "" {
+			return BrowseResult{}, NewAdapterError(CodeInvalidRequest, "browse path segments must not be empty")
+		}
+		if len([]byte(segment)) > r.config.Limits.MaxItemIDBytes {
+			return BrowseResult{}, NewAdapterError(CodeItemIDTooLong, "browse path segment exceeds configured limit")
+		}
+		for _, character := range segment {
+			if character == 0 {
+				return BrowseResult{}, NewAdapterError(CodeInvalidRequest, "browse path must not contain NUL")
+			}
+		}
+	}
+
+	type response struct {
+		result BrowseResult
+		err    error
+	}
+	responses := make(chan response, 1)
+	command := daThreadCommand{
+		context: ctx,
+		run: func(session *daThreadSession) {
+			result, err := session.browseAddressSpace(request, r.config.Limits)
+			responses <- response{result: result, err: err}
+		},
+	}
+	if err := r.enqueue(ctx, command); err != nil {
+		return BrowseResult{}, err
+	}
+	select {
+	case response := <-responses:
+		return response.result, response.err
+	case <-ctx.Done():
+		return BrowseResult{}, &AdapterError{Code: CodeRuntimeDeadline, Message: "Browse deadline exceeded", Cause: ctx.Err()}
+	}
 }
 
 func (r *windowsRuntime) ReadBatch(ctx context.Context, request ReadRequest) ([]ReadResult, error) {

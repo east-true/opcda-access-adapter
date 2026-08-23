@@ -22,6 +22,7 @@ Defaults are intentionally small and can be changed by explicit configuration:
 | Read items per request | 100 |
 | Write items per request | 100 |
 | Browse entries | 1,000 |
+| Browse path segments | 64 |
 | ItemID UTF-8 bytes | 1,024 |
 | BSTR UTF-16 code units | 65,536 |
 | registered items | 1,024 |
