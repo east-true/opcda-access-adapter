@@ -6,10 +6,11 @@ process data.
 
 ## Current status
 
-The project is in v0 implementation. The bootstrap includes a loopback-only
-HTTP lifecycle and `GET /v1/status`; COM activation and DA operations are
-added in subsequent phases. It is not production-ready and has not yet been
-validated against a real OPC DA server.
+The project is in v0 implementation. The bootstrap and dedicated Windows COM
+foundation are implemented, including local-only activation and owning-thread
+cleanup. DA group, Read, Browse, and Write operations are added in subsequent
+phases. It is not production-ready and has not yet been validated against a
+real OPC DA server.
 
 ## Scope
 

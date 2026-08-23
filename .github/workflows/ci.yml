@@ -40,3 +40,20 @@ jobs:
           GOOS: windows
           GOARCH: ${{ matrix.arch }}
         run: go build ./cmd/adapter
+
+  windows-test:
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [386, amd64]
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+      - name: Run Windows tests
+        shell: pwsh
+        env:
+          GOARCH: ${{ matrix.arch }}
+        run: go test ./...
