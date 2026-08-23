@@ -2,71 +2,67 @@
 
 ## Current phase
 
-Phase 2 — DA Read Core (implemented locally on `feat/da-read`; ready for PR
+Phase 3 — Browse (implemented locally on `feat/da-browse`; ready for PR
 validation).
 
 ## Current main SHA
 
-`b1b2b19` — merged Phase 1 COM Foundation (PR #2). This Phase 2 branch is based
+`3ff9712` — merged Phase 2 DA Read Core (PR #3). This Phase 3 branch is based
 on that commit.
 
 ## Completed
 
 - Phase 0 bootstrap merged in PR #1.
-- Phase 1 dedicated STA COM runtime, local activation, owning-thread cleanup,
-  and Windows 386/amd64 lifecycle tests merged in PR #2.
-- `IOPCServer::AddGroup`, `IOPCItemMgt::AddItems`, and
-  `IOPCSyncIO::Read(OPC_DS_DEVICE)` implemented from the official OPC DA IDL.
-- Bounded lazy registration stores exact ItemID, server handle, canonical
-  VARTYPE, raw access rights, and connection generation.
-- Request ordering, item HRESULTs, partial failure, raw Quality, source
-  FILETIME/presence, actual VARIANT type, and canonical VARTYPE are preserved.
-- Returned blobs/result arrays use `CoTaskMemFree`; every returned VARIANT is
-  cleared with `VariantClear`; group interfaces are released on the DA thread.
-- Width-preserving scalar decode and lossless HTTP JSON representation added.
-- `POST /v1/read` includes strict bounded JSON/schema validation and distinct
-  frontend, adapter, source-method, and item-level error handling.
-- Windows ABI assertions cover 386/amd64 VARIANT and OPC DA structure sizes and
-  vtable offsets; BSTR cleanup and scalar width tests run on Windows CI.
+- Phase 1 COM Foundation merged in PR #2 with Windows 386/amd64 lifecycle
+  execution.
+- Phase 2 AddGroup/AddItems/device Read and HTTP Read merged in PR #3 with all
+  Linux/Windows checks green.
+- Optional `IOPCBrowseServerAddressSpace` is detected with QueryInterface;
+  `E_NOINTERFACE` becomes `unsupported` without disabling known-ItemID Read.
+- Hierarchical Browse resets to root and walks each navigation segment on the
+  serialized DA thread; flat namespaces remain root-only.
+- Source branch/leaf names are enumerated through `IEnumString`, each returned
+  string is freed, and each item obtains its exact source ItemID through
+  `GetItemID`.
+- Browse entry and depth limits fail explicitly without silent truncation.
+- `POST /v1/browse` validates bounded exact navigation, preserves branch/item
+  distinction, and maps unsupported/limit errors distinctly.
 
 ## In progress
 
-- Phase 2 PR, GitHub Windows execution, CI, and merge.
+- Phase 3 PR, GitHub Windows execution, CI, and merge.
 
 ## Validation results
 
-- PR #2: all five checks passed, including Windows 386/amd64 tests; merged.
-- Phase 2 `gofmt` check passed locally.
-- Phase 2 `go test ./...` passed on Linux.
-- Phase 2 `go vet ./...` passed on Linux.
-- Phase 2 Windows 386/amd64 test binaries and adapter binaries cross-compiled.
-- Phase 2 Windows 386/amd64 `go vet ./...` passed.
-- Real DA AddGroup/AddItems/Read execution remains externally blocked.
+- PR #3: all five checks passed, including Windows 386/amd64 ABI, BSTR,
+  VariantClear, and scalar width tests; merged.
+- Phase 3 `gofmt`, `go test ./...`, and `go vet ./...` passed on Linux.
+- Phase 3 Windows 386/amd64 test binaries cross-compiled and vet passed.
+- Actual vendor root/nested/flat Browse remains externally blocked.
 
 ## Known issues
 
-- Current Read scalar support is explicit in `docs/http-api.md`. `VT_DATE`,
-  `VT_DECIMAL`, `VT_CY`, SAFEARRAY, BYREF, and nested VARIANT values are not
-  silently converted and remain unsupported.
-- Browse, Write, reconnect, bounded recent diagnostics, and COM-hang degraded
-  policy remain for later phases.
-- No real OPC DA server is available in the current environment.
+- DA 2.x Browse does not directly return canonical VARTYPE/access rights in
+  its enumeration contract. These fields are omitted rather than inferred or
+  populated by an unbounded registration scan.
+- The zero-FILETIME rule and current scalar support remain pending real-server
+  validation as recorded in ADR-0003.
+- Write, reconnect, diagnostic bounds, and COM-hang degraded policy remain.
 
 ## External blockers
 
-- **BLOCKED:** Real-DA connect/Read V-Q-T verification, vendor error behavior,
+- **BLOCKED:** Real-DA Browse/Read/Write, nested/flat namespace quirks,
   reconnect/server restart, installed-server x86/x64 compatibility, and soak
-  testing require an authorized local Windows OPC DA server. Cross-builds,
-  mocks, and COM-only Windows tests are not interoperability results.
+  testing require an authorized local Windows OPC DA server. A simulator will
+  not be installed without explicit approval and EULA review.
 
 ## Next exact tasks
 
-1. Push Phase 2, run all Linux/Windows checks, fix any ABI/runtime failures,
-   and merge only when green.
-2. Implement optional `IOPCBrowseServerAddressSpace` capability detection and
-   serialized root/nested Browse in Phase 3.
-3. Add `POST /v1/browse` with bounded, non-truncating results and exact source
-   ItemIDs.
+1. Push Phase 3, run Linux/Windows checks, and merge only when green.
+2. Implement strict typed scalar Value Write and `IOPCSyncIO::Write` in Phase
+   4, retaining write-disabled default and no retry/replay.
+3. Add `POST /v1/write` validation, exact numeric overflow checks, and item
+   HRESULT preservation.
 
 ## Decisions
 

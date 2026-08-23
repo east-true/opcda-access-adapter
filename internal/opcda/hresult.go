@@ -7,8 +7,9 @@ import "fmt"
 type HRESULT int32
 
 const (
-	SOK    HRESULT = 0
-	SFalse HRESULT = 1
+	SOK          HRESULT = 0
+	SFalse       HRESULT = 1
+	ENoInterface HRESULT = -2147467262 // 0x80004002
 )
 
 // Succeeded implements the COM SUCCEEDED macro semantics. Non-negative values

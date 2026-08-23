@@ -6,6 +6,7 @@ import (
 	"encoding/binary"
 	"math"
 	"testing"
+	"unicode/utf16"
 	"unsafe"
 )
 
@@ -20,6 +21,12 @@ func TestWindowsABILayouts(t *testing.T) {
 	if got, want := unsafe.Offsetof(iopcSyncIOVTable{}.Read), 3*pointerSize; got != want {
 		t.Fatalf("IOPCSyncIO::Read offset = %d, want %d", got, want)
 	}
+	if got, want := unsafe.Offsetof(iopcBrowseServerAddressSpaceVTable{}.QueryOrganization), 3*pointerSize; got != want {
+		t.Fatalf("IOPCBrowseServerAddressSpace::QueryOrganization offset = %d, want %d", got, want)
+	}
+	if got, want := unsafe.Offsetof(iEnumStringVTable{}.Next), 3*pointerSize; got != want {
+		t.Fatalf("IEnumString::Next offset = %d, want %d", got, want)
+	}
 	if unsafe.Sizeof(uintptr(0)) == 4 {
 		assertSize(t, "VARIANT", unsafe.Sizeof(variant{}), 16)
 		assertSize(t, "OPCITEMDEF", unsafe.Sizeof(opcItemDef{}), 28)
@@ -30,6 +37,18 @@ func TestWindowsABILayouts(t *testing.T) {
 		assertSize(t, "OPCITEMDEF", unsafe.Sizeof(opcItemDef{}), 48)
 		assertSize(t, "OPCITEMRESULT", unsafe.Sizeof(opcItemResult{}), 24)
 		assertSize(t, "OPCITEMSTATE", unsafe.Sizeof(opcItemState{}), 40)
+	}
+}
+
+func TestTaskStringDecodeIsBoundedAndPreservesUTF16(t *testing.T) {
+	units := append(utf16.Encode([]rune("Branch.温度")), 0)
+	got, err := decodeTaskString(&units[0], len(units))
+	if err != nil || got != "Branch.温度" {
+		t.Fatalf("decodeTaskString = %q, %v", got, err)
+	}
+	withoutTerminator := []uint16{'A', 'B'}
+	if _, err := decodeTaskString(&withoutTerminator[0], 1); err == nil {
+		t.Fatal("expected unterminated bounded string to fail")
 	}
 }
 

@@ -27,6 +27,7 @@ type Limits struct {
 	MaxReadItems       int
 	MaxWriteItems      int
 	MaxBrowseEntries   int
+	MaxBrowseDepth     int
 	MaxRegisteredItems int
 	MaxItemIDBytes     int
 	MaxBSTRCodeUnits   int
@@ -38,6 +39,7 @@ func DefaultLimits() Limits {
 		MaxReadItems:       100,
 		MaxWriteItems:      100,
 		MaxBrowseEntries:   1000,
+		MaxBrowseDepth:     64,
 		MaxRegisteredItems: 1024,
 		MaxItemIDBytes:     1024,
 		MaxBSTRCodeUnits:   65536,
@@ -49,6 +51,7 @@ func (limits Limits) validate() error {
 		limits.MaxReadItems <= 0 ||
 		limits.MaxWriteItems <= 0 ||
 		limits.MaxBrowseEntries <= 0 ||
+		limits.MaxBrowseDepth <= 0 ||
 		limits.MaxRegisteredItems <= 0 ||
 		limits.MaxItemIDBytes <= 0 ||
 		limits.MaxBSTRCodeUnits <= 0 {
