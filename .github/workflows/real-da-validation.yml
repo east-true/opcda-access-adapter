@@ -43,12 +43,12 @@ jobs:
             platform: x64
     steps:
       - name: Check out adapter at the requested revision
-        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           persist-credentials: false
 
       - name: Check out pinned OPC Foundation source
-        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           repository: OPCF-Members/OPC-Classic-CoreComponents
           ref: efe0d1d1ea86a8a727bf26a501a261765e836766
