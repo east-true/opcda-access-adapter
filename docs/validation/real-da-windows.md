@@ -39,9 +39,11 @@ iteration count, and bounded resource deltas.
 
 Repository maintainers can dispatch `.github/workflows/real-da-validation.yml`
 from GitHub Actions. The default is 200 bounded Read iterations per
-architecture. A same-repository pull request that changes this workflow,
-validation scripts, or validation records also runs it. Fork pull requests do
-not execute the privileged COM registration job.
+architecture, and the explicit maximum is 100,000 per architecture so a
+long-running resource check remains bounded. A same-repository pull request
+that changes this workflow, validation scripts, or validation records also
+runs it. Fork pull requests do not execute the privileged COM registration
+job.
 
 Passing the workflow is evidence only after the exact GitHub run URL and
 commit SHA are recorded in `docs/compatibility.md`. A workflow definition or
