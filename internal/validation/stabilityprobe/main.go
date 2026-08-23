@@ -426,6 +426,11 @@ func (p probe) overload(count, requestSlots int) error {
 		items[index] = `{"itemId":"Test/Int32"}`
 	}
 	body := []byte(`{"source":"device","items":[` + strings.Join(items, ",") + `]}`)
+	// Earlier concurrent steps intentionally leave keep-alive connections in
+	// the transport pool. Those idle connections still consume the adapter's
+	// independent TCP-connection permits and can prevent all raw blockers from
+	// reaching ServeHTTP. Close them before asserting exact handler saturation.
+	p.client.CloseIdleConnections()
 	blockers, err := openIncompleteBodies(p.baseURL.Host, requestSlots)
 	if err != nil {
 		return err
