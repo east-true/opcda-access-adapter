@@ -6,15 +6,17 @@ process data.
 
 ## Current status
 
-The project is in v0 implementation. The dedicated Windows COM foundation,
+The v0 implementation is complete within the automatable environment. The
+dedicated Windows COM foundation,
 internal DA group, lazy AddItems cache, device `IOPCSyncIO::Read`, and HTTP
 `POST /v1/read` are implemented. Optional DA 2.x Browse and
 `POST /v1/browse` are also implemented without an inferred hierarchy. Strict
 typed value `IOPCSyncIO::Write` and `POST /v1/write` are implemented with Write
 disabled by default and no retry/replay. Bounded reconnect, generation-based
 handle invalidation, disconnected fail-fast behavior, and a non-destructive
-COM-call watchdog are implemented. It is not production-ready and has not yet
-been validated against a real OPC DA server.
+COM-call watchdog are implemented. Real OPC DA validation is blocked until an
+authorized installed server is available. It is not production-ready and must
+not be described as validated or vendor-compatible yet.
 
 ## Scope
 
