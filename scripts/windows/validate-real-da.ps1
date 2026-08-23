@@ -554,6 +554,7 @@ try {
             '-workers', '16',
             '-requests-per-worker', '200',
             '-overload-requests', '48',
+            '-request-slots', '32',
             '-slow-connections', '48',
             '-header-timeout', '5s'
         ) -TimeoutSeconds 1200

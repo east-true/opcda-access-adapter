@@ -26,6 +26,7 @@ type options struct {
 	workers          int
 	requestsPerWork  int
 	overloadRequests int
+	requestSlots     int
 	slowConnections  int
 	headerTimeout    time.Duration
 }
@@ -91,6 +92,7 @@ func main() {
 	flag.IntVar(&configured.workers, "workers", 16, "mixed concurrent workers")
 	flag.IntVar(&configured.requestsPerWork, "requests-per-worker", 100, "requests per mixed worker")
 	flag.IntVar(&configured.overloadRequests, "overload-requests", 48, "simultaneous maximum-size Reads")
+	flag.IntVar(&configured.requestSlots, "request-slots", 32, "configured maximum concurrent HTTP requests")
 	flag.IntVar(&configured.slowConnections, "slow-connections", 48, "incomplete-header connections")
 	flag.DurationVar(&configured.headerTimeout, "header-timeout", 5*time.Second, "configured adapter header timeout")
 	flag.Parse()
@@ -123,7 +125,7 @@ func main() {
 		{name: "slow and oversized headers", run: func() error { return p.slowHeaders(configured.slowConnections, configured.headerTimeout) }},
 		{name: "rapid sequential requests", run: func() error { return p.rapid(configured.rapidRequests) }},
 		{name: "mixed concurrent requests", run: func() error { return p.concurrent(configured.workers, configured.requestsPerWork) }},
-		{name: "bounded overload and recovery", run: func() error { return p.overload(configured.overloadRequests) }},
+		{name: "bounded overload and recovery", run: func() error { return p.overload(configured.overloadRequests, configured.requestSlots) }},
 	}
 	for _, step := range steps {
 		stepStarted := time.Now()
@@ -143,6 +145,7 @@ func validateOptions(configured options) error {
 		configured.workers < 1 || configured.workers > 31 ||
 		configured.requestsPerWork < 1 || configured.requestsPerWork > 10000 ||
 		configured.overloadRequests < 33 || configured.overloadRequests > 63 ||
+		configured.requestSlots < 1 || configured.requestSlots >= configured.overloadRequests ||
 		configured.slowConnections < 1 || configured.slowConnections > 63 ||
 		configured.headerTimeout < time.Second || configured.headerTimeout > time.Minute {
 		return errors.New("one or more values are outside their safe validation bounds")
@@ -417,18 +420,28 @@ func (p probe) concurrent(workers, each int) error {
 	return nil
 }
 
-func (p probe) overload(count int) error {
+func (p probe) overload(count, requestSlots int) error {
 	items := make([]string, 100)
 	for index := range items {
 		items[index] = `{"itemId":"Test/Int32"}`
 	}
 	body := []byte(`{"source":"device","items":[` + strings.Join(items, ",") + `]}`)
+	blockers, err := openIncompleteBodies(p.baseURL.Host, requestSlots)
+	if err != nil {
+		return err
+	}
+	defer closeConnections(blockers)
+	if err := p.waitForQueueFull(5 * time.Second); err != nil {
+		return fmt.Errorf("saturate request slots: %w", err)
+	}
+
+	requestCount := count - requestSlots
 	start := make(chan struct{})
 	var wait sync.WaitGroup
 	var successes atomic.Int64
 	var rejected atomic.Int64
-	errorsFound := make(chan error, count)
-	for index := 0; index < count; index++ {
+	errorsFound := make(chan error, requestCount)
+	for index := 0; index < requestCount; index++ {
 		wait.Add(1)
 		go func(index int) {
 			defer wait.Done()
@@ -459,12 +472,62 @@ func (p probe) overload(count int) error {
 	for err := range errorsFound {
 		return err
 	}
-	if successes.Load() == 0 || rejected.Load() == 0 || successes.Load()+rejected.Load() != int64(count) {
-		return fmt.Errorf("backpressure was not observable: success=%d queueFull=%d", successes.Load(), rejected.Load())
+	if successes.Load() != 0 || rejected.Load() != int64(requestCount) {
+		return fmt.Errorf("backpressure was not deterministic: success=%d queueFull=%d expectedQueueFull=%d", successes.Load(), rejected.Load(), requestCount)
 	}
-	fmt.Printf("STABILITY_BACKPRESSURE success=%d queueFull=%d\n", successes.Load(), rejected.Load())
-	if err := p.connectedStatus(); err != nil {
+	fmt.Printf("STABILITY_BACKPRESSURE blocked=%d queueFull=%d\n", requestSlots, rejected.Load())
+	closeConnections(blockers)
+	blockers = nil
+	if err := p.waitConnectedStatus(5 * time.Second); err != nil {
 		return fmt.Errorf("status did not recover after overload: %w", err)
 	}
 	return p.rapid(10)
+}
+
+func openIncompleteBodies(address string, count int) ([]net.Conn, error) {
+	connections := make([]net.Conn, 0, count)
+	for index := 0; index < count; index++ {
+		connection, err := net.DialTimeout("tcp", address, 2*time.Second)
+		if err != nil {
+			closeConnections(connections)
+			return nil, fmt.Errorf("open incomplete-body connection %d: %w", index, err)
+		}
+		request := "POST /v1/read HTTP/1.1\r\nHost: " + address + "\r\nContent-Type: application/json\r\nContent-Length: 100\r\nConnection: close\r\n\r\n{"
+		if _, err := io.WriteString(connection, request); err != nil {
+			_ = connection.Close()
+			closeConnections(connections)
+			return nil, fmt.Errorf("write incomplete-body connection %d: %w", index, err)
+		}
+		connections = append(connections, connection)
+	}
+	return connections, nil
+}
+
+func (p probe) waitForQueueFull(timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		status, body, err := p.request(http.MethodGet, "/v1/status", nil, nil)
+		if err == nil && status == http.StatusServiceUnavailable {
+			var decoded errorResponse
+			if json.Unmarshal(body, &decoded) == nil && decoded.Error.Layer == "frontend" && decoded.Error.Code == "QUEUE_FULL" {
+				return nil
+			}
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	return errors.New("QUEUE_FULL was not observed before timeout")
+}
+
+func (p probe) waitConnectedStatus(timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	var lastError error
+	for time.Now().Before(deadline) {
+		if err := p.connectedStatus(); err == nil {
+			return nil
+		} else {
+			lastError = err
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	return lastError
 }
