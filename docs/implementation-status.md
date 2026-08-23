@@ -10,10 +10,10 @@ a claim of broad vendor compatibility or production readiness.
 
 ## Current main SHA
 
-`7319d204e318fc749ea7929372ce2ef8521e3101` — current main before the
-Windows stability PR. The stability evidence below is from PR #11 head
-`ccc28487dfc33e1767e3f42c547a6d59a5ae4ca4` and is not described as final-main
-evidence until that green PR is merged.
+`f55b4bb8e8c092fa2a21f4f35089a14703c81a8d` — merged Windows HTTP and DA
+stability validation (PR #11). This status record is based on that executable
+revision; a later documentation-only merge does not change the validated
+adapter binary.
 
 ## Completed
 
@@ -40,13 +40,15 @@ evidence until that green PR is merged.
   normal CI actions/toolchain were merged in PR #9 after all seven checks
   passed.
 - Final v0 status documentation was reconciled through PR #10.
+- Bounded HTTP connection/header timeouts, deterministic request
+  backpressure, abnormal-input/short-cycle/concurrent-load probes, and three
+  consecutive real source failure/recovery cycles were merged in PR #11 after
+  all seven checks passed.
 
 ## In progress
 
-- PR #11 adds bounded HTTP connection/header/time limits and the Windows
-  normal, exceptional, anomalous, rapid, concurrent, overload, and repeated
-  failure stability profile. All seven required checks pass at its current
-  head; merge and final-main confirmation remain.
+- None. The scoped v0 implementation, official-fixture validation, and bounded
+  Windows stability profile are complete.
 
 ## Validation results
 
@@ -100,6 +102,17 @@ evidence until that green PR is merged.
   and a final 200-Read soak. Adapter resource deltas were x86 `+8` handles and
   `+5,640,192` private bytes, and x64 `+8` handles and `+6,463,488` private
   bytes; all explicit ceilings held.
+- Final-main CI run
+  [`32635094747`](https://github.com/east-true/opcda-access-adapter/actions/runs/32635094747)
+  passed formatting, Linux tests, vet, both Windows builds, and both native
+  Windows test jobs at merge SHA
+  `f55b4bb8e8c092fa2a21f4f35089a14703c81a8d`.
+- Final-main stability run
+  [`32635274825`](https://github.com/east-true/opcda-access-adapter/actions/runs/32635274825)
+  repeated the complete profile on the same SHA. Both x86/386 and x64/amd64
+  passed all stages. Adapter deltas were x86 `+16` handles/`+6,725,632`
+  private bytes and x64 `+16` handles/`+5,763,072` private bytes; source and
+  built outputs passed Defender scans and all resource ceilings held.
 
 ## Final v0 audit
 
@@ -142,8 +155,7 @@ evidence until that green PR is merged.
 
 ## Next exact tasks
 
-1. Merge green PR #11, then repeat normal and real-DA workflows on final main
-   and update this record with the merge SHA.
+1. No implementation or stability-validation task remains for the scoped v0.
 2. Before a public `v0.0.0` release, confirm release packaging and security
    reporting; continue to treat the existing Apache-2.0 license as authoritative.
 3. Add third-party compatibility rows only from authorized, executed tests;
