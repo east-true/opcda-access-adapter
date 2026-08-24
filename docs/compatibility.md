@@ -7,8 +7,8 @@ cross-builds, and Windows ABI tests are not interoperability results.
 
 | DA Server | Version | Windows | Server bitness | Adapter arch | Connect | Browse | Read | Write | Reconnect | Notes |
 |---|---|---|---|---|---|---|---|---|---|---|
-| OPC Foundation OPC Classic Core Components TestServer | source commit `efe0d1d1` | Server 2025 | x86 | 386 | PASS | PASS | PASS | PASS | PASS | DA 2.05a source-built fixture; [final-main evidence](https://github.com/east-true/opcda-access-adapter/actions/runs/32632091320) |
-| OPC Foundation OPC Classic Core Components TestServer | source commit `efe0d1d1` | Server 2025 | x64 | amd64 | PASS | PASS | PASS | PASS | PASS | DA 2.05a source-built fixture; [final-main evidence](https://github.com/east-true/opcda-access-adapter/actions/runs/32632091320) |
+| OPC Foundation OPC Classic Core Components TestServer | source commit `efe0d1d1` | Server 2025 | x86 | 386 | PASS | PASS | PASS | PASS | PASS | DA 2.05a fixture; [HTTP/reconnect evidence](https://github.com/east-true/opcda-access-adapter/actions/runs/32632091320), [gRPC evidence](https://github.com/east-true/opcda-access-adapter/actions/runs/32752269529) |
+| OPC Foundation OPC Classic Core Components TestServer | source commit `efe0d1d1` | Server 2025 | x64 | amd64 | PASS | PASS | PASS | PASS | PASS | DA 2.05a fixture; [HTTP/reconnect evidence](https://github.com/east-true/opcda-access-adapter/actions/runs/32632091320), [gRPC evidence](https://github.com/east-true/opcda-access-adapter/actions/runs/32752269529) |
 
 ## Recorded result: OPC Foundation DA 2.05a fixture
 
@@ -41,6 +41,32 @@ cross-builds, and Windows ABI tests are not interoperability results.
 - Fixture executable SHA-256 for run `32628886186`: x86
   `35B18E2542131907A256929FE1C5A54B204CAB8421AA9F90305E6C8B6583F681`;
   x64 `C715BFA24DE1414D6CC1E8A6B5F61FEE42530EB43A619BC6BD5185A7B0F6DDF7`.
+
+### Phase 6 gRPC frontend result
+
+PR #29 workflow run
+[`32752269529`](https://github.com/east-true/opcda-access-adapter/actions/runs/32752269529)
+tested adapter head `b83b7c2b159194cbac94ce66f52b325b9c22031f` on both native
+x86/386 and x64/amd64 before merge SHA
+`21345739af98de981d12de36c6805f64e5b502ff`. Each architecture passed:
+
+- typed gRPC Status with the exact selected CLSID, connection generation,
+  Browse/Read/Write capabilities, Write enablement, and listener state;
+- root and nested DA Browse with exact ItemIDs;
+- an ordered known/unknown ItemID device Read preserving `VT_I4`, raw Quality
+  `192`, timestamp presence, successful HRESULT, and `OPC_E_UNKNOWNITEMID`;
+- default-disabled Write before source access, canonical type mismatch, safe
+  typed `VT_R4` value Write, and `OPC_E_BADRIGHTS` on the read-only `VT_BSTR`;
+- explicit gRPC guided setup, strict version 2 exact-CLSID configuration,
+  automatic LocalService execution, lifecycle Event Log metadata, cleanup,
+  and exactly one IPv4 loopback listener; and
+- no process values in the probe or adapter logs.
+
+Both source and staged fixture trees passed Microsoft Defender custom scans.
+The same jobs passed the established HTTP semantics, failure/reconnect/load,
+and 200-Read soak regression. This result covers the pinned fixture only; it
+does not validate third-party vendors, TLS/authentication, Subscribe, OPC UA,
+or external network exposure.
 
 ### Long-running resource result
 

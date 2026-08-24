@@ -8,14 +8,15 @@
 OPC Foundation DA 2.05a test server on both x86/386 and x64/amd64. This is not
 a claim of broad vendor compatibility or production readiness.
 
-**PHASE 6 gRPC IN PROGRESS** — the DA-native unary Status/Browse/Read/Write
-frontend is implemented locally but has not yet passed PR CI or real-DA
-validation and is not merged.
+**PHASE 6 gRPC IMPLEMENTATION COMPLETE AND FIXTURE-VALIDATED** — the DA-native
+unary Status/Browse/Read/Write frontend passed PR CI and the source-built OPC
+Foundation fixture on both supported architectures. This is not a broad
+vendor-compatibility claim.
 
 ## Current main SHA
 
-`25e2047a203fe09077cae508abf240a1a87dbd7e` — protected `main` after the guided
-setup README reconciliation (PR #28). No public tag or GitHub Release has been
+`21345739af98de981d12de36c6805f64e5b502ff` — protected `main` after the
+DA-native gRPC frontend (PR #29). No public tag or GitHub Release has been
 created. The local destructive review below remains a release-promotion gate.
 
 ## Completed
@@ -67,14 +68,14 @@ created. The local destructive review below remains a release-promotion gate.
   `NT AUTHORITY\LocalService` lifecycle were merged in PR #26 after all eight
   checks passed. Setup stores the exact selected CLSID, never auto-selects even
   one candidate, and does not edit COM/DCOM or firewall permissions.
+- DA-native unary gRPC Status/Browse/Read/Write, exact scalar widths, typed
+  error layers, explicit frontend selection, aggregate HTTP/2 bounds,
+  dependency/provenance review, packaging, and x86/x64 real-DA probes were
+  merged in PR #29 after all eight normal and real-DA checks passed. Subscribe
+  and simultaneous listeners were not added.
 
 ## In progress
 
-- Phase 6 adds the explicitly selected `opcda.access.v1.OPCDAAccess` unary
-  gRPC frontend, strict configuration version 2, bounded transport admission,
-  committed protobuf contract, dependency/license review, packaging, and real
-  DA probe coverage. It must still pass the complete local suite, both Windows
-  architectures, PR CI, and real-DA validation before merge.
 - The local KVM/libvirt destructive-validation gate is paused. The dedicated
   `opcda-destructive-review` VM and all of its dedicated host resources were
   removed on 2026-08-24 because this host could not run it alongside another
@@ -94,15 +95,31 @@ created. The local destructive review below remains a release-promotion gate.
   `windows/386` and `windows/amd64`. Seven package test executables compiled
   for each architecture. Release-shaped ZIPs for both architectures passed
   checksum and archive-integrity verification and contained the authoritative
-  protobuf schema and third-party notices. Native Windows execution and real
-  DA gRPC behavior remain pending PR CI and are not claimed by these local
-  cross-builds.
+  protobuf schema and third-party notices.
 - `go mod verify` passed. The stripped release-shaped binaries were 12,485,120
   bytes on 386 and 13,092,352 bytes on amd64. Their embedded build metadata
   names six external modules: the existing `golang.org/x/sys` plus reviewed
   gRPC/protobuf runtime modules; no OPC SDK is present. Exact versions,
   licenses, provenance, and binary deltas are recorded in ADR-0012 and
   `THIRD_PARTY_NOTICES.md`.
+- PR #29 CI run
+  [`32752269432`](https://github.com/east-true/opcda-access-adapter/actions/runs/32752269432)
+  passed quality, race/fuzz checks, release packaging, Windows builds, and
+  native Windows tests on 386 and amd64 at head
+  `b83b7c2b159194cbac94ce66f52b325b9c22031f`.
+- PR #29 real-DA run
+  [`32752269529`](https://github.com/east-true/opcda-access-adapter/actions/runs/32752269529)
+  passed on Windows Server 2025 for x86/386 and x64/amd64. Both jobs passed
+  gRPC Status, root/nested Browse, ordered partial Read with exact DA metadata,
+  disabled Write, strict typed Write, source-denied Write, explicit guided
+  setup, version 2 exact-CLSID configuration, LocalService execution, one
+  loopback listener, and no process-value logging. The existing HTTP,
+  reconnect, failure-cycle, load, and 200-Read soak regression also passed.
+- The first PR #30 documentation run exposed a time-budget flake in the
+  pre-existing HTTP string fuzz smoke test (`context deadline exceeded` after
+  completing more than 110,000 executions). CI now uses a deterministic
+  10,000-execution budget for each fuzz target instead of a wall-clock cutoff;
+  no fuzz finding or product failure was suppressed.
 - On 2026-08-24, `feat/guided-setup` passed `go test ./...`, `go vet ./...`,
   `go test -race ./...`, and 20 consecutive full-suite runs with Go 1.26.0 on
   Linux. All five package test executables cross-compiled for both
@@ -310,8 +327,8 @@ created. The local destructive review below remains a release-promotion gate.
 - A permanently hung in-process COM call cannot be safely recovered by killing
   its owning thread. v0 reports `degraded`, fails new operations, and requires
   process restart; subprocess hard isolation is out of scope.
-- v0 has no production authentication/TLS/RBAC platform. The default listener
-  is loopback and Write is disabled unless explicitly enabled.
+- The project has no production authentication/TLS/RBAC platform. The selected
+  listener is loopback and Write is disabled unless explicitly enabled.
 - Service-mode compatibility depends on the vendor accepting the LocalService
   identity and its scoped local COM/DCOM permissions. Setup does not edit
   AppID permissions or silently elevate to LocalSystem.
@@ -330,20 +347,20 @@ created. The local destructive review below remains a release-promotion gate.
 
 ## Next exact tasks
 
-1. Complete Phase 6 local validation, open its PR, require all normal and
-   real-DA checks to pass, merge, and record exact run URLs and commit SHAs.
-2. Recreate the isolated Windows environment only when non-contending VM
+1. Recreate the isolated Windows environment only when non-contending VM
    capacity is available, then complete the local destructive review including
    local COM launch/access/RunAs permission failures. Do not use a GitHub runner
    as evidence for this gate.
-3. Record exact VM, Defender, x86/x64, load, resource, reboot, DCOM event, and
+2. Record exact VM, Defender, x86/x64, load, resource, reboot, DCOM event, and
    cleanup results before proposing a public release.
-4. Continue to treat the existing Apache-2.0 license as authoritative.
-5. Add third-party compatibility rows only from authorized, executed tests;
+3. Continue to treat the existing Apache-2.0 license as authoritative.
+4. Add third-party compatibility rows only from authorized, executed tests;
    do not infer vendor-wide compatibility from the official fixture.
-6. When an authorized server exposes non-Good Quality, an absent timestamp, or
+5. When an authorized server exposes non-Good Quality, an absent timestamp, or
    additional supported scalar types, add exact observations without changing
    source semantics.
+6. Phase 7 is the DA callback/Subscribe core before any gRPC stream. Do not
+   start OPC UA first or infer a streaming contract from the unary frontend.
 
 ## Decisions
 
