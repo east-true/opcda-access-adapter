@@ -35,6 +35,9 @@ func (s *Server) handleWrite(ctx context.Context, w stdhttp.ResponseWriter, requ
 		writeLayerError(w, stdhttp.StatusForbidden, "adapter", opcda.CodeWriteDisabled, "write is disabled", nil)
 		return
 	}
+	if !validateJSONRequest(w, request) {
+		return
+	}
 
 	var decoded writeHTTPRequest
 	if err := s.decodeRequestBody(w, request, &decoded); err != nil {
@@ -88,6 +91,10 @@ func (s *Server) handleWrite(ctx context.Context, w stdhttp.ResponseWriter, requ
 		writeOperationError(w, err)
 		return
 	}
+	if !writeResultsMatchRequest(items, results) {
+		writeLayerError(w, stdhttp.StatusInternalServerError, "adapter", opcda.CodeInternalResultMismatch, "runtime returned results that do not match the Write request", nil)
+		return
+	}
 	encoded := make([]writeHTTPResult, len(results))
 	for index, result := range results {
 		encoded[index] = writeHTTPResult{
@@ -103,6 +110,18 @@ func (s *Server) handleWrite(ctx context.Context, w stdhttp.ResponseWriter, requ
 	writeJSON(w, stdhttp.StatusOK, struct {
 		Results []writeHTTPResult `json:"results"`
 	}{Results: encoded})
+}
+
+func writeResultsMatchRequest(items []opcda.WriteItem, results []opcda.WriteResult) bool {
+	if len(results) != len(items) {
+		return false
+	}
+	for index := range items {
+		if results[index].ItemID != items[index].ItemID {
+			return false
+		}
+	}
+	return true
 }
 
 func decodeWriteValue(varType opcda.DAVarType, encoding string, raw json.RawMessage) (any, error) {

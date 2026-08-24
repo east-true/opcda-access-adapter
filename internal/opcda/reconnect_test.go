@@ -46,3 +46,35 @@ func TestRuntimeLimitsRejectUnsafeConfiguredCeiling(t *testing.T) {
 		t.Fatal("command queue above hard ceiling was accepted")
 	}
 }
+
+func TestRuntimeLimitsRejectUnsafeAggregateBudgets(t *testing.T) {
+	if err := DefaultLimits().ValidateForConfiguration(); err != nil {
+		t.Fatalf("defaults must remain valid: %v", err)
+	}
+	tests := []struct {
+		name   string
+		mutate func(*Limits)
+	}{
+		{name: "Read BSTRs", mutate: func(limits *Limits) { limits.MaxReadItems = 129 }},
+		{name: "Write BSTRs", mutate: func(limits *Limits) { limits.MaxWriteItems = 129 }},
+		{name: "Browse BSTRs", mutate: func(limits *Limits) { limits.MaxBrowseEntries = 1025 }},
+		{name: "Read ItemIDs", mutate: func(limits *Limits) {
+			limits.MaxBSTRCodeUnits = 1
+			limits.MaxReadItems = 1025
+			limits.MaxItemIDBytes = 65536
+		}},
+		{name: "registration ItemIDs", mutate: func(limits *Limits) {
+			limits.MaxBSTRCodeUnits = 1
+			limits.MaxRegisteredItems = 131073
+		}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			limits := DefaultLimits()
+			test.mutate(&limits)
+			if err := limits.ValidateForConfiguration(); err == nil {
+				t.Fatal("aggregate runtime budget above hard ceiling was accepted")
+			}
+		})
+	}
+}

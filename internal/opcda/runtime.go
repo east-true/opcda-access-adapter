@@ -31,6 +31,10 @@ const (
 	defaultReconnectMax     = 30 * time.Second
 	defaultCOMCallWatchdog  = 30 * time.Second
 	maximumRuntimeDuration  = 24 * time.Hour
+	maximumBatchBSTRUnits   = uint64(8 << 20)
+	maximumBrowseBSTRUnits  = uint64(128 << 20)
+	maximumBatchItemIDBytes = uint64(64 << 20)
+	maximumCacheItemIDBytes = uint64(128 << 20)
 )
 
 func (config Config) withDefaults() Config {
@@ -112,6 +116,21 @@ func (limits Limits) validate() error {
 		limits.MaxItemIDBytes > 65536 ||
 		limits.MaxBSTRCodeUnits > 1048576 {
 		return fmt.Errorf("one or more DA runtime limits exceed the v0 hard ceiling")
+	}
+	if uint64(limits.MaxReadItems)*uint64(limits.MaxBSTRCodeUnits) > maximumBatchBSTRUnits ||
+		uint64(limits.MaxWriteItems)*uint64(limits.MaxBSTRCodeUnits) > maximumBatchBSTRUnits {
+		return fmt.Errorf("configured batch BSTR budget exceeds the v0 hard ceiling")
+	}
+	// A Browse item can retain both the enumerated name and exact ItemID.
+	if uint64(limits.MaxBrowseEntries)*uint64(limits.MaxBSTRCodeUnits)*2 > maximumBrowseBSTRUnits {
+		return fmt.Errorf("configured Browse BSTR budget exceeds the v0 hard ceiling")
+	}
+	if uint64(limits.MaxReadItems)*uint64(limits.MaxItemIDBytes) > maximumBatchItemIDBytes ||
+		uint64(limits.MaxWriteItems)*uint64(limits.MaxItemIDBytes) > maximumBatchItemIDBytes {
+		return fmt.Errorf("configured batch ItemID budget exceeds the v0 hard ceiling")
+	}
+	if uint64(limits.MaxRegisteredItems)*uint64(limits.MaxItemIDBytes) > maximumCacheItemIDBytes {
+		return fmt.Errorf("configured registration-cache ItemID budget exceeds the v0 hard ceiling")
 	}
 	return nil
 }

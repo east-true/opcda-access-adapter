@@ -4,6 +4,13 @@ The v0 listener defaults to `127.0.0.1:8080`. All request bodies and batch
 sizes are bounded. ItemIDs are passed to OPC DA exactly as decoded; the
 adapter does not trim, rename, normalize, or infer them.
 
+All POST requests require `Content-Type: application/json`; parameters such as
+`charset=utf-8` are accepted. Direct browser requests carrying an `Origin`
+header are rejected because v0 has no browser frontend or CORS/authentication
+contract. On a loopback-configured listener, a non-loopback `Host` is also
+rejected to limit DNS-rebinding attacks. JSON responses are marked `no-store`,
+`nosniff`, and `Cross-Origin-Resource-Policy: same-origin`.
+
 ## Status
 
 ```text
@@ -15,6 +22,27 @@ enablement, listener state, queue depth, reconnect count, and any degraded
 reason. It never contains process values. In `degraded` state the reason tells
 the operator to restart the process; the adapter does not terminate a hung COM
 thread.
+
+When a connection attempt or an established connection fails at the COM/OPC
+method layer, status retains exactly one bounded diagnostic until the next
+successful connection:
+
+```json
+{
+  "state": "disconnected",
+  "source": {
+    "progId": "Vendor.Server.1",
+    "connectionGeneration": 0,
+    "lastError": {
+      "operation": "CoCreateInstance(IOPCServer)",
+      "hresult": {"value": -2147024891, "hex": "0x80070005"}
+    }
+  }
+}
+```
+
+This record never contains an ItemID or process value. It is not an error
+history and does not replace per-item Read/Write HRESULTs.
 
 ## Configuration
 
@@ -49,6 +77,11 @@ process-value history is retained in memory, so there is no unbounded
 diagnostic ring. Logs go directly to the configured process output and never
 include process values by default; deployment-level collection and rotation
 remain the operator's responsibility.
+
+Individually valid settings must also fit the aggregate memory ceilings in
+[ADR-0008](adr/0008-http-origin-and-aggregate-bounds.md). This prevents, for
+example, a maximum body size multiplied by maximum concurrency from admitting
+a multi-gigabyte in-flight workload. Unsafe combinations fail startup.
 
 ## Device Read
 
@@ -100,6 +133,11 @@ VARIANTs are still cleared even when their value type is unsupported.
 Error bodies distinguish `frontend`, `adapter`, and `source` layers. Source
 method errors include the raw HRESULT. Item errors are not replaced by a
 generic request error.
+
+Transport hardening errors include `UNSUPPORTED_MEDIA_TYPE`,
+`BROWSER_ORIGIN_REJECTED`, and, for a loopback listener, `UNTRUSTED_HOST`.
+An internal Read/Write result count or ordered ItemID mismatch is
+`INTERNAL_RESULT_MISMATCH` and fails closed with HTTP 500.
 
 ## Browse
 

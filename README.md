@@ -145,6 +145,8 @@ variables.
 ## Safety defaults
 
 - HTTP binds to loopback unless an external address is explicitly configured.
+- Loopback mode rejects non-loopback Host values; POST requires JSON and
+  rejects direct browser Origin requests.
 - Write returns `403 WRITE_DISABLED` unless `OPCDA_WRITE_ENABLED=true`.
 - The adapter has no authentication, authorization, or TLS layer in v0.
 - An in-flight Write is never automatically retried or replayed.
@@ -175,6 +177,8 @@ source pins, observed DA metadata, resource deltas, and untested conditions.
 | [HTTP API](docs/http-api.md) | Endpoints, JSON contracts, configuration, limits, and errors |
 | [Compatibility](docs/compatibility.md) | Executed server results and honest compatibility scope |
 | [Windows validation](docs/validation/real-da-windows.md) | Reproducible real-DA VM procedure |
+| [Windows COM security](docs/security-windows.md) | Local activation, identity, ACL, and HRESULT guidance |
+| [Local destructive review](docs/validation/local-vm-destructive.md) | Isolated VM attack/failure matrix and evidence gate |
 | [Release procedure](docs/releasing.md) | Dry runs, publication gates, checksums, and attestations |
 | [Implementation status](docs/implementation-status.md) | Current SHA, completed phases, risks, and next work |
 | [ADRs](docs/adr/) | Runtime, type, Write, reconnect, bounds, and fixture decisions |

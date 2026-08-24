@@ -3,7 +3,11 @@ package http
 import (
 	"context"
 	"encoding/json"
+	"mime"
+	"net"
 	"net/http"
+	"strconv"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -11,14 +15,15 @@ import (
 )
 
 type Config struct {
-	MaxBodyBytes     int64
-	MaxConcurrent    int
-	RequestDeadline  time.Duration
-	MaxReadItems     int
-	MaxWriteItems    int
-	MaxBrowseEntries int
-	MaxBrowseDepth   int
-	MaxItemIDBytes   int
+	MaxBodyBytes        int64
+	MaxConcurrent       int
+	RequestDeadline     time.Duration
+	MaxReadItems        int
+	MaxWriteItems       int
+	MaxBrowseEntries    int
+	MaxBrowseDepth      int
+	MaxItemIDBytes      int
+	RequireLoopbackHost bool
 }
 
 type Server struct {
@@ -56,11 +61,17 @@ func (s *Server) SetListening(value bool) {
 }
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	setResponseSecurityHeaders(w)
+
 	select {
 	case s.requests <- struct{}{}:
 		defer func() { <-s.requests }()
 	default:
 		writeError(w, http.StatusServiceUnavailable, opcda.CodeQueueFull, "too many concurrent HTTP requests")
+		return
+	}
+	if s.config.RequireLoopbackHost && !isLoopbackRequestHost(r.Host) {
+		writeError(w, http.StatusMisdirectedRequest, opcda.CodeUntrustedHost, "request Host is not loopback")
 		return
 	}
 
@@ -81,14 +92,79 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+func setResponseSecurityHeaders(w http.ResponseWriter) {
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Content-Security-Policy", "default-src 'none'; frame-ancestors 'none'")
+	w.Header().Set("Cross-Origin-Resource-Policy", "same-origin")
+	w.Header().Set("Referrer-Policy", "no-referrer")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("X-Frame-Options", "DENY")
+}
+
+func isLoopbackRequestHost(value string) bool {
+	if value == "" {
+		return false
+	}
+	host := value
+	if parsedHost, port, err := net.SplitHostPort(value); err == nil {
+		parsedPort, parseErr := strconv.ParseUint(port, 10, 16)
+		if parseErr != nil || parsedPort == 0 {
+			return false
+		}
+		host = parsedHost
+	} else if strings.HasPrefix(value, "[") || strings.HasSuffix(value, "]") {
+		if !strings.HasPrefix(value, "[") || !strings.HasSuffix(value, "]") {
+			return false
+		}
+		host = value[1 : len(value)-1]
+		if strings.ContainsAny(host, "[]") {
+			return false
+		}
+	} else if strings.Contains(value, ":") {
+		return false
+	}
+	host = strings.ToLower(host)
+	if host == "localhost" || host == "localhost." {
+		return true
+	}
+	address := net.ParseIP(host)
+	return address != nil && address.IsLoopback()
+}
+
+func validateJSONRequest(w http.ResponseWriter, request *http.Request) bool {
+	if request.Header.Get("Origin") != "" {
+		writeError(w, http.StatusForbidden, opcda.CodeBrowserOriginRejected, "browser-originated requests are not accepted")
+		return false
+	}
+	mediaType, _, err := mime.ParseMediaType(request.Header.Get("Content-Type"))
+	if err != nil || mediaType != "application/json" {
+		writeError(w, http.StatusUnsupportedMediaType, opcda.CodeUnsupportedMediaType, "Content-Type must be application/json")
+		return false
+	}
+	return true
+}
+
 func (s *Server) handleStatus(ctx context.Context, w http.ResponseWriter) {
 	status := s.runtime.Status(ctx)
+	type sourceErrorResponse struct {
+		Operation string              `json:"operation"`
+		HRESULT   *opcda.HRESULTValue `json:"hresult,omitempty"`
+	}
+	var lastSourceError *sourceErrorResponse
+	if status.LastSourceErrorSet {
+		lastSourceError = &sourceErrorResponse{Operation: status.LastSourceError.Operation}
+		if status.LastSourceError.HRESULTPresent {
+			representation := status.LastSourceError.HRESULT.Representation()
+			lastSourceError.HRESULT = &representation
+		}
+	}
 	response := struct {
 		State  string `json:"state"`
 		Source struct {
-			ProgID               string `json:"progId,omitempty"`
-			CLSID                string `json:"clsid,omitempty"`
-			ConnectionGeneration uint64 `json:"connectionGeneration"`
+			ProgID               string               `json:"progId,omitempty"`
+			CLSID                string               `json:"clsid,omitempty"`
+			ConnectionGeneration uint64               `json:"connectionGeneration"`
+			LastError            *sourceErrorResponse `json:"lastError,omitempty"`
 		} `json:"source"`
 		Capabilities struct {
 			Browse    string `json:"browse"`
@@ -110,13 +186,15 @@ func (s *Server) handleStatus(ctx context.Context, w http.ResponseWriter) {
 	}{
 		State: string(status.State),
 		Source: struct {
-			ProgID               string `json:"progId,omitempty"`
-			CLSID                string `json:"clsid,omitempty"`
-			ConnectionGeneration uint64 `json:"connectionGeneration"`
+			ProgID               string               `json:"progId,omitempty"`
+			CLSID                string               `json:"clsid,omitempty"`
+			ConnectionGeneration uint64               `json:"connectionGeneration"`
+			LastError            *sourceErrorResponse `json:"lastError,omitempty"`
 		}{
 			ProgID:               status.Source.ProgID,
 			CLSID:                status.Source.CLSID,
 			ConnectionGeneration: status.ConnectionGeneration,
+			LastError:            lastSourceError,
 		},
 		Capabilities: struct {
 			Browse    string `json:"browse"`

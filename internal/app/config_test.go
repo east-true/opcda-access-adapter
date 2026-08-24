@@ -78,3 +78,46 @@ func TestLoadConfigRejectsUnsafeHTTPConnectionCeiling(t *testing.T) {
 		t.Fatal("HTTP connections above hard ceiling were accepted")
 	}
 }
+
+func TestLoadConfigRejectsUnsafeAggregateHTTPBudgets(t *testing.T) {
+	tests := []struct {
+		name string
+		env  map[string]string
+	}{
+		{
+			name: "bodies",
+			env: map[string]string{
+				"OPCDA_MAX_HTTP_BODY_BYTES":     "67108864",
+				"OPCDA_MAX_CONCURRENT_REQUESTS": "5",
+			},
+		},
+		{
+			name: "headers",
+			env: map[string]string{
+				"OPCDA_MAX_HTTP_CONNECTIONS":  "65",
+				"OPCDA_MAX_HTTP_HEADER_BYTES": "1048576",
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			for key, value := range test.env {
+				t.Setenv(key, value)
+			}
+			if _, err := LoadConfig(); err == nil {
+				t.Fatal("aggregate HTTP budget above hard ceiling was accepted")
+			}
+		})
+	}
+}
+
+func TestLoadConfigRejectsMalformedListenAddress(t *testing.T) {
+	for _, address := range []string{"127.0.0.1", "127.0.0.1:not-a-port", "127.0.0.1:65536"} {
+		t.Run(address, func(t *testing.T) {
+			t.Setenv("OPCDA_HTTP_LISTEN", address)
+			if _, err := LoadConfig(); err == nil {
+				t.Fatalf("malformed listen address %q was accepted", address)
+			}
+		})
+	}
+}

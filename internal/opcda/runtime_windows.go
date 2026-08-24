@@ -4,6 +4,7 @@ package opcda
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"runtime"
 	"sync"
@@ -208,6 +209,7 @@ func (r *windowsRuntime) tryConnect(session *daThreadSession, reconnect bool) {
 		return
 	}
 	if err != nil {
+		r.recordSourceFailure("OPC DA connect", err)
 		session.disconnect()
 		r.scheduleReconnect(session)
 		return
@@ -217,6 +219,8 @@ func (r *windowsRuntime) tryConnect(session *daThreadSession, reconnect bool) {
 		status.ConnectionGeneration = session.generation
 		status.Capabilities = Capabilities{Browse: session.browseCapability, Read: true, Write: true}
 		status.DegradedReason = ""
+		status.LastSourceError = SourceDiagnostic{}
+		status.LastSourceErrorSet = false
 	})
 }
 
@@ -531,8 +535,29 @@ func (r *windowsRuntime) handleOperationFailure(session *daThreadSession, err er
 	if !isConnectionLoss(err) || r.degraded.Load() {
 		return
 	}
+	r.recordSourceFailure("OPC DA operation", err)
 	session.disconnect()
 	r.scheduleReconnect(session)
+}
+
+func (r *windowsRuntime) recordSourceFailure(fallbackOperation string, err error) {
+	diagnostic := SourceDiagnostic{Operation: fallbackOperation}
+	var sourceError *SourceError
+	var callError *comCallError
+	switch {
+	case errors.As(err, &sourceError):
+		diagnostic.Operation = sourceError.Operation
+		diagnostic.HRESULT = sourceError.HRESULT
+		diagnostic.HRESULTPresent = true
+	case errors.As(err, &callError):
+		diagnostic.Operation = callError.Operation
+		diagnostic.HRESULT = callError.HRESULT
+		diagnostic.HRESULTPresent = true
+	}
+	r.updateStatus(func(status *RuntimeStatus) {
+		status.LastSourceError = diagnostic
+		status.LastSourceErrorSet = true
+	})
 }
 
 func (r *windowsRuntime) beginCOMWatchdog(operation string) func() {

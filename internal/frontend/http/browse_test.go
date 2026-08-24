@@ -39,7 +39,7 @@ func TestBrowsePreservesNavigationAndExactItemID(t *testing.T) {
 	server := newBrowseTestServer(runtime)
 	response := httptest.NewRecorder()
 	body := []byte(`{"path":["Channel 1"],"filter":"all"}`)
-	server.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/v1/browse", bytes.NewReader(body)))
+	server.ServeHTTP(response, newJSONRequest(http.MethodPost, "/v1/browse", bytes.NewReader(body)))
 	if response.Code != http.StatusOK {
 		t.Fatalf("status = %d: %s", response.Code, response.Body.String())
 	}
@@ -70,7 +70,7 @@ func TestBrowseUnsupportedAndLimitAreAdapterErrors(t *testing.T) {
 	for _, test := range tests {
 		runtime := &browseRuntime{err: opcda.NewAdapterError(test.code, "browse unavailable")}
 		response := httptest.NewRecorder()
-		newBrowseTestServer(runtime).ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/v1/browse", bytes.NewReader([]byte(`{"path":[],"filter":"all"}`))))
+		newBrowseTestServer(runtime).ServeHTTP(response, newJSONRequest(http.MethodPost, "/v1/browse", bytes.NewReader([]byte(`{"path":[],"filter":"all"}`))))
 		if response.Code != http.StatusUnprocessableEntity || !bytes.Contains(response.Body.Bytes(), []byte(`"layer":"adapter"`)) {
 			t.Fatalf("%s response = %d %s", test.code, response.Code, response.Body.String())
 		}
@@ -80,7 +80,7 @@ func TestBrowseUnsupportedAndLimitAreAdapterErrors(t *testing.T) {
 func TestBrowseValidationPreventsRuntimeCall(t *testing.T) {
 	runtime := &browseRuntime{}
 	response := httptest.NewRecorder()
-	newBrowseTestServer(runtime).ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/v1/browse", bytes.NewReader([]byte(`{"path":[""],"filter":"all"}`))))
+	newBrowseTestServer(runtime).ServeHTTP(response, newJSONRequest(http.MethodPost, "/v1/browse", bytes.NewReader([]byte(`{"path":[""],"filter":"all"}`))))
 	if response.Code != http.StatusBadRequest || runtime.calls != 0 {
 		t.Fatalf("response = %d, runtime calls = %d", response.Code, runtime.calls)
 	}

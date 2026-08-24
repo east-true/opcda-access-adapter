@@ -3,6 +3,7 @@ package http
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -10,6 +11,12 @@ import (
 
 	"github.com/east-true/opcda-access-adapter/internal/opcda"
 )
+
+func newJSONRequest(method, target string, body io.Reader) *http.Request {
+	request := httptest.NewRequest(method, target, body)
+	request.Header.Set("Content-Type", "application/json")
+	return request
+}
 
 type statusRuntime struct{}
 
@@ -21,6 +28,12 @@ func (statusRuntime) Status(context.Context) opcda.RuntimeStatus {
 		ReconnectCount:       3,
 		QueueDepth:           2,
 		Capabilities:         opcda.Capabilities{Browse: "supported", Read: true, Write: true},
+		LastSourceErrorSet:   true,
+		LastSourceError: opcda.SourceDiagnostic{
+			Operation:      "CoCreateInstance(IOPCServer)",
+			HRESULT:        opcda.HRESULT(-2147024891),
+			HRESULTPresent: true,
+		},
 	}
 }
 func (statusRuntime) Browse(context.Context, opcda.BrowseRequest) (opcda.BrowseResult, error) {
@@ -48,7 +61,19 @@ func TestStatusIncludesRuntimeAndListenerState(t *testing.T) {
 	if got, want := response.Header().Get("Content-Type"), "application/json"; got != want {
 		t.Fatalf("content type = %q, want %q", got, want)
 	}
-	if body := response.Body.String(); body == "" || !containsAll(body, []string{"connected", "Example.Server.1", "connectionGeneration", "reconnectCount", "queueDepth", "listening"}) {
+	for name, want := range map[string]string{
+		"Cache-Control":                "no-store",
+		"Content-Security-Policy":      "default-src 'none'; frame-ancestors 'none'",
+		"Cross-Origin-Resource-Policy": "same-origin",
+		"Referrer-Policy":              "no-referrer",
+		"X-Content-Type-Options":       "nosniff",
+		"X-Frame-Options":              "DENY",
+	} {
+		if got := response.Header().Get(name); got != want {
+			t.Fatalf("%s = %q, want %q", name, got, want)
+		}
+	}
+	if body := response.Body.String(); body == "" || !containsAll(body, []string{"connected", "Example.Server.1", "connectionGeneration", "reconnectCount", "queueDepth", "CoCreateInstance(IOPCServer)", "0x80070005", "listening"}) {
 		t.Fatalf("unexpected body: %s", body)
 	}
 	var decoded struct {
@@ -63,6 +88,41 @@ func TestStatusIncludesRuntimeAndListenerState(t *testing.T) {
 	}
 	if !decoded.Frontend.HTTP.Listening {
 		t.Fatal("expected listening status to be true")
+	}
+}
+
+func TestLoopbackHostPolicyRejectsDNSRebinding(t *testing.T) {
+	server := New(statusRuntime{}, Config{
+		MaxBodyBytes: 1024, MaxConcurrent: 1, RequestDeadline: time.Second,
+		RequireLoopbackHost: true,
+	})
+	for _, host := range []string{"127.0.0.1:8080", "localhost:8080", "LOCALHOST.:8080", "[::1]:8080"} {
+		request := httptest.NewRequest(http.MethodGet, "/v1/status", nil)
+		request.Host = host
+		response := httptest.NewRecorder()
+		server.ServeHTTP(response, request)
+		if response.Code != http.StatusOK {
+			t.Fatalf("loopback Host %q status = %d: %s", host, response.Code, response.Body.String())
+		}
+	}
+
+	request := httptest.NewRequest(http.MethodGet, "/v1/status", nil)
+	request.Host = "attacker.example:8080"
+	response := httptest.NewRecorder()
+	server.ServeHTTP(response, request)
+	if response.Code != http.StatusMisdirectedRequest {
+		t.Fatalf("untrusted Host status = %d: %s", response.Code, response.Body.String())
+	}
+	assertErrorCode(t, response, string(opcda.CodeUntrustedHost))
+
+	for _, host := range []string{"", "::1", "[[::1]]", "[::1]:bad", "localhost:bad", "127.0.0.1.attacker.example"} {
+		request := httptest.NewRequest(http.MethodGet, "/v1/status", nil)
+		request.Host = host
+		response := httptest.NewRecorder()
+		server.ServeHTTP(response, request)
+		if response.Code != http.StatusMisdirectedRequest {
+			t.Fatalf("malformed or untrusted Host %q status = %d: %s", host, response.Code, response.Body.String())
+		}
 	}
 }
 

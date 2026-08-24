@@ -47,6 +47,10 @@ headers, 4,096 DA commands, 10,000 Read/Write items,
 timeouts, deadlines, reconnect maximum, and the COM watchdog. Values above a
 ceiling fail startup.
 
+Individual ceilings are additionally subject to the aggregate admitted-memory
+budgets in [ADR-0008](0008-http-origin-and-aggregate-bounds.md). This closes
+unsafe combinations without changing the defaults above.
+
 ## Consequences
 
 The defaults prevent unbounded memory growth and accidental remote exposure.

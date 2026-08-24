@@ -132,3 +132,30 @@ func TestScheduleReconnectExposesDisconnectedBackoffState(t *testing.T) {
 		t.Fatalf("scheduled reconnect = status %+v, session %+v", status, session)
 	}
 }
+
+func TestSourceFailureDiagnosticPreservesOperationAndHRESULT(t *testing.T) {
+	runtime := &windowsRuntime{status: RuntimeStatus{State: RuntimeStateConnecting}}
+	runtime.recordSourceFailure("fallback", &comCallError{
+		Operation: "CoCreateInstance(IOPCServer)",
+		HRESULT:   HRESULT(-2147024891), // 0x80070005 E_ACCESSDENIED
+	})
+
+	status := runtime.Status(context.Background())
+	if !status.LastSourceErrorSet {
+		t.Fatal("source diagnostic was not recorded")
+	}
+	if got, want := status.LastSourceError.Operation, "CoCreateInstance(IOPCServer)"; got != want {
+		t.Fatalf("operation = %q, want %q", got, want)
+	}
+	if !status.LastSourceError.HRESULTPresent || status.LastSourceError.HRESULT.Hex() != "0x80070005" {
+		t.Fatalf("HRESULT diagnostic = %+v", status.LastSourceError)
+	}
+
+	runtime.updateStatus(func(status *RuntimeStatus) {
+		status.LastSourceError = SourceDiagnostic{}
+		status.LastSourceErrorSet = false
+	})
+	if runtime.Status(context.Background()).LastSourceErrorSet {
+		t.Fatal("source diagnostic survived successful-connection reset")
+	}
+}

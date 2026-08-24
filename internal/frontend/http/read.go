@@ -39,6 +39,9 @@ type readHTTPResult struct {
 }
 
 func (s *Server) handleRead(ctx context.Context, w stdhttp.ResponseWriter, request *stdhttp.Request) {
+	if !validateJSONRequest(w, request) {
+		return
+	}
 	var decoded readHTTPRequest
 	if err := s.decodeRequestBody(w, request, &decoded); err != nil {
 		writeDecodeError(w, err)
@@ -86,6 +89,10 @@ func (s *Server) handleRead(ctx context.Context, w stdhttp.ResponseWriter, reque
 		writeOperationError(w, err)
 		return
 	}
+	if !readResultsMatchRequest(itemIDs, results) {
+		writeLayerError(w, stdhttp.StatusInternalServerError, "adapter", opcda.CodeInternalResultMismatch, "runtime returned results that do not match the Read request", nil)
+		return
+	}
 	encoded := make([]readHTTPResult, len(results))
 	for index := range results {
 		encoded[index] = encodeReadResult(results[index])
@@ -93,6 +100,18 @@ func (s *Server) handleRead(ctx context.Context, w stdhttp.ResponseWriter, reque
 	writeJSON(w, stdhttp.StatusOK, struct {
 		Results []readHTTPResult `json:"results"`
 	}{Results: encoded})
+}
+
+func readResultsMatchRequest(items []opcda.DAItemID, results []opcda.ReadResult) bool {
+	if len(results) != len(items) {
+		return false
+	}
+	for index := range items {
+		if results[index].ItemID != items[index] {
+			return false
+		}
+	}
+	return true
 }
 
 func writeDecodeError(w stdhttp.ResponseWriter, err error) {

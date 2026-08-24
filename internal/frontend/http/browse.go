@@ -21,6 +21,9 @@ type browseHTTPEntry struct {
 }
 
 func (s *Server) handleBrowse(ctx context.Context, w stdhttp.ResponseWriter, request *stdhttp.Request) {
+	if !validateJSONRequest(w, request) {
+		return
+	}
 	var decoded browseHTTPRequest
 	if err := s.decodeRequestBody(w, request, &decoded); err != nil {
 		writeDecodeError(w, err)

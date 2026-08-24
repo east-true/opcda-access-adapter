@@ -105,6 +105,74 @@ func TestOverloadClosesIdleConnectionsBeforeSaturation(t *testing.T) {
 	}
 }
 
+func TestSlowBodiesAreClosedByServerReadTimeout(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler := http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		switch request.URL.Path {
+		case "/v1/status":
+			response.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(response, `{"state":"connected","source":{"connectionGeneration":1},"frontend":{"http":{"listening":true}}}`)
+		case "/v1/read":
+			_, _ = io.Copy(io.Discard, request.Body)
+			response.WriteHeader(http.StatusNoContent)
+		default:
+			response.WriteHeader(http.StatusNotFound)
+		}
+	})
+	server := &http.Server{Handler: handler, ReadTimeout: 100 * time.Millisecond}
+	go func() { _ = server.Serve(listener) }()
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		_ = server.Shutdown(ctx)
+	})
+
+	transport := &http.Transport{MaxIdleConns: 4, MaxIdleConnsPerHost: 4}
+	p := probe{
+		baseURL: &url.URL{Scheme: "http", Host: listener.Addr().String()},
+		client:  &http.Client{Transport: transport, Timeout: 2 * time.Second},
+	}
+	t.Cleanup(transport.CloseIdleConnections)
+	if err := p.slowBodies(2, 100*time.Millisecond); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestMalformedHTTPProtocolRequestsAreRejected(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler := http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		if request.URL.Path != "/v1/status" {
+			response.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		response.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(response, `{"state":"connected","source":{"connectionGeneration":1},"frontend":{"http":{"listening":true}}}`)
+	})
+	server := &http.Server{Handler: handler, ReadTimeout: time.Second}
+	go func() { _ = server.Serve(listener) }()
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		_ = server.Shutdown(ctx)
+	})
+
+	transport := &http.Transport{MaxIdleConns: 4, MaxIdleConnsPerHost: 4}
+	p := probe{
+		baseURL: &url.URL{Scheme: "http", Host: listener.Addr().String()},
+		client:  &http.Client{Transport: transport, Timeout: 2 * time.Second},
+	}
+	t.Cleanup(transport.CloseIdleConnections)
+	if err := p.protocolAnomalies(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 type probeBoundedListener struct {
 	net.Listener
 	permits chan struct{}

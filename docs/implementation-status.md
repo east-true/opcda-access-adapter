@@ -10,9 +10,10 @@ a claim of broad vendor compatibility or production readiness.
 
 ## Current main SHA
 
-`c0f56f746dd77c5d85e387cd5e99c60f50ef3e7d` — current protected `main` after
-the pinned setup-go v7 dependency update (PR #12). The most recent recorded
-real-DA executable evidence remains the stability revision identified below.
+`ba256bda31c5356da8f4c70c63890994cb005771` — current protected `main` after
+release-readiness packaging (PR #19). No public tag or GitHub Release has been
+created. The local destructive review below is deliberately being completed
+before release promotion.
 
 ## Completed
 
@@ -43,15 +44,42 @@ real-DA executable evidence remains the stability revision identified below.
   backpressure, abnormal-input/short-cycle/concurrent-load probes, and three
   consecutive real source failure/recovery cycles were merged in PR #11 after
   all seven checks passed.
+- Release archives, checksums, embedded version metadata, non-publishing dry
+  runs, artifact attestations, and maintainer documentation were merged in PR
+  #19 after all eight required checks passed. The merge did not create a tag or
+  release.
 
 ## In progress
 
-- Release-readiness work adds reproducible Windows archives, embedded
-  version/commit metadata, checksums, artifact attestations, a non-publishing
-  dry run, and maintainer documentation. No release or tag has been created.
+- VM-free code hardening on branch `security/dcom-destructive-validation` is
+  locally complete and awaiting PR verification. It adds browser-request and
+  DNS-rebinding defenses for the loopback HTTP boundary, aggregate resource
+  ceilings, fail-closed Read/Write result correspondence, fuzz targets, race
+  CI, and stability-probe coverage. These checks do not count as Windows COM
+  or DCOM validation.
+- The local KVM/libvirt destructive-validation gate is paused. The dedicated
+  `opcda-destructive-review` VM and all of its dedicated host resources were
+  removed on 2026-08-24 because this host could not run it alongside another
+  project's VM. GitHub-hosted runner evidence is not accepted as a substitute.
+  No local PASS is recorded; exact preparation and interruption evidence is in
+  `docs/validation/local-vm-destructive.md`.
 
 ## Validation results
 
+- On 2026-08-24, the VM-free hardening branch passed `go test ./...`,
+  `go vet ./...`, `go test -race ./...`, and 20 consecutive full-suite runs
+  with Go 1.26.0 on Linux. Three HTTP/JSON fuzz targets each passed a local
+  five-second fuzz run without a crash.
+- Native `windows/386` and `windows/amd64` adapter executables cross-built,
+  and all five package test executables compiled for each architecture. They
+  were not executed on Windows in this validation pass.
+- A temporary Linux status-only listener verified the real HTTP path without
+  simulating DA data: status `200`, non-loopback Host `421`, `text/plain` POST
+  `415`, browser Origin `403`, non-Windows Read `503`, default-disabled Write
+  `403`, required response security headers, and 500/500 successful status
+  requests at 16-way concurrency. The temporary listener was removed.
+- `go mod verify` passed and `go list -m all` reported only this module; the
+  production code still has no third-party Go module dependency.
 - PRs #1 through #9 were merged only after all required checks passed.
 - Main CI run `32623072909` passed at the Phase 5 merge SHA with five checks:
   Linux formatting/test/vet, Windows 386 build, Windows amd64 build, Windows
@@ -148,6 +176,10 @@ real-DA executable evidence remains the stability revision identified below.
 ## External blockers
 
 - None for the scoped v0 completion and official-fixture validation.
+- The additional local destructive-validation gate requires a Windows host or
+  VM capacity that does not contend with the other project currently using
+  this machine. The prior dedicated VM was intentionally deleted before the
+  scenario matrix ran.
 - Compatibility with third-party/vendor DA servers remains untested and must
   not be inferred from the OPC Foundation fixture; validating one requires an
   authorized Windows installation and safe test ItemIDs.
@@ -155,13 +187,18 @@ real-DA executable evidence remains the stability revision identified below.
 
 ## Next exact tasks
 
-1. Complete and review release packaging without creating a public tag.
-2. Perform an isolated destructive Windows review, including local DCOM/COM
-   launch and access permission failures, before proposing a public release.
-3. Continue to treat the existing Apache-2.0 license as authoritative.
-4. Add third-party compatibility rows only from authorized, executed tests;
+1. Recreate the isolated Windows environment only when non-contending VM
+   capacity is available, then complete the local destructive review including
+   local COM launch/access/RunAs permission failures. Do not use a GitHub runner
+   as evidence for this gate.
+2. Open and verify the VM-free HTTP/resource-hardening PR; treat its hosted
+   Windows jobs only as regression tests, not local destructive evidence.
+3. Record exact VM, Defender, x86/x64, load, resource, reboot, DCOM event, and
+   cleanup results before proposing a public release.
+4. Continue to treat the existing Apache-2.0 license as authoritative.
+5. Add third-party compatibility rows only from authorized, executed tests;
    do not infer vendor-wide compatibility from the official fixture.
-5. When an authorized server exposes non-Good Quality, an absent timestamp, or
+6. When an authorized server exposes non-Good Quality, an absent timestamp, or
    additional supported scalar types, add exact observations without changing
    source semantics.
 
@@ -173,3 +210,5 @@ real-DA executable evidence remains the stability revision identified below.
 - [ADR-0004: strict typed value Write](adr/0004-strict-typed-value-write.md)
 - [ADR-0005: reconnect and COM-hang policy](adr/0005-reconnect-and-com-hang-policy.md)
 - [ADR-0006: real-DA validation fixture and supply-chain controls](adr/0006-real-da-validation-fixture.md)
+- [ADR-0007: bounded source failure diagnostic](adr/0007-bounded-source-failure-diagnostic.md)
+- [ADR-0008: HTTP browser boundary and aggregate resource ceilings](adr/0008-http-origin-and-aggregate-bounds.md)

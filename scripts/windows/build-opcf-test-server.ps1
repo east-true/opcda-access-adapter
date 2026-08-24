@@ -80,10 +80,12 @@ if ($trackedBinaries.Count -ne 0) {
     throw "the pinned source unexpectedly contains tracked binaries: $($trackedBinaries -join ', ')"
 }
 
-$cmakeFiles = @(
-    Join-Path $source 'CMakeLists.txt'
-    Join-Path $source 'cmake\OpcProxyStub.cmake'
-)
+$cmakeFiles = @(Get-ChildItem -LiteralPath $source -Recurse -File | Where-Object {
+    $_.Name -eq 'CMakeLists.txt' -or $_.Extension -eq '.cmake'
+} | Select-Object -ExpandProperty FullName)
+if ($cmakeFiles.Count -eq 0) {
+    throw 'the pinned source contains no CMake definition files'
+}
 $forbiddenBuildFeatures = Select-String -Path $cmakeFiles `
     -Pattern 'FetchContent|ExternalProject|execute_process|file\s*\(\s*DOWNLOAD|install\s*\(\s*(CODE|SCRIPT)' `
     -CaseSensitive:$false

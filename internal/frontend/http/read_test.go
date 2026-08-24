@@ -52,7 +52,7 @@ func TestReadPreservesOrderWidthsQualityTimestampAndPartialFailure(t *testing.T)
 	server := newReadTestServer(runtime, 4096, 10)
 	body := []byte(`{"source":"device","items":[{"itemId":" Exact.Int2 "},{"itemId":"Missing"},{"itemId":"Wide"},{"itemId":"Infinity"}]}`)
 	response := httptest.NewRecorder()
-	server.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/v1/read", bytes.NewReader(body)))
+	server.ServeHTTP(response, newJSONRequest(http.MethodPost, "/v1/read", bytes.NewReader(body)))
 	if response.Code != http.StatusOK {
 		t.Fatalf("status = %d: %s", response.Code, response.Body.String())
 	}
@@ -112,7 +112,7 @@ func TestReadRejectsOversizeAndUnknownFieldsBeforeRuntime(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			server := newReadTestServer(runtime, test.limit, 10)
 			response := httptest.NewRecorder()
-			server.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/v1/read", bytes.NewReader(test.body)))
+			server.ServeHTTP(response, newJSONRequest(http.MethodPost, "/v1/read", bytes.NewReader(test.body)))
 			if response.Code != test.status {
 				t.Fatalf("status = %d, want %d: %s", response.Code, test.status, response.Body.String())
 			}
@@ -154,6 +154,17 @@ func TestJSONValueEncodingIsLossless(t *testing.T) {
 			t.Fatalf("encode(%T) = %s, %q; want %s, %q", test.value, got, encoding, test.want, test.encoding)
 		}
 	}
+}
+
+func TestReadFailsClosedOnRuntimeResultMismatch(t *testing.T) {
+	runtime := &readRuntime{results: []opcda.ReadResult{{ItemID: "Different"}}}
+	server := newReadTestServer(runtime, 4096, 10)
+	response := httptest.NewRecorder()
+	server.ServeHTTP(response, newJSONRequest(http.MethodPost, "/v1/read", bytes.NewBufferString(`{"items":[{"itemId":"Expected"}]}`)))
+	if response.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d: %s", response.Code, response.Body.String())
+	}
+	assertErrorCode(t, response, string(opcda.CodeInternalResultMismatch))
 }
 
 func newReadTestServer(runtime opcda.Runtime, bodyLimit int64, itemLimit int) *Server {
