@@ -115,6 +115,11 @@ created. The local destructive review below remains a release-promotion gate.
   setup, version 2 exact-CLSID configuration, LocalService execution, one
   loopback listener, and no process-value logging. The existing HTTP,
   reconnect, failure-cycle, load, and 200-Read soak regression also passed.
+- The first PR #30 documentation run exposed a time-budget flake in the
+  pre-existing HTTP string fuzz smoke test (`context deadline exceeded` after
+  completing more than 110,000 executions). CI now uses a deterministic
+  10,000-execution budget for each fuzz target instead of a wall-clock cutoff;
+  no fuzz finding or product failure was suppressed.
 - On 2026-08-24, `feat/guided-setup` passed `go test ./...`, `go vet ./...`,
   `go test -race ./...`, and 20 consecutive full-suite runs with Go 1.26.0 on
   Linux. All five package test executables cross-compiled for both
