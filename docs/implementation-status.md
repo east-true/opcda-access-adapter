@@ -10,9 +10,10 @@ a claim of broad vendor compatibility or production readiness.
 
 ## Current main SHA
 
-`b4675601237fc79a3fb90915198addf599a05808` — protected `main` after the
-post-hardening status merge (PR #21). No public tag or GitHub Release has been
-created. The local destructive review below remains a release-promotion gate.
+`62a5aae82b3dd8acbe9b7019d3732ca69d072c3a` — protected `main` after request
+parser and lifecycle hardening (PR #22). No public tag or GitHub Release has
+been created. The local destructive review below remains a release-promotion
+gate.
 
 ## Completed
 
@@ -52,13 +53,12 @@ created. The local destructive review below remains a release-promotion gate.
   defenses, aggregate resource ceilings, result-integrity checks, fuzzing, and
   race CI were merged in PR #20 after all eight checks passed. The local VM
   matrix remains unexecuted and is not represented by that merge.
+- Unambiguous JSON parsing, exact HTTP request targets and methods, strict
+  DA-native result validation, and terminal listener failure handling were
+  merged in PR #22 after all eight checks passed.
 
 ## In progress
 
-- Branch `security/request-parser-lifecycle` has completed a VM-free hardening
-  pass for unambiguous JSON parsing, exact HTTP targets and methods, strict
-  DA-native result validation, and terminal listener failure handling. Local
-  validation is green; PR/required-check validation and merge remain.
 - The local KVM/libvirt destructive-validation gate is paused. The dedicated
   `opcda-destructive-review` VM and all of its dedicated host resources were
   removed on 2026-08-24 because this host could not run it alongside another
@@ -78,6 +78,17 @@ created. The local destructive review below remains a release-promotion gate.
   produced both archives and verified their SHA-256 manifest. These binaries
   were not executed locally on Windows.
 - `go mod verify` passed and `go list -m all` still reports only this module.
+- PR #22 CI run
+  [`32698464078`](https://github.com/east-true/opcda-access-adapter/actions/runs/32698464078)
+  passed quality, race/fuzz checks, release packaging, both Windows builds, and
+  both native Windows test jobs. Its OPC Foundation regression run
+  [`32698464069`](https://github.com/east-true/opcda-access-adapter/actions/runs/32698464069)
+  passed the expanded anomalous-input profile and the full local-COM scenario
+  on x86/386 and x64/amd64. This hosted evidence does not replace the paused
+  local destructive matrix.
+- Post-merge CI run
+  [`32699178370`](https://github.com/east-true/opcda-access-adapter/actions/runs/32699178370)
+  passed at `62a5aae82b3dd8acbe9b7019d3732ca69d072c3a`.
 - On 2026-08-24, the VM-free hardening branch passed `go test ./...`,
   `go vet ./...`, `go test -race ./...`, and 20 consecutive full-suite runs
   with Go 1.26.0 on Linux. Three HTTP/JSON fuzz targets each passed a local
@@ -210,19 +221,16 @@ created. The local destructive review below remains a release-promotion gate.
 
 ## Next exact tasks
 
-1. Open `security/request-parser-lifecycle` as a PR, require all protected
-   checks and the x86/x64 real-DA regression to pass, merge, and record the
-   immutable workflow evidence.
-2. Recreate the isolated Windows environment only when non-contending VM
+1. Recreate the isolated Windows environment only when non-contending VM
    capacity is available, then complete the local destructive review including
    local COM launch/access/RunAs permission failures. Do not use a GitHub runner
    as evidence for this gate.
-3. Record exact VM, Defender, x86/x64, load, resource, reboot, DCOM event, and
+2. Record exact VM, Defender, x86/x64, load, resource, reboot, DCOM event, and
    cleanup results before proposing a public release.
-4. Continue to treat the existing Apache-2.0 license as authoritative.
-5. Add third-party compatibility rows only from authorized, executed tests;
+3. Continue to treat the existing Apache-2.0 license as authoritative.
+4. Add third-party compatibility rows only from authorized, executed tests;
    do not infer vendor-wide compatibility from the official fixture.
-6. When an authorized server exposes non-Good Quality, an absent timestamp, or
+5. When an authorized server exposes non-Good Quality, an absent timestamp, or
    additional supported scalar types, add exact observations without changing
    source semantics.
 
