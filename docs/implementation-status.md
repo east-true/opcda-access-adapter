@@ -10,9 +10,10 @@ a claim of broad vendor compatibility or production readiness.
 
 ## Current main SHA
 
-`1feb18180909cb5d9ccb0e0effa13ed4223bcd51` — protected `main` after the local
-detection validation record (PR #25). No public tag or GitHub Release has been
-created. The local destructive review below remains a release-promotion gate.
+`8c166ebafbd562a8c94b4857ff4ba82e10c550e1` — protected `main` after guided
+setup and Windows Service support (PR #26). No public tag or GitHub Release has
+been created. The local destructive review below remains a release-promotion
+gate.
 
 ## Completed
 
@@ -58,13 +59,14 @@ created. The local destructive review below remains a release-promotion gate.
 - Bounded local `OPC_DA_20` registration detection with no vendor activation,
   automatic selection, configuration mutation, remote lookup, or multi-server
   runtime was merged in PR #24 after all eight checks passed.
+- Explicit bounded source/frontend/action setup, strict versioned
+  configuration, foreground config execution, and an SCM-managed
+  `NT AUTHORITY\LocalService` lifecycle were merged in PR #26 after all eight
+  checks passed. Setup stores the exact selected CLSID, never auto-selects even
+  one candidate, and does not edit COM/DCOM or firewall permissions.
 
 ## In progress
 
-- Branch `feat/guided-setup` implements explicit source/frontend/action
-  selection, a strict bounded configuration file, foreground handoff, and an
-  SCM-managed LocalService background lifecycle. Native x86/x64 and real-DA
-  service identity/cleanup validation remain before merge.
 - The local KVM/libvirt destructive-validation gate is paused. The dedicated
   `opcda-destructive-review` VM and all of its dedicated host resources were
   removed on 2026-08-24 because this host could not run it alongside another
@@ -73,6 +75,40 @@ created. The local destructive review below remains a release-promotion gate.
   `docs/validation/local-vm-destructive.md`.
 
 ## Validation results
+
+- On 2026-08-24, `feat/guided-setup` passed `go test ./...`, `go vet ./...`,
+  `go test -race ./...`, and 20 consecutive full-suite runs with Go 1.26.0 on
+  Linux. All five package test executables cross-compiled for both
+  `windows/386` and `windows/amd64`; both adapter executables and
+  release-shaped archives built, and both SHA-256 manifests verified.
+- `go mod verify` passed. `go list -m all` reports only this module and the
+  reviewed Go-project low-level module `golang.org/x/sys v0.47.0`. The stripped
+  adapter binary increase over the dependency-free baseline was 428,032 bytes
+  (6.68%) on 386 and 464,896 bytes (7.01%) on amd64. License, provenance, and
+  runtime impact are recorded in ADR-0011 and `THIRD_PARTY_NOTICES.md`.
+- PR #26 CI run
+  [`32734190208`](https://github.com/east-true/opcda-access-adapter/actions/runs/32734190208)
+  passed quality, race/fuzz checks, release packaging, both Windows builds,
+  and native Windows tests on 386 and amd64 at head
+  `0fc3684128919ff28f94b9257c0dbc30e34ae328`.
+- PR #26 real-DA run
+  [`32734190245`](https://github.com/east-true/opcda-access-adapter/actions/runs/32734190245)
+  passed on Windows Server 2025 for both x86/386 and x64/amd64. Guided setup
+  required explicit fixture and HTTP selections, wrote version 1 configuration
+  with the exact CLSID and Write disabled, installed an automatic-start
+  Windows Service as `NT AUTHORITY\LocalService`, connected to the real local
+  DA fixture, completed a device Read, emitted bounded Application Event Log
+  lifecycle metadata, then stopped/uninstalled the service and removed its
+  event source. The subsequent full semantics, 5,000 rapid Reads, 3,200 mixed
+  concurrent requests, bounded overload recovery, three outage/reconnect
+  cycles, and 200-Read soak regression also passed on both architectures.
+- Post-merge CI run
+  [`32734895495`](https://github.com/east-true/opcda-access-adapter/actions/runs/32734895495)
+  passed quality, race/fuzz checks, release packaging, both Windows builds, and
+  both native Windows test jobs at main SHA
+  `8c166ebafbd562a8c94b4857ff4ba82e10c550e1`. Dependency Graph run
+  [`32734900512`](https://github.com/east-true/opcda-access-adapter/actions/runs/32734900512)
+  also passed at that SHA.
 
 - On 2026-08-24, `feat/local-da-detection` passed `go test ./...`,
   `go vet ./...`, `go test -race ./...`, and 20 consecutive full-suite runs
@@ -267,19 +303,16 @@ created. The local destructive review below remains a release-promotion gate.
 
 ## Next exact tasks
 
-1. Complete guided setup and LocalService lifecycle tests on native x86/x64,
-   validate the real DA fixture through setup/service/Read/uninstall, and merge
-   only after all protected checks pass.
-2. Recreate the isolated Windows environment only when non-contending VM
+1. Recreate the isolated Windows environment only when non-contending VM
    capacity is available, then complete the local destructive review including
    local COM launch/access/RunAs permission failures. Do not use a GitHub runner
    as evidence for this gate.
-3. Record exact VM, Defender, x86/x64, load, resource, reboot, DCOM event, and
+2. Record exact VM, Defender, x86/x64, load, resource, reboot, DCOM event, and
    cleanup results before proposing a public release.
-4. Continue to treat the existing Apache-2.0 license as authoritative.
-5. Add third-party compatibility rows only from authorized, executed tests;
+3. Continue to treat the existing Apache-2.0 license as authoritative.
+4. Add third-party compatibility rows only from authorized, executed tests;
    do not infer vendor-wide compatibility from the official fixture.
-6. When an authorized server exposes non-Good Quality, an absent timestamp, or
+5. When an authorized server exposes non-Good Quality, an absent timestamp, or
    additional supported scalar types, add exact observations without changing
    source semantics.
 
