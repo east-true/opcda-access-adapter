@@ -136,6 +136,38 @@ the pinned fixture only. A detected registration is not evidence that the
 class can activate, that its COM permissions are sufficient, or that its DA
 behavior is compatible, so it does not add or upgrade a matrix PASS row.
 
+### Guided setup and Windows Service result
+
+PR #26 workflow run
+[`32734190245`](https://github.com/east-true/opcda-access-adapter/actions/runs/32734190245)
+executed at adapter head `0fc3684128919ff28f94b9257c0dbc30e34ae328`
+on ephemeral GitHub-hosted Windows Server 2025 VMs. Both native x86/386 and
+x64/amd64 jobs passed the following assertions against the pinned fixture:
+
+- guided setup displayed the registered fixture and required an explicit
+  numeric source selection even though it was the intended candidate;
+- HTTP/JSON and Windows Service were selected explicitly, followed by a final
+  confirmation before mutation;
+- the bounded version 1 configuration contained the fixture's exact CLSID,
+  loopback HTTP listener, and `writeEnabled: false`;
+- SCM reported automatic start, the `NT AUTHORITY\LocalService` account, and
+  an image path using the internal `service run` entry point;
+- the service reached connected state through local COM and completed a device
+  Read of the known fixture ItemID without enabling Write;
+- at least one bounded lifecycle record appeared under the service's Windows
+  Application Event Log source; and
+- uninstall stopped and deleted the service, removed the Event Log source, and
+  the harness removed its temporary configuration directory.
+
+The same jobs then passed the complete foreground semantic/failure regression,
+including Browse, ordered partial Read, disabled/typed/denied Write, three real
+source outage/reconnect cycles, 5,000 rapid Reads, 3,200 mixed concurrent
+requests, bounded overload recovery, and a final 200-Read soak. This proves
+that the pinned fixture accepted LocalService under the runner's local COM
+permissions. It does not prove that another vendor's AppID launch/access or
+RunAs policy will accept that identity, and setup did not modify DCOM security
+or fall back to a more privileged account.
+
 This result validates the scoped v0 path against this specific official test
 fixture only. Third-party/vendor servers and non-Good Quality observations
 remain untested; compatibility must not be inferred for them.

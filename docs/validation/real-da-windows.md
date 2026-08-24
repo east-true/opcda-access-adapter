@@ -91,3 +91,14 @@ Final-main run
 [`32635274825`](https://github.com/east-true/opcda-access-adapter/actions/runs/32635274825)
 repeated and passed the same stability profile for both architectures at merge
 SHA `f55b4bb8e8c092fa2a21f4f35089a14703c81a8d`.
+
+Guided-setup run
+[`32734190245`](https://github.com/east-true/opcda-access-adapter/actions/runs/32734190245)
+passed explicit source/frontend/service selection, strict configuration,
+LocalService SCM identity and automatic-start metadata, service-mode local-COM
+connection and device Read, bounded Application Event Log output, and complete
+service/event-source cleanup on both x86/386 and x64/amd64 at adapter head
+`0fc3684128919ff28f94b9257c0dbc30e34ae328`. The same jobs then passed the
+complete semantic, failure/reconnect, load/backpressure, and 200-Read soak
+regression. See the compatibility matrix for the exact observations and the
+limits of this evidence.
