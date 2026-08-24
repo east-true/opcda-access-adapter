@@ -18,6 +18,8 @@ Loopback mode rejects non-loopback Host values, POST endpoints require
 `application/json`, and direct browser Origin requests are rejected. These
 controls reduce DNS-rebinding and browser request-forgery exposure but are not
 an authentication mechanism.
+The parser also rejects duplicate/case-aliased JSON fields, excessive nesting,
+encoded or query-bearing endpoint aliases, and compressed request bodies.
 The project does not claim a production authentication, authorization, or TLS
 model. Exposing it beyond the local machine is an operator decision that must
 be protected by an appropriate deployment boundary.

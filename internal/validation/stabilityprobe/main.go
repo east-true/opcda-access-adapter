@@ -209,7 +209,11 @@ func validateOptions(configured options) error {
 }
 
 func (p probe) request(method, path string, body []byte, headers map[string]string) (int, []byte, error) {
-	request, err := http.NewRequest(method, p.baseURL.ResolveReference(&url.URL{Path: path}).String(), bytes.NewReader(body))
+	reference, err := url.Parse(path)
+	if err != nil {
+		return 0, nil, fmt.Errorf("parse request target: %w", err)
+	}
+	request, err := http.NewRequest(method, p.baseURL.ResolveReference(reference).String(), bytes.NewReader(body))
 	if err != nil {
 		return 0, nil, err
 	}
@@ -331,12 +335,16 @@ func (p probe) anomalies() error {
 		{name: "malformed JSON", method: http.MethodPost, path: "/v1/read", body: `{"source":`, status: 400, layer: "frontend", code: "INVALID_REQUEST"},
 		{name: "trailing JSON", method: http.MethodPost, path: "/v1/read", body: `{"items":[]} {}`, status: 400, layer: "frontend", code: "INVALID_REQUEST"},
 		{name: "unknown field", method: http.MethodPost, path: "/v1/read", body: `{"items":[],"unknown":true}`, status: 400, layer: "frontend", code: "INVALID_REQUEST"},
+		{name: "duplicate field", method: http.MethodPost, path: "/v1/read", body: `{"items":[{"itemId":"Test/Int32","itemId":"Other"}]}`, status: 400, layer: "frontend", code: "DUPLICATE_JSON_FIELD"},
 		{name: "unpaired surrogate", method: http.MethodPost, path: "/v1/read", body: `{"items":[{"itemId":"\uD800"}]}`, status: 400, layer: "frontend", code: "INVALID_REQUEST"},
 		{name: "NUL ItemID", method: http.MethodPost, path: "/v1/read", body: `{"items":[{"itemId":"a\u0000b"}]}`, status: 400, layer: "frontend", code: "INVALID_REQUEST"},
 		{name: "empty batch", method: http.MethodPost, path: "/v1/read", body: `{"items":[]}`, status: 400, layer: "frontend", code: "INVALID_REQUEST"},
 		{name: "wrong source", method: http.MethodPost, path: "/v1/read", body: `{"source":"cache","items":[{"itemId":"Test/Int32"}]}`, status: 400, layer: "frontend", code: "INVALID_REQUEST"},
 		{name: "invalid browse filter", method: http.MethodPost, path: "/v1/browse", body: `{"path":[],"filter":"wildcard"}`, status: 400, layer: "frontend", code: "INVALID_REQUEST"},
-		{name: "wrong method", method: http.MethodGet, path: "/v1/read", status: 404, layer: "frontend", code: "NOT_FOUND"},
+		{name: "wrong method", method: http.MethodGet, path: "/v1/read", status: 405, layer: "frontend", code: "METHOD_NOT_ALLOWED"},
+		{name: "query target", method: http.MethodGet, path: "/v1/status?debug=true", status: 400, layer: "frontend", code: "INVALID_REQUEST"},
+		{name: "encoded target", method: http.MethodGet, path: "/v1%2fstatus", status: 400, layer: "frontend", code: "INVALID_REQUEST"},
+		{name: "status body", method: http.MethodGet, path: "/v1/status", body: `{}`, status: 400, layer: "frontend", code: "INVALID_REQUEST"},
 		{name: "unknown endpoint", method: http.MethodGet, path: "/v1/not-present", status: 404, layer: "frontend", code: "NOT_FOUND"},
 		{name: "path traversal", method: http.MethodGet, path: "/v1/../status", status: 404, layer: "frontend", code: "NOT_FOUND"},
 	}
@@ -346,11 +354,23 @@ func (p probe) anomalies() error {
 		}
 	}
 	validRead := []byte(`{"source":"device","items":[{"itemId":"Test/Int32"}]}`)
+	deepJSON := []byte(`{"items":` + strings.Repeat("[", 65) + `0` + strings.Repeat("]", 65) + `}`)
+	if err := p.expectError("JSON depth", http.MethodPost, "/v1/read", deepJSON, 400, "frontend", "JSON_DEPTH_LIMIT_EXCEEDED"); err != nil {
+		return err
+	}
 	if err := p.expectErrorWithHeaders("non-JSON media type", http.MethodPost, "/v1/read", validRead,
 		map[string]string{"Content-Type": "text/plain"}, 415, "frontend", "UNSUPPORTED_MEDIA_TYPE"); err != nil {
 		return err
 	}
+	if err := p.expectErrorWithHeaders("content encoding", http.MethodPost, "/v1/read", validRead,
+		map[string]string{"Content-Encoding": "gzip"}, 415, "frontend", "UNSUPPORTED_CONTENT_ENCODING"); err != nil {
+		return err
+	}
 	if err := p.expectErrorWithHeaders("browser Origin", http.MethodPost, "/v1/read", validRead,
+		map[string]string{"Origin": "https://attacker.example"}, 403, "frontend", "BROWSER_ORIGIN_REJECTED"); err != nil {
+		return err
+	}
+	if err := p.expectErrorWithHeaders("browser status Origin", http.MethodGet, "/v1/status", nil,
 		map[string]string{"Origin": "https://attacker.example"}, 403, "frontend", "BROWSER_ORIGIN_REJECTED"); err != nil {
 		return err
 	}

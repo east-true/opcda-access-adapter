@@ -20,6 +20,7 @@ Defaults are intentionally small and can be changed by explicit configuration:
 | accepted HTTP connections | 64 |
 | concurrent HTTP requests | 32 |
 | HTTP request headers | 32 KiB |
+| JSON nesting depth | 64 |
 | HTTP header / request read timeout | 5 seconds / 15 seconds |
 | HTTP response write / idle timeout | 15 seconds / 30 seconds |
 | DA command queue | 64 |
@@ -50,6 +51,10 @@ ceiling fail startup.
 Individual ceilings are additionally subject to the aggregate admitted-memory
 budgets in [ADR-0008](0008-http-origin-and-aggregate-bounds.md). This closes
 unsafe combinations without changing the defaults above.
+
+HTTP JSON nesting is independently bounded at 64 containers by default and
+256 at the hard ceiling as recorded in
+[ADR-0009](0009-request-parser-and-lifecycle-hardening.md).
 
 ## Consequences
 

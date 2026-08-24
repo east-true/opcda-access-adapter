@@ -35,18 +35,18 @@ func TestReadPreservesOrderWidthsQualityTimestampAndPartialFailure(t *testing.T)
 			ItemID: " Exact.Int2 ", VarType: &intType, CanonicalType: &intType,
 			AccessRights: &opcda.DAAccessRights{Raw: 3, Read: true, Write: true},
 			HRESULT:      opcda.SOK, HRESULTPresent: true,
-			Value: &opcda.DAValue{VarType: opcda.VTI2, Value: int16(42), QualityRaw: 0x01C0, Timestamp: timestamp, TimestampPresent: true},
+			Value: &opcda.DAValue{ItemID: " Exact.Int2 ", VarType: opcda.VTI2, Value: int16(42), QualityRaw: 0x01C0, Timestamp: timestamp, TimestampPresent: true},
 		},
 		{ItemID: "Missing", HRESULT: failedHR, HRESULTPresent: true},
 		{
 			ItemID: "Wide", VarType: &wideType, CanonicalType: &wideType,
 			HRESULT: opcda.SOK, HRESULTPresent: true,
-			Value: &opcda.DAValue{VarType: opcda.VTI8, Value: int64(9007199254740993), QualityRaw: 0x00C0},
+			Value: &opcda.DAValue{ItemID: "Wide", VarType: opcda.VTI8, Value: int64(9007199254740993), QualityRaw: 0x00C0},
 		},
 		{
 			ItemID: "Infinity", VarType: &floatType, CanonicalType: &floatType,
 			HRESULT: opcda.SOK, HRESULTPresent: true,
-			Value: &opcda.DAValue{VarType: opcda.VTR8, Value: math.Inf(1), QualityRaw: 0x00C0},
+			Value: &opcda.DAValue{ItemID: "Infinity", VarType: opcda.VTR8, Value: math.Inf(1), QualityRaw: 0x00C0},
 		},
 	}}
 	server := newReadTestServer(runtime, 4096, 10)
@@ -135,24 +135,68 @@ func TestExactJSONStringAllowsEscapedBackslashAndValidSurrogatePair(t *testing.T
 
 func TestJSONValueEncodingIsLossless(t *testing.T) {
 	tests := []struct {
+		varType  opcda.DAVarType
 		value    any
 		want     string
 		encoding string
 	}{
-		{value: int16(-32768), want: "-32768", encoding: "json"},
-		{value: uint32(4294967295), want: "4294967295", encoding: "json"},
-		{value: int64(-9223372036854775808), want: `"-9223372036854775808"`, encoding: "json"},
-		{value: uint64(18446744073709551615), want: `"18446744073709551615"`, encoding: "json"},
-		{value: math.NaN(), want: `"NaN"`, encoding: "float-special"},
+		{varType: opcda.VTI2, value: int16(-32768), want: "-32768", encoding: "json"},
+		{varType: opcda.VTUI4, value: uint32(4294967295), want: "4294967295", encoding: "json"},
+		{varType: opcda.VTI8, value: int64(-9223372036854775808), want: `"-9223372036854775808"`, encoding: "json"},
+		{varType: opcda.VTUI8, value: uint64(18446744073709551615), want: `"18446744073709551615"`, encoding: "json"},
+		{varType: opcda.VTR8, value: math.NaN(), want: `"NaN"`, encoding: "float-special"},
 	}
 	for _, test := range tests {
-		got, encoding, err := encodeDAValue(test.value)
+		got, encoding, err := encodeDAValue(test.varType, test.value)
 		if err != nil {
 			t.Fatal(err)
 		}
 		if string(got) != test.want || encoding != test.encoding {
 			t.Fatalf("encode(%T) = %s, %q; want %s, %q", test.value, got, encoding, test.want, test.encoding)
 		}
+	}
+}
+
+func TestReadRejectsMismatchedDAValueMetadataAndTypes(t *testing.T) {
+	intType := opcda.VTI2
+	tests := []struct {
+		name   string
+		result opcda.ReadResult
+		status int
+	}{
+		{
+			name: "value ItemID",
+			result: opcda.ReadResult{ItemID: "A", VarType: &intType, HRESULT: opcda.SOK, HRESULTPresent: true,
+				Value: &opcda.DAValue{ItemID: "B", VarType: opcda.VTI2, Value: int16(1), HRESULT: opcda.SOK}},
+			status: http.StatusInternalServerError,
+		},
+		{
+			name: "Go scalar width",
+			result: opcda.ReadResult{ItemID: "A", VarType: &intType, HRESULT: opcda.SOK, HRESULTPresent: true,
+				Value: &opcda.DAValue{ItemID: "A", VarType: opcda.VTI2, Value: int32(1), HRESULT: opcda.SOK}},
+			status: http.StatusOK,
+		},
+		{
+			name: "timestamp range",
+			result: opcda.ReadResult{ItemID: "A", VarType: &intType, HRESULT: opcda.SOK, HRESULTPresent: true,
+				Value: &opcda.DAValue{ItemID: "A", VarType: opcda.VTI2, Value: int16(1), HRESULT: opcda.SOK,
+					TimestampPresent: true, Timestamp: time.Date(10000, 1, 1, 0, 0, 0, 0, time.UTC)}},
+			status: http.StatusOK,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			runtime := &readRuntime{results: []opcda.ReadResult{test.result}}
+			response := httptest.NewRecorder()
+			newReadTestServer(runtime, 4096, 10).ServeHTTP(response,
+				newJSONRequest(http.MethodPost, "/v1/read", bytes.NewBufferString(`{"items":[{"itemId":"A"}]}`)))
+			if response.Code != test.status {
+				t.Fatalf("status = %d: %s", response.Code, response.Body.String())
+			}
+			if test.status == http.StatusOK && !bytes.Contains(response.Body.Bytes(), []byte(`"errorCode":"INVALID_VALUE"`)) {
+				t.Fatalf("mismatched scalar was not an explicit item error: %s", response.Body.String())
+			}
+		})
 	}
 }
 

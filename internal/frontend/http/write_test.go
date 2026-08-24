@@ -185,6 +185,17 @@ func TestWriteFailsClosedOnRuntimeResultMismatch(t *testing.T) {
 	assertErrorCode(t, response, string(opcda.CodeInternalResultMismatch))
 }
 
+func TestWriteFailsClosedOnMissingRuntimeOutcome(t *testing.T) {
+	runtime := &writeRuntime{enabled: true, results: []opcda.WriteResult{{ItemID: "Expected"}}}
+	server := newWriteTestServer(runtime, 10)
+	response := httptest.NewRecorder()
+	server.ServeHTTP(response, newJSONRequest(http.MethodPost, "/v1/write", bytes.NewBufferString(`{"items":[{"itemId":"Expected","dataType":"VT_I2","valueEncoding":"json","value":1}]}`)))
+	if response.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d: %s", response.Code, response.Body.String())
+	}
+	assertErrorCode(t, response, string(opcda.CodeInternalResultMismatch))
+}
+
 func assertErrorCode(t *testing.T, response *httptest.ResponseRecorder, want string) {
 	t.Helper()
 	var decoded struct {

@@ -86,6 +86,31 @@ func TestBrowseValidationPreventsRuntimeCall(t *testing.T) {
 	}
 }
 
+func TestBrowseFailsClosedOnInvalidRuntimeIdentity(t *testing.T) {
+	validItemID := opcda.DAItemID("A")
+	tests := []struct {
+		name   string
+		result opcda.BrowseResult
+	}{
+		{name: "path mismatch", result: opcda.BrowseResult{Path: []string{"Other"}}},
+		{name: "unknown kind", result: opcda.BrowseResult{Entries: []opcda.BrowseEntry{{Kind: "unknown", Name: "A"}}}},
+		{name: "item without ItemID", result: opcda.BrowseResult{Entries: []opcda.BrowseEntry{{Kind: opcda.BrowseEntryItem, Name: "A"}}}},
+		{name: "branch with ItemID", result: opcda.BrowseResult{Entries: []opcda.BrowseEntry{{Kind: opcda.BrowseEntryBranch, Name: "A", ItemID: &validItemID}}}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			runtime := &browseRuntime{result: test.result}
+			response := httptest.NewRecorder()
+			newBrowseTestServer(runtime).ServeHTTP(response,
+				newJSONRequest(http.MethodPost, "/v1/browse", bytes.NewBufferString(`{"path":[],"filter":"all"}`)))
+			if response.Code != http.StatusInternalServerError {
+				t.Fatalf("status = %d: %s", response.Code, response.Body.String())
+			}
+			assertErrorCode(t, response, string(opcda.CodeInternalResultMismatch))
+		})
+	}
+}
+
 func newBrowseTestServer(runtime opcda.Runtime) *Server {
 	return New(runtime, Config{
 		MaxBodyBytes: 4096, MaxConcurrent: 2, RequestDeadline: time.Second,

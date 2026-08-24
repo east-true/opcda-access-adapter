@@ -147,6 +147,8 @@ variables.
 - HTTP binds to loopback unless an external address is explicitly configured.
 - Loopback mode rejects non-loopback Host values; POST requires JSON and
   rejects direct browser Origin requests.
+- Request paths, JSON field spelling, nesting, content encoding, and runtime
+  result identity are validated strictly and fail closed.
 - Write returns `403 WRITE_DISABLED` unless `OPCDA_WRITE_ENABLED=true`.
 - The adapter has no authentication, authorization, or TLS layer in v0.
 - An in-flight Write is never automatically retried or replayed.

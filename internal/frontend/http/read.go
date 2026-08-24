@@ -10,7 +10,6 @@ import (
 	"math"
 	stdhttp "net/http"
 	"strconv"
-	"time"
 	"unicode/utf8"
 
 	"github.com/east-true/opcda-access-adapter/internal/opcda"
@@ -110,6 +109,15 @@ func readResultsMatchRequest(items []opcda.DAItemID, results []opcda.ReadResult)
 		if results[index].ItemID != items[index] {
 			return false
 		}
+		result := results[index]
+		if result.Value != nil {
+			if result.ErrorCode != "" || !result.HRESULTPresent || result.HRESULT.Failed() || result.VarType == nil ||
+				result.Value.ItemID != result.ItemID || result.Value.VarType != *result.VarType || result.Value.HRESULT != result.HRESULT {
+				return false
+			}
+		} else if result.ErrorCode == "" && (!result.HRESULTPresent || result.HRESULT.Succeeded()) {
+			return false
+		}
 	}
 	return true
 }
@@ -120,7 +128,12 @@ func writeDecodeError(w stdhttp.ResponseWriter, err error) {
 		writeError(w, stdhttp.StatusRequestEntityTooLarge, opcda.CodeRequestBodyTooLarge, "request body exceeds configured limit")
 		return
 	}
-	writeError(w, stdhttp.StatusBadRequest, opcda.CodeInvalidRequest, err.Error())
+	var bodyError *requestBodyError
+	if errors.As(err, &bodyError) {
+		writeError(w, stdhttp.StatusBadRequest, bodyError.code, bodyError.message)
+		return
+	}
+	writeError(w, stdhttp.StatusBadRequest, opcda.CodeInvalidRequest, "request body is not valid for this endpoint")
 }
 
 type exactJSONString string
@@ -198,6 +211,9 @@ func (s *Server) decodeRequestBody(w stdhttp.ResponseWriter, request *stdhttp.Re
 	if !utf8.Valid(body) {
 		return fmt.Errorf("request body must be valid UTF-8")
 	}
+	if err := validateJSONStructure(body, s.config.MaxJSONDepth); err != nil {
+		return err
+	}
 	decoder := json.NewDecoder(bytes.NewReader(body))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(target); err != nil {
@@ -241,10 +257,20 @@ func encodeReadResult(result opcda.ReadResult) readHTTPResult {
 		return encoded
 	}
 
-	value, encoding, err := encodeDAValue(result.Value.Value)
+	value, encoding, err := encodeDAValue(result.Value.VarType, result.Value.Value)
 	if err != nil {
 		encoded.ErrorCode = string(opcda.CodeInvalidValue)
 		return encoded
+	}
+	var timestamp *string
+	if result.Value.TimestampPresent {
+		text, err := result.Value.Timestamp.UTC().MarshalText()
+		if err != nil {
+			encoded.ErrorCode = string(opcda.CodeInvalidValue)
+			return encoded
+		}
+		formatted := string(text)
+		timestamp = &formatted
 	}
 	encoded.OK = true
 	encoded.Value = value
@@ -252,31 +278,65 @@ func encodeReadResult(result opcda.ReadResult) readHTTPResult {
 	quality := result.Value.QualityRaw
 	encoded.Quality = &quality
 	encoded.TimestampPresent = result.Value.TimestampPresent
-	if result.Value.TimestampPresent {
-		timestamp := result.Value.Timestamp.UTC().Format(time.RFC3339Nano)
-		encoded.Timestamp = &timestamp
-	}
+	encoded.Timestamp = timestamp
 	return encoded
 }
 
-func encodeDAValue(value any) (json.RawMessage, string, error) {
+func encodeDAValue(varType opcda.DAVarType, value any) (json.RawMessage, string, error) {
+	if varType.IsArray() || varType.IsByRef() {
+		return nil, "", fmt.Errorf("unsupported array or byref VARTYPE %s", varType)
+	}
 	encoding := "json"
-	var transportValue any = value
-	switch typed := value.(type) {
-	case int64:
+	var transportValue any
+	var typeMatches bool
+	switch varType.Base() {
+	case opcda.VTEmpty, opcda.VTNull:
+		typeMatches = value == nil
+	case opcda.VTI1:
+		transportValue, typeMatches = value.(int8)
+	case opcda.VTUI1:
+		transportValue, typeMatches = value.(uint8)
+	case opcda.VTI2:
+		transportValue, typeMatches = value.(int16)
+	case opcda.VTUI2:
+		transportValue, typeMatches = value.(uint16)
+	case opcda.VTI4, opcda.VTInt, opcda.VTError:
+		transportValue, typeMatches = value.(int32)
+	case opcda.VTUI4, opcda.VTUInt:
+		transportValue, typeMatches = value.(uint32)
+	case opcda.VTI8:
+		typed, ok := value.(int64)
+		typeMatches = ok
 		transportValue = strconv.FormatInt(typed, 10)
-	case uint64:
+	case opcda.VTUI8:
+		typed, ok := value.(uint64)
+		typeMatches = ok
 		transportValue = strconv.FormatUint(typed, 10)
-	case float32:
+	case opcda.VTR4:
+		typed, ok := value.(float32)
+		typeMatches = ok
+		transportValue = typed
 		if math.IsNaN(float64(typed)) || math.IsInf(float64(typed), 0) {
 			transportValue = specialFloat(float64(typed))
 			encoding = "float-special"
 		}
-	case float64:
+	case opcda.VTR8:
+		typed, ok := value.(float64)
+		typeMatches = ok
+		transportValue = typed
 		if math.IsNaN(typed) || math.IsInf(typed, 0) {
 			transportValue = specialFloat(typed)
 			encoding = "float-special"
 		}
+	case opcda.VTBool:
+		transportValue, typeMatches = value.(bool)
+	case opcda.VTBSTR:
+		transportValue, typeMatches = value.(string)
+	default:
+		return nil, "", fmt.Errorf("unsupported VARTYPE %s", varType)
+	}
+	if !typeMatches {
+		return nil, "", fmt.Errorf("value type does not match VARTYPE %s", varType)
 	}
 	encoded, err := json.Marshal(transportValue)
 	if err != nil {

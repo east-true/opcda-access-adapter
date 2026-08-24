@@ -35,6 +35,9 @@ func (s *Server) handleWrite(ctx context.Context, w stdhttp.ResponseWriter, requ
 		writeLayerError(w, stdhttp.StatusForbidden, "adapter", opcda.CodeWriteDisabled, "write is disabled", nil)
 		return
 	}
+	if !validateBrowserBoundary(w, request) {
+		return
+	}
 	if !validateJSONRequest(w, request) {
 		return
 	}
@@ -118,6 +121,9 @@ func writeResultsMatchRequest(items []opcda.WriteItem, results []opcda.WriteResu
 	}
 	for index := range items {
 		if results[index].ItemID != items[index].ItemID {
+			return false
+		}
+		if !results[index].HRESULTPresent && results[index].ErrorCode == "" {
 			return false
 		}
 	}

@@ -18,6 +18,7 @@ type Config struct {
 	MaxHTTPConnections    int
 	MaxConcurrentRequests int
 	MaxHTTPHeaderBytes    int
+	MaxJSONDepth          int
 	HTTPReadHeaderTimeout time.Duration
 	HTTPReadTimeout       time.Duration
 	HTTPWriteTimeout      time.Duration
@@ -39,6 +40,7 @@ func DefaultConfig() Config {
 		MaxHTTPConnections:    64,
 		MaxConcurrentRequests: 32,
 		MaxHTTPHeaderBytes:    32 << 10,
+		MaxJSONDepth:          64,
 		HTTPReadHeaderTimeout: 5 * time.Second,
 		HTTPReadTimeout:       15 * time.Second,
 		HTTPWriteTimeout:      15 * time.Second,
@@ -75,6 +77,9 @@ func LoadConfig() (Config, error) {
 		return Config{}, err
 	}
 	if config.MaxHTTPHeaderBytes, err = intEnv("OPCDA_MAX_HTTP_HEADER_BYTES", config.MaxHTTPHeaderBytes); err != nil {
+		return Config{}, err
+	}
+	if config.MaxJSONDepth, err = intEnv("OPCDA_MAX_JSON_DEPTH", config.MaxJSONDepth); err != nil {
 		return Config{}, err
 	}
 	if config.HTTPReadHeaderTimeout, err = durationEnv("OPCDA_HTTP_READ_HEADER_TIMEOUT", config.HTTPReadHeaderTimeout); err != nil {
@@ -131,12 +136,12 @@ func (config *Config) finalizeAndValidate() error {
 		return fmt.Errorf("set exactly one of OPCDA_SOURCE_PROG_ID and OPCDA_SOURCE_CLSID")
 	}
 	if config.MaxHTTPBodyBytes <= 0 || config.MaxHTTPConnections <= 0 || config.MaxConcurrentRequests <= 0 ||
-		config.MaxHTTPHeaderBytes <= 0 || config.HTTPReadHeaderTimeout <= 0 || config.HTTPReadTimeout <= 0 ||
+		config.MaxHTTPHeaderBytes <= 0 || config.MaxJSONDepth <= 0 || config.HTTPReadHeaderTimeout <= 0 || config.HTTPReadTimeout <= 0 ||
 		config.HTTPWriteTimeout <= 0 || config.HTTPIdleTimeout <= 0 || config.RequestDeadline <= 0 {
 		return fmt.Errorf("HTTP bounds and timeouts must be positive")
 	}
 	if config.MaxHTTPBodyBytes > 64<<20 || config.MaxHTTPConnections > 2048 || config.MaxConcurrentRequests > 1024 ||
-		config.MaxHTTPHeaderBytes > 1<<20 || config.HTTPReadHeaderTimeout > 24*time.Hour ||
+		config.MaxHTTPHeaderBytes > 1<<20 || config.MaxJSONDepth > 256 || config.HTTPReadHeaderTimeout > 24*time.Hour ||
 		config.HTTPReadTimeout > 24*time.Hour || config.HTTPWriteTimeout > 24*time.Hour ||
 		config.HTTPIdleTimeout > 24*time.Hour || config.RequestDeadline > 24*time.Hour {
 		return fmt.Errorf("HTTP bound or timeout exceeds the v0 hard ceiling")

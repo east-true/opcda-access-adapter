@@ -10,10 +10,9 @@ a claim of broad vendor compatibility or production readiness.
 
 ## Current main SHA
 
-`c010e6c2042c8c532ab22d747dae1e4afb0bff72` — protected `main` implementation
-merge after VM-free and destructive-validation hardening (PR #20). No public
-tag or GitHub Release has been created. The local destructive review below
-remains a release-promotion gate.
+`b4675601237fc79a3fb90915198addf599a05808` — protected `main` after the
+post-hardening status merge (PR #21). No public tag or GitHub Release has been
+created. The local destructive review below remains a release-promotion gate.
 
 ## Completed
 
@@ -56,6 +55,10 @@ remains a release-promotion gate.
 
 ## In progress
 
+- Branch `security/request-parser-lifecycle` has completed a VM-free hardening
+  pass for unambiguous JSON parsing, exact HTTP targets and methods, strict
+  DA-native result validation, and terminal listener failure handling. Local
+  validation is green; PR/required-check validation and merge remain.
 - The local KVM/libvirt destructive-validation gate is paused. The dedicated
   `opcda-destructive-review` VM and all of its dedicated host resources were
   removed on 2026-08-24 because this host could not run it alongside another
@@ -65,6 +68,16 @@ remains a release-promotion gate.
 
 ## Validation results
 
+- On 2026-08-24, `security/request-parser-lifecycle` passed `go test ./...`,
+  `go vet ./...`, `go test -race ./...`, and 20 consecutive full-suite runs
+  with Go 1.26.0 on Linux. The final five-second fuzz runs processed 14,628
+  HTTP-body, 120,291 exact-string, and 120,022 typed-Write inputs without a
+  crash.
+- All five package test executables cross-compiled for both `windows/386` and
+  `windows/amd64`; both adapter executables built. A release-shaped dry run
+  produced both archives and verified their SHA-256 manifest. These binaries
+  were not executed locally on Windows.
+- `go mod verify` passed and `go list -m all` still reports only this module.
 - On 2026-08-24, the VM-free hardening branch passed `go test ./...`,
   `go vet ./...`, `go test -race ./...`, and 20 consecutive full-suite runs
   with Go 1.26.0 on Linux. Three HTTP/JSON fuzz targets each passed a local
@@ -197,16 +210,19 @@ remains a release-promotion gate.
 
 ## Next exact tasks
 
-1. Recreate the isolated Windows environment only when non-contending VM
+1. Open `security/request-parser-lifecycle` as a PR, require all protected
+   checks and the x86/x64 real-DA regression to pass, merge, and record the
+   immutable workflow evidence.
+2. Recreate the isolated Windows environment only when non-contending VM
    capacity is available, then complete the local destructive review including
    local COM launch/access/RunAs permission failures. Do not use a GitHub runner
    as evidence for this gate.
-2. Record exact VM, Defender, x86/x64, load, resource, reboot, DCOM event, and
+3. Record exact VM, Defender, x86/x64, load, resource, reboot, DCOM event, and
    cleanup results before proposing a public release.
-3. Continue to treat the existing Apache-2.0 license as authoritative.
-4. Add third-party compatibility rows only from authorized, executed tests;
+4. Continue to treat the existing Apache-2.0 license as authoritative.
+5. Add third-party compatibility rows only from authorized, executed tests;
    do not infer vendor-wide compatibility from the official fixture.
-5. When an authorized server exposes non-Good Quality, an absent timestamp, or
+6. When an authorized server exposes non-Good Quality, an absent timestamp, or
    additional supported scalar types, add exact observations without changing
    source semantics.
 
@@ -220,3 +236,4 @@ remains a release-promotion gate.
 - [ADR-0006: real-DA validation fixture and supply-chain controls](adr/0006-real-da-validation-fixture.md)
 - [ADR-0007: bounded source failure diagnostic](adr/0007-bounded-source-failure-diagnostic.md)
 - [ADR-0008: HTTP browser boundary and aggregate resource ceilings](adr/0008-http-origin-and-aggregate-bounds.md)
+- [ADR-0009: request parser and lifecycle hardening](adr/0009-request-parser-and-lifecycle-hardening.md)
