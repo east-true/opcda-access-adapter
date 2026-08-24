@@ -11,7 +11,8 @@ applications speak COM or changing the source data model.
 > This is a Windows-only, pre-1.0 project for controlled local-COM
 > deployments. The scoped v0 is implemented and validated against a pinned
 > OPC Foundation DA 2.05a test server, but it is not broad vendor
-> certification or a production-readiness claim.
+> certification or a production-readiness claim. There is no stable binary
+> release yet; build from source and review the documented limits before use.
 
 ## Why this project?
 
@@ -76,7 +77,7 @@ Release-shaped builds expose their exact source revision:
 .\opcda-access-adapter.exe --version
 ```
 
-## Quick start
+## Build
 
 Clone and build on the Windows machine that hosts the DA server:
 
@@ -94,17 +95,61 @@ go build -trimpath -o opcda-access-adapter-386.exe ./cmd/adapter
 Remove-Item Env:GOARCH
 ```
 
-For guided source selection, configuration creation, and foreground or
-background Windows Service execution:
+The adapter architecture must match the COM registration. A 64-bit build does
+not see a 32-bit-only registration, so run the matching build—or both builds
+when the server bitness is unknown.
+
+## Quick start
+
+The recommended first run is the guided setup:
 
 ```powershell
 .\opcda-access-adapter.exe setup
 ```
 
-Even one detected candidate requires an explicit choice. v0 presents only the
-HTTP/JSON frontend, keeps loopback and Write-disabled defaults, shows the final
-configuration for confirmation, and never silently overwrites an existing
-file or service. See [guided setup and Windows Service](docs/setup.md).
+It walks through four reviewed decisions:
+
+1. choose one locally registered OPC DA 2.0 server;
+2. choose the frontend (`HTTP/JSON` is the only v0 option);
+3. run in the current terminal, install a Windows Service, or save only; and
+4. confirm the exact configuration before anything is written or started.
+
+Even one detected candidate requires an explicit choice. The defaults are
+`127.0.0.1:8080` and Write disabled. Setup never silently overwrites an
+existing file or service and never changes COM/DCOM or firewall permissions.
+
+For a Windows Service, use an elevated PowerShell terminal and put the
+executable and configuration in stable paths readable by LocalService:
+
+```powershell
+$installDir = "C:\Program Files\OPCDAAccessAdapter"
+$configDir = "C:\ProgramData\OPCDAAccessAdapter"
+
+New-Item -ItemType Directory -Force -Path $installDir, $configDir | Out-Null
+Copy-Item .\opcda-access-adapter.exe "$installDir\opcda-access-adapter.exe"
+
+& "$installDir\opcda-access-adapter.exe" setup `
+  --config "$configDir\adapter.json"
+```
+
+Select **Windows Service** when prompted. The service runs as
+`NT AUTHORITY\LocalService`, starts automatically with Windows, and does not
+store a password. A vendor that works for an interactive user can still deny
+LocalService through its AppID/RunAs/DCOM policy; the adapter reports the
+failure but does not weaken those permissions. See the
+[setup and service guide](docs/setup.md).
+
+Verify the running adapter:
+
+```powershell
+Invoke-RestMethod http://127.0.0.1:8080/v1/status
+```
+
+The status must name the selected source, show the listener, and eventually
+report `connected`. Do not treat a detected registration alone as proof that
+the vendor server can activate or that its permissions are sufficient.
+
+### Manual foreground startup
 
 For the original environment-variable workflow, configure exactly one source
 identifier and start the adapter:
@@ -117,6 +162,33 @@ $env:OPCDA_SOURCE_PROG_ID = "Vendor.Server.1"
 ```
 
 Run `opcda-access-adapter-386.exe` instead when you built the x86 variant.
+
+File-based foreground startup is also available after setup's **save only**
+option:
+
+```powershell
+.\opcda-access-adapter.exe run --config .\opcda-access-adapter.json
+```
+
+File-based execution is strict and does not merge environment variables into
+the reviewed configuration.
+
+## Command reference
+
+| Command | Purpose |
+|---|---|
+| `opcda-access-adapter setup` | Detect, explicitly select, review, save, and optionally start one adapter |
+| `opcda-access-adapter detect` | List bounded local OPC DA 2.0 registrations without activating them |
+| `opcda-access-adapter run --config FILE` | Run the reviewed configuration in the current terminal |
+| `opcda-access-adapter service install --config FILE` | Install and start an SCM-managed LocalService instance |
+| `opcda-access-adapter service uninstall` | Stop and remove the configured Windows Service |
+| `opcda-access-adapter` | Run the original environment-variable workflow in the foreground |
+| `opcda-access-adapter --version` | Print embedded version and source revision metadata |
+
+Use `--help` on the command or subcommand for bounded detection, listener,
+configuration-path, Write, and service-name options.
+
+### Local registration detection
 
 To list locally registered OPC DA 2.0 candidates before choosing a source:
 
@@ -131,12 +203,6 @@ An empty list is a successful result. Run the matching 386 and amd64 builds
 when registrations may exist in both Windows architecture views.
 See [local server detection](docs/local-detection.md) for the output contract,
 bounds, and limitations.
-
-The HTTP listener defaults to loopback at `127.0.0.1:8080`:
-
-```powershell
-Invoke-RestMethod http://127.0.0.1:8080/v1/status
-```
 
 Read known ItemIDs directly from the device:
 
@@ -180,7 +246,9 @@ variables.
   rejects direct browser Origin requests.
 - Request paths, JSON field spelling, nesting, content encoding, and runtime
   result identity are validated strictly and fail closed.
-- Write returns `403 WRITE_DISABLED` unless `OPCDA_WRITE_ENABLED=true`.
+- Write returns `403 WRITE_DISABLED` unless it is explicitly enabled with
+  setup's `--enable-write` option or `OPCDA_WRITE_ENABLED=true` in the original
+  environment-variable workflow.
 - The adapter has no authentication, authorization, or TLS layer in v0.
 - An in-flight Write is never automatically retried or replayed.
 - A disconnected source never returns a cached last-good value.
@@ -198,6 +266,11 @@ and bounded stability tests on Windows Server 2025 for both x86/386 and
 x64/amd64. The stability profile includes rapid, concurrent, malformed,
 slow-header, overload/backpressure, and repeated source-failure scenarios.
 
+The same fixture also passes the complete guided setup and Windows Service
+lifecycle on both architectures: explicit selection, exact-CLSID configuration,
+LocalService startup, service-mode device Read, bounded Application Event Log
+records, uninstall, and event-source cleanup.
+
 These results apply only to the exact recorded fixture and environment. See
 the [compatibility matrix](docs/compatibility.md) for immutable workflow runs,
 source pins, observed DA metadata, resource deltas, and untested conditions.
@@ -206,6 +279,8 @@ source pins, observed DA metadata, resource deltas, and untested conditions.
 
 | Document | Contents |
 |---|---|
+| [Setup and Windows Service](docs/setup.md) | Guided selection, strict configuration, service lifecycle, and identity caveats |
+| [Local server detection](docs/local-detection.md) | Registration inventory contract, bounds, architecture views, and limitations |
 | [Design baseline](docs/design.md) | Product boundary, invariants, architecture, and v0 definition |
 | [HTTP API](docs/http-api.md) | Endpoints, JSON contracts, configuration, limits, and errors |
 | [Compatibility](docs/compatibility.md) | Executed server results and honest compatibility scope |
