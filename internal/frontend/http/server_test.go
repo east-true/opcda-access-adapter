@@ -1,6 +1,7 @@
 package http
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"io"
@@ -132,6 +133,76 @@ func TestUnknownEndpointIsFrontendError(t *testing.T) {
 	server.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/other", nil))
 	if got, want := response.Code, http.StatusNotFound; got != want {
 		t.Fatalf("status = %d, want %d", got, want)
+	}
+}
+
+func TestExactRequestTargetsAndMethodsAreEnforced(t *testing.T) {
+	server := New(statusRuntime{}, Config{MaxBodyBytes: 1024, MaxConcurrent: 2, RequestDeadline: time.Second})
+	for _, target := range []string{"/v1/status?debug=true", "/v1/status?", "/v1%2fstatus", "http://adapter.example/v1/status"} {
+		request := httptest.NewRequest(http.MethodGet, target, nil)
+		response := httptest.NewRecorder()
+		server.ServeHTTP(response, request)
+		if response.Code != http.StatusBadRequest {
+			t.Fatalf("target %q status = %d: %s", target, response.Code, response.Body.String())
+		}
+	}
+
+	request := httptest.NewRequest(http.MethodPost, "/v1/status", nil)
+	response := httptest.NewRecorder()
+	server.ServeHTTP(response, request)
+	if response.Code != http.StatusMethodNotAllowed || response.Header().Get("Allow") != http.MethodGet {
+		t.Fatalf("method response = %d Allow=%q: %s", response.Code, response.Header().Get("Allow"), response.Body.String())
+	}
+
+	request = httptest.NewRequest(http.MethodGet, "/v1/status", bytes.NewBufferString("ignored"))
+	response = httptest.NewRecorder()
+	server.ServeHTTP(response, request)
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("status body response = %d: %s", response.Code, response.Body.String())
+	}
+}
+
+func TestBrowserOriginIsRejectedFromStatus(t *testing.T) {
+	server := New(statusRuntime{}, Config{MaxBodyBytes: 1024, MaxConcurrent: 1, RequestDeadline: time.Second})
+	request := httptest.NewRequest(http.MethodGet, "/v1/status", nil)
+	request.Header["Origin"] = []string{""}
+	response := httptest.NewRecorder()
+	server.ServeHTTP(response, request)
+	if response.Code != http.StatusForbidden {
+		t.Fatalf("status = %d: %s", response.Code, response.Body.String())
+	}
+	assertErrorCode(t, response, string(opcda.CodeBrowserOriginRejected))
+}
+
+func TestJSONContentHeadersAreUnambiguous(t *testing.T) {
+	runtime := &readRuntime{}
+	server := newReadTestServer(runtime, 4096, 10)
+	tests := []struct {
+		name    string
+		prepare func(*http.Request)
+		code    opcda.ErrorCode
+	}{
+		{name: "content encoding", prepare: func(request *http.Request) {
+			request.Header.Set("Content-Encoding", "gzip")
+		}, code: opcda.CodeUnsupportedContentEncoding},
+		{name: "duplicate content type", prepare: func(request *http.Request) {
+			request.Header.Add("Content-Type", "application/json")
+		}, code: opcda.CodeUnsupportedMediaType},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			request := newJSONRequest(http.MethodPost, "/v1/read", bytes.NewBufferString(`{"items":[{"itemId":"A"}]}`))
+			test.prepare(request)
+			response := httptest.NewRecorder()
+			server.ServeHTTP(response, request)
+			if response.Code != http.StatusUnsupportedMediaType {
+				t.Fatalf("status = %d: %s", response.Code, response.Body.String())
+			}
+			assertErrorCode(t, response, string(test.code))
+		})
+	}
+	if runtime.calls != 0 {
+		t.Fatalf("runtime called %d times", runtime.calls)
 	}
 }
 

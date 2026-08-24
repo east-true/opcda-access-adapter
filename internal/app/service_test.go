@@ -6,6 +6,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -27,6 +28,16 @@ func (lifecycleRuntime) WriteBatch(context.Context, []opcda.WriteItem) ([]opcda.
 	return nil, nil
 }
 func (lifecycleRuntime) Shutdown(context.Context) error { return nil }
+
+type shutdownTrackingRuntime struct {
+	lifecycleRuntime
+	calls atomic.Int32
+}
+
+func (runtime *shutdownTrackingRuntime) Shutdown(context.Context) error {
+	runtime.calls.Add(1)
+	return nil
+}
 
 func TestServiceLifecycleServesStatus(t *testing.T) {
 	config := DefaultConfig()
@@ -166,5 +177,81 @@ func TestServiceBoundsIncompleteHeaderConnectionsAndRecovers(t *testing.T) {
 			t.Fatalf("listener did not recover after header timeout: %v", err)
 		}
 		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+func TestStartFailureCleansRuntimeAndMakesServiceTerminal(t *testing.T) {
+	occupied, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer occupied.Close()
+
+	runtime := &shutdownTrackingRuntime{}
+	config := DefaultConfig()
+	config.HTTPListenAddress = occupied.Addr().String()
+	service, err := New(config, runtime)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := service.Start(); err == nil {
+		t.Fatal("Start unexpectedly acquired an occupied listener")
+	}
+	if runtime.calls.Load() != 1 {
+		t.Fatalf("runtime shutdown calls = %d", runtime.calls.Load())
+	}
+	if err := service.Start(); err == nil {
+		t.Fatal("service restarted after terminal startup failure")
+	}
+}
+
+func TestUnexpectedListenerFailureIsReported(t *testing.T) {
+	config := DefaultConfig()
+	config.HTTPListenAddress = "127.0.0.1:0"
+	service, err := New(config, lifecycleRuntime{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := service.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		shutdownContext, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		_ = service.Shutdown(shutdownContext)
+	})
+
+	if err := service.listener.Close(); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case err := <-service.Errors():
+		if err == nil {
+			t.Fatal("nil listener failure")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("unexpected listener failure was not reported")
+	}
+}
+
+func TestGracefulShutdownDoesNotReportListenerFailure(t *testing.T) {
+	config := DefaultConfig()
+	config.HTTPListenAddress = "127.0.0.1:0"
+	service, err := New(config, lifecycleRuntime{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := service.Start(); err != nil {
+		t.Fatal(err)
+	}
+	shutdownContext, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if err := service.Shutdown(shutdownContext); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case err := <-service.Errors():
+		t.Fatalf("graceful shutdown reported listener failure: %v", err)
+	case <-time.After(25 * time.Millisecond):
 	}
 }

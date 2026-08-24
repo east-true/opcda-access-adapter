@@ -3,6 +3,8 @@ package http
 import (
 	"context"
 	stdhttp "net/http"
+	"slices"
+	"unicode/utf8"
 
 	"github.com/east-true/opcda-access-adapter/internal/opcda"
 )
@@ -69,6 +71,10 @@ func (s *Server) handleBrowse(ctx context.Context, w stdhttp.ResponseWriter, req
 		writeLayerError(w, stdhttp.StatusUnprocessableEntity, "adapter", opcda.CodeBrowseResultLimitExceeded, "Browse result limit exceeded", nil)
 		return
 	}
+	if !browseResultMatchesRequest(path, result, s.config.MaxItemIDBytes) {
+		writeLayerError(w, stdhttp.StatusInternalServerError, "adapter", opcda.CodeInternalResultMismatch, "runtime returned a Browse result with invalid identity or structure", nil)
+		return
+	}
 	entries := make([]browseHTTPEntry, len(result.Entries))
 	for index, entry := range result.Entries {
 		entries[index] = browseHTTPEntry{Kind: string(entry.Kind), Name: entry.Name, AccessRights: entry.AccessRights}
@@ -85,4 +91,33 @@ func (s *Server) handleBrowse(ctx context.Context, w stdhttp.ResponseWriter, req
 		Path    []string          `json:"path"`
 		Entries []browseHTTPEntry `json:"entries"`
 	}{Path: result.Path, Entries: entries})
+}
+
+func browseResultMatchesRequest(path []string, result opcda.BrowseResult, maximumItemIDBytes int) bool {
+	if !slices.Equal(path, result.Path) {
+		return false
+	}
+	for _, entry := range result.Entries {
+		if entry.Name == "" || !utf8.ValidString(entry.Name) {
+			return false
+		}
+		switch entry.Kind {
+		case opcda.BrowseEntryBranch:
+			if entry.ItemID != nil {
+				return false
+			}
+		case opcda.BrowseEntryItem:
+			if entry.ItemID == nil || *entry.ItemID == "" || !utf8.ValidString(string(*entry.ItemID)) || len([]byte(*entry.ItemID)) > maximumItemIDBytes {
+				return false
+			}
+			for _, character := range *entry.ItemID {
+				if character == 0 {
+					return false
+				}
+			}
+		default:
+			return false
+		}
+	}
+	return true
 }

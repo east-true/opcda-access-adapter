@@ -12,7 +12,7 @@ func TestDefaultConfigIsBoundedAndLoopback(t *testing.T) {
 	}
 	if config.MaxHTTPBodyBytes <= 0 || config.MaxHTTPConnections <= 0 || config.MaxConcurrentRequests <= 0 ||
 		config.MaxHTTPHeaderBytes <= 0 || config.HTTPReadHeaderTimeout <= 0 || config.HTTPReadTimeout <= 0 ||
-		config.HTTPWriteTimeout <= 0 || config.HTTPIdleTimeout <= 0 || config.Runtime.Limits.CommandQueue <= 0 {
+		config.HTTPWriteTimeout <= 0 || config.HTTPIdleTimeout <= 0 || config.MaxJSONDepth != 64 || config.Runtime.Limits.CommandQueue <= 0 {
 		t.Fatal("expected positive bounded defaults")
 	}
 	if config.WriteEnabled {
@@ -51,6 +51,22 @@ func TestLoadConfigRejectsUnsafeHTTPCeiling(t *testing.T) {
 	t.Setenv("OPCDA_MAX_CONCURRENT_REQUESTS", "1025")
 	if _, err := LoadConfig(); err == nil {
 		t.Fatal("HTTP concurrency above hard ceiling was accepted")
+	}
+}
+
+func TestLoadConfigAppliesAndBoundsJSONDepth(t *testing.T) {
+	t.Setenv("OPCDA_MAX_JSON_DEPTH", "17")
+	config, err := LoadConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if config.MaxJSONDepth != 17 {
+		t.Fatalf("JSON depth = %d", config.MaxJSONDepth)
+	}
+
+	t.Setenv("OPCDA_MAX_JSON_DEPTH", "257")
+	if _, err := LoadConfig(); err == nil {
+		t.Fatal("JSON depth above hard ceiling was accepted")
 	}
 }
 

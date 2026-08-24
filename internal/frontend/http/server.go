@@ -23,6 +23,7 @@ type Config struct {
 	MaxBrowseEntries    int
 	MaxBrowseDepth      int
 	MaxItemIDBytes      int
+	MaxJSONDepth        int
 	RequireLoopbackHost bool
 }
 
@@ -49,6 +50,9 @@ func New(runtime opcda.Runtime, config Config) *Server {
 	if config.MaxBrowseDepth <= 0 {
 		config.MaxBrowseDepth = opcda.DefaultLimits().MaxBrowseDepth
 	}
+	if config.MaxJSONDepth <= 0 {
+		config.MaxJSONDepth = 64
+	}
 	return &Server{
 		runtime:  runtime,
 		config:   config,
@@ -74,22 +78,74 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusMisdirectedRequest, opcda.CodeUntrustedHost, "request Host is not loopback")
 		return
 	}
-
+	if !validateRequestTarget(w, r) {
+		return
+	}
 	ctx, cancel := context.WithTimeout(r.Context(), s.config.RequestDeadline)
 	defer cancel()
 
-	switch {
-	case r.Method == http.MethodGet && r.URL.Path == "/v1/status":
+	switch r.URL.Path {
+	case "/v1/status":
+		if r.Method != http.MethodGet {
+			writeMethodNotAllowed(w, http.MethodGet)
+			return
+		}
+		if r.ContentLength != 0 || len(r.TransferEncoding) != 0 {
+			writeError(w, http.StatusBadRequest, opcda.CodeInvalidRequest, "status request must not contain a body")
+			return
+		}
+		if !validateBrowserBoundary(w, r) {
+			return
+		}
 		s.handleStatus(ctx, w)
-	case r.Method == http.MethodPost && r.URL.Path == "/v1/read":
+	case "/v1/read":
+		if r.Method != http.MethodPost {
+			writeMethodNotAllowed(w, http.MethodPost)
+			return
+		}
+		if !validateBrowserBoundary(w, r) {
+			return
+		}
 		s.handleRead(ctx, w, r)
-	case r.Method == http.MethodPost && r.URL.Path == "/v1/browse":
+	case "/v1/browse":
+		if r.Method != http.MethodPost {
+			writeMethodNotAllowed(w, http.MethodPost)
+			return
+		}
+		if !validateBrowserBoundary(w, r) {
+			return
+		}
 		s.handleBrowse(ctx, w, r)
-	case r.Method == http.MethodPost && r.URL.Path == "/v1/write":
+	case "/v1/write":
+		if r.Method != http.MethodPost {
+			writeMethodNotAllowed(w, http.MethodPost)
+			return
+		}
 		s.handleWrite(ctx, w, r)
 	default:
 		writeError(w, http.StatusNotFound, "NOT_FOUND", "endpoint not found")
 	}
+}
+
+func validateRequestTarget(w http.ResponseWriter, request *http.Request) bool {
+	if request.URL.IsAbs() || request.URL.RawPath != "" || request.URL.RawQuery != "" || request.URL.ForceQuery {
+		writeError(w, http.StatusBadRequest, opcda.CodeInvalidRequest, "request target must use an exact v0 path without encoding or query parameters")
+		return false
+	}
+	return true
+}
+
+func validateBrowserBoundary(w http.ResponseWriter, request *http.Request) bool {
+	if len(request.Header.Values("Origin")) != 0 {
+		writeError(w, http.StatusForbidden, opcda.CodeBrowserOriginRejected, "browser-originated requests are not accepted")
+		return false
+	}
+	return true
+}
+
+func writeMethodNotAllowed(w http.ResponseWriter, allowed string) {
+	w.Header().Set("Allow", allowed)
+	writeError(w, http.StatusMethodNotAllowed, opcda.CodeMethodNotAllowed, "method is not allowed for this endpoint")
 }
 
 func setResponseSecurityHeaders(w http.ResponseWriter) {
@@ -132,11 +188,16 @@ func isLoopbackRequestHost(value string) bool {
 }
 
 func validateJSONRequest(w http.ResponseWriter, request *http.Request) bool {
-	if request.Header.Get("Origin") != "" {
-		writeError(w, http.StatusForbidden, opcda.CodeBrowserOriginRejected, "browser-originated requests are not accepted")
+	if len(request.Header.Values("Content-Encoding")) != 0 {
+		writeError(w, http.StatusUnsupportedMediaType, opcda.CodeUnsupportedContentEncoding, "Content-Encoding is not supported")
 		return false
 	}
-	mediaType, _, err := mime.ParseMediaType(request.Header.Get("Content-Type"))
+	contentTypes := request.Header.Values("Content-Type")
+	if len(contentTypes) != 1 {
+		writeError(w, http.StatusUnsupportedMediaType, opcda.CodeUnsupportedMediaType, "exactly one Content-Type: application/json header is required")
+		return false
+	}
+	mediaType, _, err := mime.ParseMediaType(contentTypes[0])
 	if err != nil || mediaType != "application/json" {
 		writeError(w, http.StatusUnsupportedMediaType, opcda.CodeUnsupportedMediaType, "Content-Type must be application/json")
 		return false

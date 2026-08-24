@@ -11,6 +11,12 @@ contract. On a loopback-configured listener, a non-loopback `Host` is also
 rejected to limit DNS-rebinding attacks. JSON responses are marked `no-store`,
 `nosniff`, and `Cross-Origin-Resource-Policy: same-origin`.
 
+Request targets use the exact paths below without query parameters or
+percent-encoded aliases. Status is bodyless. JSON object keys are unique and
+use the documented spelling; nesting is bounded. Compressed request bodies are
+not accepted. Known endpoints return 405 and an `Allow` header for a wrong
+method.
+
 ## Status
 
 ```text
@@ -54,6 +60,7 @@ history and does not replace per-item Read/Write HRESULTs.
 | `OPCDA_MAX_HTTP_CONNECTIONS` | `64` | accepted TCP connection bound |
 | `OPCDA_MAX_CONCURRENT_REQUESTS` | `32` | HTTP concurrency bound |
 | `OPCDA_MAX_HTTP_HEADER_BYTES` | `32768` | request header bound |
+| `OPCDA_MAX_JSON_DEPTH` | `64` | JSON object/array nesting bound |
 | `OPCDA_HTTP_READ_HEADER_TIMEOUT` | `5s` | incomplete-header timeout |
 | `OPCDA_HTTP_READ_TIMEOUT` | `15s` | complete request read timeout |
 | `OPCDA_HTTP_WRITE_TIMEOUT` | `15s` | response write timeout |
@@ -134,8 +141,11 @@ Error bodies distinguish `frontend`, `adapter`, and `source` layers. Source
 method errors include the raw HRESULT. Item errors are not replaced by a
 generic request error.
 
-Transport hardening errors include `UNSUPPORTED_MEDIA_TYPE`,
-`BROWSER_ORIGIN_REJECTED`, and, for a loopback listener, `UNTRUSTED_HOST`.
+Transport hardening errors include `METHOD_NOT_ALLOWED`,
+`UNSUPPORTED_MEDIA_TYPE`,
+`UNSUPPORTED_CONTENT_ENCODING`, `DUPLICATE_JSON_FIELD`,
+`JSON_DEPTH_LIMIT_EXCEEDED`, `BROWSER_ORIGIN_REJECTED`, and, for a loopback
+listener, `UNTRUSTED_HOST`.
 An internal Read/Write result count or ordered ItemID mismatch is
 `INTERNAL_RESULT_MISMATCH` and fails closed with HTTP 500.
 

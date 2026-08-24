@@ -26,6 +26,8 @@ func FuzzReadHTTPBody(f *testing.F) {
 	for _, seed := range [][]byte{
 		[]byte(`{"source":"device","items":[{"itemId":"A"}]}`),
 		[]byte(`{"items":[{"itemId":"\uD800"}]}`),
+		[]byte(`{"items":[{"itemId":"A","itemId":"B"}]}`),
+		[]byte(`{"items":[[[[[[[[[0]]]]]]]]]}`),
 		[]byte(`not json`),
 	} {
 		f.Add(seed)

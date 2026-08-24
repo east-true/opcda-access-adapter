@@ -8,6 +8,7 @@ import (
 	stdhttp "net/http"
 	"strings"
 	"sync"
+	"time"
 
 	frontend "github.com/east-true/opcda-access-adapter/internal/frontend/http"
 	"github.com/east-true/opcda-access-adapter/internal/opcda"
@@ -18,10 +19,14 @@ type Service struct {
 	runtime opcda.Runtime
 	http    *frontend.Server
 	server  *stdhttp.Server
+	errors  chan error
 
 	mu       sync.Mutex
 	listener net.Listener
+	terminal bool
 }
+
+const startupCleanupTimeout = 10 * time.Second
 
 func New(config Config, runtime opcda.Runtime) (*Service, error) {
 	if err := config.finalizeAndValidate(); err != nil {
@@ -43,6 +48,7 @@ func New(config Config, runtime opcda.Runtime) (*Service, error) {
 		MaxBrowseEntries:    config.Runtime.Limits.MaxBrowseEntries,
 		MaxBrowseDepth:      config.Runtime.Limits.MaxBrowseDepth,
 		MaxItemIDBytes:      config.Runtime.Limits.MaxItemIDBytes,
+		MaxJSONDepth:        config.MaxJSONDepth,
 		RequireLoopbackHost: listenAddressIsLoopback(config.HTTPListenAddress),
 	})
 	return &Service{
@@ -57,6 +63,7 @@ func New(config Config, runtime opcda.Runtime) (*Service, error) {
 			IdleTimeout:       config.HTTPIdleTimeout,
 			MaxHeaderBytes:    config.MaxHTTPHeaderBytes,
 		},
+		errors: make(chan error, 1),
 	}, nil
 }
 
@@ -79,17 +86,37 @@ func (s *Service) Start() error {
 	if s.listener != nil {
 		return errors.New("HTTP listener already started")
 	}
+	if s.terminal {
+		return errors.New("service cannot be restarted after shutdown or startup failure")
+	}
 	listener, err := net.Listen("tcp", s.config.HTTPListenAddress)
 	if err != nil {
-		return fmt.Errorf("listen on %s: %w", s.config.HTTPListenAddress, err)
+		s.terminal = true
+		cleanupContext, cancel := context.WithTimeout(context.Background(), startupCleanupTimeout)
+		defer cancel()
+		cleanupErr := s.runtime.Shutdown(cleanupContext)
+		return errors.Join(fmt.Errorf("listen on %s: %w", s.config.HTTPListenAddress, err), cleanupErr)
 	}
 	listener = newBoundedListener(listener, s.config.MaxHTTPConnections)
 	s.listener = listener
 	s.http.SetListening(true)
 	go func() {
-		_ = s.server.Serve(listener)
+		err := s.server.Serve(listener)
+		s.http.SetListening(false)
+		if err != nil && !errors.Is(err, stdhttp.ErrServerClosed) {
+			select {
+			case s.errors <- fmt.Errorf("serve HTTP: %w", err):
+			default:
+			}
+		}
 	}()
 	return nil
+}
+
+// Errors reports an unexpected asynchronous HTTP listener failure. Graceful
+// shutdown does not emit an error.
+func (s *Service) Errors() <-chan error {
+	return s.errors
 }
 
 // boundedListener limits accepted TCP connections independently from the
@@ -141,6 +168,9 @@ func (s *Service) Address() string {
 }
 
 func (s *Service) Shutdown(ctx context.Context) error {
+	s.mu.Lock()
+	s.terminal = true
+	s.mu.Unlock()
 	s.http.SetListening(false)
 	httpErr := s.server.Shutdown(ctx)
 	runtimeErr := s.runtime.Shutdown(ctx)
