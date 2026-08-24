@@ -2211,14 +2211,18 @@ multi-server routing
 
 # 42. Server Discovery
 
-OPCEnum 등을 이용한 DA Server 자동 discovery는 v0 핵심이 아니다.
+로컬 DA 2.0 component category 등록을 조회하는 bounded detection은
+convenience 기능으로 제공할 수 있다. Detection은 등록 후보를 반환할 뿐
+vendor server를 활성화하거나 연결 가능성을 보증하지 않는다.
 
-초기에는 ProgID 또는 CLSID를 명시한다.
+Adapter 실행에는 계속 ProgID 또는 CLSID를 명시한다. 후보가 하나여도
+자동 선택하지 않으며, 여러 후보를 하나의 runtime으로 연결하지 않는다.
 
-Discovery가 향후 추가되더라도:
+Detection은:
 
-- convenience 기능일 뿐
 - runtime architecture를 바꾸지 않음
+- HTTP endpoint가 아닌 local CLI operation임
+- local registration metadata만 반환함
 - remote DCOM discovery로 확장하지 않음
 
 ---
@@ -3266,4 +3270,3 @@ PR 또는 새로운 기능 제안 전에 확인한다.
 - [ ] x86/x64 compatibility test
 - [ ] long-running soak test
 - [ ] at least one public compatibility matrix entry
-

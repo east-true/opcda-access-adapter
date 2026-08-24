@@ -10,11 +10,23 @@ import (
 	"time"
 
 	"github.com/east-true/opcda-access-adapter/internal/app"
+	"github.com/east-true/opcda-access-adapter/internal/opcda"
 )
 
 func main() {
-	if printVersion(os.Args[1:], os.Stdout) {
+	arguments := os.Args[1:]
+	if printVersion(arguments, os.Stdout) {
 		return
+	}
+	if handled, exitCode := handleUtilityCommand(arguments, os.Stdout, os.Stderr, opcda.DetectLocalServers); handled {
+		if exitCode != 0 {
+			os.Exit(exitCode)
+		}
+		return
+	}
+	if len(arguments) != 0 {
+		slog.Error("unknown command or argument", "argument", arguments[0])
+		os.Exit(2)
 	}
 	config, err := app.LoadConfig()
 	if err != nil {

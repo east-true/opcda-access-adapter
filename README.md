@@ -43,6 +43,7 @@ process values.
 ## Features
 
 - OPC DA 2.05a baseline over local COM
+- bounded local OPC DA 2.0 registration detection without vendor activation
 - `GET /v1/status`
 - optional, source-backed DA 2.x Browse
 - ordered batch device Read with per-item failures
@@ -100,6 +101,20 @@ $env:OPCDA_SOURCE_PROG_ID = "Vendor.Server.1"
 ```
 
 Run `opcda-access-adapter-386.exe` instead when you built the x86 variant.
+
+To list locally registered OPC DA 2.0 candidates before choosing a source:
+
+```powershell
+.\opcda-access-adapter.exe detect
+```
+
+Detection returns bounded JSON containing the exact registered CLSID and the
+ProgID when Windows can resolve it. It does not start a detected vendor server,
+select a source automatically, alter configuration, or search remote hosts.
+An empty list is a successful result. Run the matching 386 and amd64 builds
+when registrations may exist in both Windows architecture views.
+See [local server detection](docs/local-detection.md) for the output contract,
+bounds, and limitations.
 
 The HTTP listener defaults to loopback at `127.0.0.1:8080`:
 

@@ -35,6 +35,7 @@ var (
 	procCoInitializeEx    = ole32.NewProc("CoInitializeEx")
 	procCoUninitialize    = ole32.NewProc("CoUninitialize")
 	procCLSIDFromProgID   = ole32.NewProc("CLSIDFromProgID")
+	procProgIDFromCLSID   = ole32.NewProc("ProgIDFromCLSID")
 	procCLSIDFromString   = ole32.NewProc("CLSIDFromString")
 	procCoCreateInstance  = ole32.NewProc("CoCreateInstance")
 	procCoTaskMemFree     = ole32.NewProc("CoTaskMemFree")
