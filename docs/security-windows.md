@@ -77,9 +77,9 @@ affect every COM server that relies on them.
 
 ## Diagnosing failures
 
-While disconnected, `GET /v1/status` exposes one bounded
-`source.lastError` record with the failing operation and raw HRESULT. Common
-activation results include:
+While disconnected, HTTP `GET /v1/status` and gRPC `Status` expose one bounded
+source diagnostic with the failing operation and raw HRESULT. Common activation
+results include:
 
 | HRESULT | Typical investigation |
 |---|---|

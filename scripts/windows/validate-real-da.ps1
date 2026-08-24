@@ -14,6 +14,8 @@ param(
 
     [string]$StabilityProbePath,
 
+    [string]$GRPCProbePath,
+
     [ValidateRange(0, 10)]
     [int]$FailureCycles = 0,
 
@@ -197,6 +199,7 @@ function Start-Adapter {
 
     $env:OPCDA_SOURCE_PROG_ID = $script:ProgID
     Remove-Item Env:OPCDA_SOURCE_CLSID -ErrorAction SilentlyContinue
+    $env:OPCDA_FRONTEND = 'http'
     $env:OPCDA_HTTP_LISTEN = '127.0.0.1:18080'
     $env:OPCDA_WRITE_ENABLED = $WriteEnabled.ToString().ToLowerInvariant()
     $env:OPCDA_MAX_HTTP_CONNECTIONS = '64'
@@ -206,6 +209,40 @@ function Start-Adapter {
     $env:OPCDA_HTTP_READ_TIMEOUT = '15s'
     $env:OPCDA_HTTP_WRITE_TIMEOUT = '15s'
     $env:OPCDA_HTTP_IDLE_TIMEOUT = '30s'
+    $env:OPCDA_RECONNECT_INITIAL = '200ms'
+    $env:OPCDA_RECONNECT_MAX = '2s'
+    $env:OPCDA_REQUEST_DEADLINE = '10s'
+    $env:OPCDA_COM_CALL_WATCHDOG = '15s'
+
+    $stdout = Join-Path $script:WorkingDirectory "adapter-$Label.stdout.log"
+    $stderr = Join-Path $script:WorkingDirectory "adapter-$Label.stderr.log"
+    return Start-Process -FilePath $script:AdapterExecutable -PassThru `
+        -RedirectStandardOutput $stdout -RedirectStandardError $stderr
+}
+
+function Start-GRPCAdapter {
+    param(
+        [Parameter(Mandatory = $true)]
+        [bool]$WriteEnabled,
+
+        [Parameter(Mandatory = $true)]
+        [int]$Port,
+
+        [Parameter(Mandatory = $true)]
+        [string]$Label
+    )
+
+    $env:OPCDA_SOURCE_PROG_ID = $script:ProgID
+    Remove-Item Env:OPCDA_SOURCE_CLSID -ErrorAction SilentlyContinue
+    $env:OPCDA_FRONTEND = 'grpc'
+    $env:OPCDA_GRPC_LISTEN = "127.0.0.1:$Port"
+    $env:OPCDA_WRITE_ENABLED = $WriteEnabled.ToString().ToLowerInvariant()
+    $env:OPCDA_MAX_GRPC_CONNECTIONS = '16'
+    $env:OPCDA_MAX_CONCURRENT_GRPC_RPCS = '32'
+    $env:OPCDA_MAX_GRPC_STREAMS = '16'
+    $env:OPCDA_MAX_GRPC_RECEIVE_BYTES = '1048576'
+    $env:OPCDA_MAX_GRPC_SEND_BYTES = '4194304'
+    $env:OPCDA_MAX_GRPC_METADATA_BYTES = '32768'
     $env:OPCDA_RECONNECT_INITIAL = '200ms'
     $env:OPCDA_RECONNECT_MAX = '2s'
     $env:OPCDA_REQUEST_DEADLINE = '10s'
@@ -569,7 +606,7 @@ function Test-GuidedSetupWindowsService {
         ) -TimeoutSeconds 60 -StandardInputText $answers
 
         $guidedConfig = Get-Content -LiteralPath $script:GuidedConfigPath -Raw | ConvertFrom-Json
-        Assert-True ($guidedConfig.version -eq 1) 'guided config version changed'
+        Assert-True ($guidedConfig.version -eq 2) 'guided config version was not 2'
         Assert-True (([Guid]$guidedConfig.source.clsid) -eq ([Guid]$expectedCLSID)) 'guided config did not preserve the selected exact CLSID'
         Assert-True ($guidedConfig.frontend.type -ceq 'http') 'guided config selected a non-HTTP frontend'
         Assert-True ($guidedConfig.frontend.httpListen -ceq "127.0.0.1:$guidedPort") 'guided config listener changed'
@@ -617,7 +654,7 @@ function Test-GuidedSetupWindowsService {
         Assert-True (-not (Test-Path -LiteralPath "HKLM:\SYSTEM\CurrentControlSet\Services\EventLog\Application\$($script:GuidedServiceName)")) `
             'guided service Event Log source remained after uninstall'
         Stop-ServerProcesses
-        Write-Host "GUIDED_SETUP_SERVICE_PASS arch=$AdapterArch account=LocalService configVersion=1 source=exact-clsid frontend=http writeEnabled=false"
+        Write-Host "GUIDED_SETUP_SERVICE_PASS arch=$AdapterArch account=LocalService configVersion=2 source=exact-clsid frontend=http writeEnabled=false"
     }
     finally {
         if ($null -ne (Get-Service -Name $script:GuidedServiceName -ErrorAction SilentlyContinue)) {
@@ -634,6 +671,118 @@ function Test-GuidedSetupWindowsService {
         if (Test-Path -LiteralPath $script:GuidedConfigDirectory) {
             Remove-Item -LiteralPath $script:GuidedConfigDirectory -Recurse -Force
         }
+    }
+}
+
+function Test-GuidedSetupGRPCWindowsService {
+    Assert-True ($null -ne $script:GRPCProbeExecutable) 'gRPC probe path is required for gRPC validation'
+    $selectedIndex = -1
+    for ($index = 0; $index -lt $script:DetectedRegistrations.servers.Count; $index++) {
+        $candidate = $script:DetectedRegistrations.servers[$index]
+        if ($candidate.progId -ceq $script:ProgID -and ([Guid]$candidate.clsid) -eq ([Guid]$expectedCLSID)) {
+            $selectedIndex = $index
+            break
+        }
+    }
+    Assert-True ($selectedIndex -ge 0) 'gRPC guided setup fixture candidate index was not found'
+
+    $serviceName = "OPCDAAccessAdapterGRPCFixture$AdapterArch"
+    $configDirectory = Join-Path $env:ProgramData "OPCDAAccessAdapterGRPCValidation-$AdapterArch-$PID"
+    New-Item -ItemType Directory -Path $configDirectory | Out-Null
+    $configPath = Join-Path $configDirectory 'adapter.json'
+    $grpcPort = if ($AdapterArch -eq '386') { 18551 } else { 18552 }
+    $answers = "$($selectedIndex + 1)`r`n2`r`n2`r`ny`r`n"
+    $serviceTestStarted = Get-Date
+
+    try {
+        Invoke-NativeProcess -FilePath $script:AdapterExecutable -ArgumentList @(
+            'setup',
+            '--config', $configPath,
+            '--grpc-listen', "127.0.0.1:$grpcPort",
+            '--service-name', $serviceName
+        ) -TimeoutSeconds 60 -StandardInputText $answers
+
+        $guidedConfig = Get-Content -LiteralPath $configPath -Raw | ConvertFrom-Json
+        Assert-True ($guidedConfig.version -eq 2) 'gRPC guided config version was not 2'
+        Assert-True (([Guid]$guidedConfig.source.clsid) -eq ([Guid]$expectedCLSID)) 'gRPC guided config changed the exact CLSID'
+        Assert-True ($guidedConfig.frontend.type -ceq 'grpc') 'gRPC guided config selected another frontend'
+        Assert-True ($guidedConfig.frontend.grpcListen -ceq "127.0.0.1:$grpcPort") 'gRPC guided config listener changed'
+        Assert-True ($null -eq $guidedConfig.frontend.PSObject.Properties['httpListen']) 'gRPC guided config retained an HTTP listener'
+        Assert-True (-not [bool]$guidedConfig.writeEnabled) 'gRPC guided setup enabled Write by default'
+
+        $installed = Get-CimInstance Win32_Service -Filter "Name='$serviceName'"
+        Assert-True ($null -ne $installed) 'gRPC guided setup did not install the Windows Service'
+        Assert-True ($installed.StartName -ceq 'NT AUTHORITY\LocalService') 'gRPC guided service did not use LocalService'
+        Assert-True ($installed.StartMode -ceq 'Auto') 'gRPC guided service did not use automatic startup'
+        Assert-True ($installed.PathName -match 'service run') 'gRPC guided service command did not use the SCM dispatcher'
+
+        Invoke-NativeProcess -FilePath $script:GRPCProbeExecutable -ArgumentList @(
+            '-address', "127.0.0.1:$grpcPort",
+            '-expected-clsid', $expectedCLSID,
+            '-timeout', '60s'
+        ) -TimeoutSeconds 90
+
+        $eventDeadline = [DateTime]::UtcNow.AddSeconds(10)
+        $serviceEvents = @()
+        do {
+            $serviceEvents = @(Get-WinEvent -FilterHashtable @{
+                LogName = 'Application'
+                ProviderName = $serviceName
+                StartTime = $serviceTestStarted
+            } -ErrorAction SilentlyContinue)
+            if ($serviceEvents.Count -eq 0) { Start-Sleep -Milliseconds 200 }
+        } while ($serviceEvents.Count -eq 0 -and [DateTime]::UtcNow -lt $eventDeadline)
+        Assert-True ($serviceEvents.Count -ge 1) 'gRPC guided service did not write a lifecycle Event Log record'
+
+        Invoke-NativeProcess -FilePath $script:AdapterExecutable -ArgumentList @(
+            'service', 'uninstall', '--name', $serviceName
+        ) -TimeoutSeconds 60
+        Assert-True ($null -eq (Get-Service -Name $serviceName -ErrorAction SilentlyContinue)) `
+            'gRPC guided service still existed after uninstall'
+        Assert-True (-not (Test-Path -LiteralPath "HKLM:\SYSTEM\CurrentControlSet\Services\EventLog\Application\$serviceName")) `
+            'gRPC guided service Event Log source remained after uninstall'
+        Stop-ServerProcesses
+        Write-Host "GUIDED_SETUP_GRPC_SERVICE_PASS arch=$AdapterArch account=LocalService configVersion=2 source=exact-clsid frontend=grpc writeEnabled=false"
+    }
+    finally {
+        if ($null -ne (Get-Service -Name $serviceName -ErrorAction SilentlyContinue)) {
+            try {
+                Invoke-NativeProcess -FilePath $script:AdapterExecutable -ArgumentList @(
+                    'service', 'uninstall', '--name', $serviceName
+                ) -TimeoutSeconds 60
+            }
+            catch {
+                Write-Warning "gRPC guided service cleanup failed: $($_.Exception.Message)"
+            }
+        }
+        Stop-ServerProcesses
+        if (Test-Path -LiteralPath $configDirectory) {
+            Remove-Item -LiteralPath $configDirectory -Recurse -Force
+        }
+    }
+}
+
+function Test-GRPCWriteEnabledForeground {
+    Assert-True ($null -ne $script:GRPCProbeExecutable) 'gRPC probe path is required for gRPC validation'
+    $grpcPort = if ($AdapterArch -eq '386') { 18651 } else { 18652 }
+    $grpcAdapter = $null
+    try {
+        $grpcAdapter = Start-GRPCAdapter -WriteEnabled $true -Port $grpcPort -Label 'grpc-write-enabled'
+        Invoke-NativeProcess -FilePath $script:GRPCProbeExecutable -ArgumentList @(
+            '-address', "127.0.0.1:$grpcPort",
+            '-expected-clsid', $expectedCLSID,
+            '-write-enabled',
+            '-timeout', '60s'
+        ) -TimeoutSeconds 90
+        $listeners = @(Get-NetTCPConnection -State Listen -OwningProcess $grpcAdapter.Id -ErrorAction SilentlyContinue)
+        Assert-True ($listeners.Count -eq 1) 'gRPC adapter did not expose exactly one TCP listener'
+        Assert-True ($listeners[0].LocalAddress -eq '127.0.0.1' -and [int]$listeners[0].LocalPort -eq $grpcPort) `
+            'gRPC adapter listener was reachable beyond IPv4 loopback'
+        Write-Host "GRPC_WRITE_ENABLED_FOREGROUND_PASS arch=$AdapterArch frontend=grpc typedWrite=true sourceDeniedWrite=true valuesLogged=false"
+    }
+    finally {
+        Stop-Adapter $grpcAdapter
+        Stop-ServerProcesses
     }
 }
 
@@ -662,6 +811,12 @@ $script:StabilityProbeExecutable = if ([string]::IsNullOrWhiteSpace($StabilityPr
 }
 else {
     (Resolve-Path -LiteralPath $StabilityProbePath).Path
+}
+$script:GRPCProbeExecutable = if ([string]::IsNullOrWhiteSpace($GRPCProbePath)) {
+    $null
+}
+else {
+    (Resolve-Path -LiteralPath $GRPCProbePath).Path
 }
 $script:ServerRoot = (Resolve-Path -LiteralPath $ServerDirectory).Path
 $script:WorkingDirectory = Join-Path ([IO.Path]::GetTempPath()) "opcda-adapter-real-da-$AdapterArch-$RunLabel"
@@ -748,6 +903,8 @@ try {
     Write-Host "Registered source=$($script:ProgID) architecture=$serverPlatform using local COM"
     Test-LocalDetection
     Test-GuidedSetupWindowsService
+    Test-GuidedSetupGRPCWindowsService
+    Test-GRPCWriteEnabledForeground
 
     if ($Destructive.IsPresent) {
         Write-Host 'Starting destructive local COM permission validation'

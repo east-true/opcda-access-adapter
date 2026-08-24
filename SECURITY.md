@@ -13,13 +13,17 @@ minimal reproduction and impact description.
 
 ## Security posture
 
-The v0 HTTP listener defaults to loopback and Write is disabled by default.
+The HTTP and gRPC listeners default to loopback, only one frontend is selected
+per process, and Write is disabled by default.
 Loopback mode rejects non-loopback Host values, POST endpoints require
 `application/json`, and direct browser Origin requests are rejected. These
 controls reduce DNS-rebinding and browser request-forgery exposure but are not
 an authentication mechanism.
-The parser also rejects duplicate/case-aliased JSON fields, excessive nesting,
+The HTTP parser also rejects duplicate/case-aliased JSON fields, excessive nesting,
 encoded or query-bearing endpoint aliases, and compressed request bodies.
+The gRPC frontend bounds connections, concurrent unary RPCs, HTTP/2 streams,
+metadata, receive/send message sizes, and operation duration. It does not
+enable reflection or configure automatic retries.
 The project does not claim a production authentication, authorization, or TLS
 model. Exposing it beyond the local machine is an operator decision that must
 be protected by an appropriate deployment boundary.

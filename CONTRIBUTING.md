@@ -40,7 +40,7 @@ windows-test (386)
 windows-test (amd64)
 ```
 
-Changes to the real-DA workflow, Windows validation harness, runtime/HTTP
+Changes to the real-DA workflow, Windows validation harness, runtime/frontend
 implementation, or compatibility evidence also run the path-scoped OPC
 Foundation DA 2.05a x86/x64 validation. Do not merge such a PR while that
 validation is failing or pending even though it is not a repository-wide

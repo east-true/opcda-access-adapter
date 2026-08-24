@@ -12,10 +12,10 @@ import (
 )
 
 const (
-	ConfigFileVersion       = 1
+	ConfigFileVersion       = 2
+	legacyConfigFileVersion = 1
 	MaximumConfigFileBytes  = 64 << 10
 	maximumConfigPathBytes  = 4096
-	guidedSetupFrontendHTTP = "http"
 )
 
 var ErrConfigFileExists = errors.New("configuration file already exists")
@@ -34,16 +34,31 @@ type persistedSource struct {
 
 type persistedFrontend struct {
 	Type       string `json:"type"`
-	HTTPListen string `json:"httpListen"`
+	HTTPListen string `json:"httpListen,omitempty"`
+	GRPCListen string `json:"grpcListen,omitempty"`
 }
 
 // GuidedSetupConfig returns the conservative v0 defaults with exactly one
 // explicitly selected local OPC DA source and the HTTP frontend settings that
 // the operator chose. It does not activate the source.
 func GuidedSetupConfig(source opcda.SourceConfig, httpListen string, writeEnabled bool) (Config, error) {
+	return GuidedSetupFrontendConfig(source, FrontendHTTP, httpListen, writeEnabled)
+}
+
+// GuidedSetupFrontendConfig returns conservative settings for one explicitly
+// selected DA source and one explicitly selected access frontend.
+func GuidedSetupFrontendConfig(source opcda.SourceConfig, frontend FrontendType, listen string, writeEnabled bool) (Config, error) {
 	config := DefaultConfig()
 	config.Source = source
-	config.HTTPListenAddress = httpListen
+	config.Frontend = frontend
+	switch frontend {
+	case FrontendHTTP:
+		config.HTTPListenAddress = listen
+	case FrontendGRPC:
+		config.GRPCListenAddress = listen
+	default:
+		return Config{}, fmt.Errorf("guided setup frontend must be http or grpc")
+	}
 	config.WriteEnabled = writeEnabled
 	if source.ProgID == "" && source.CLSID == "" {
 		return Config{}, fmt.Errorf("guided setup requires one explicit OPC DA source")
@@ -87,15 +102,32 @@ func LoadConfigFile(path string) (Config, error) {
 	if err := requireJSONEOF(decoder); err != nil {
 		return Config{}, err
 	}
-	if stored.Version != ConfigFileVersion {
+	if stored.Version != legacyConfigFileVersion && stored.Version != ConfigFileVersion {
 		return Config{}, fmt.Errorf("unsupported configuration version %d", stored.Version)
 	}
-	if stored.Frontend.Type != guidedSetupFrontendHTTP {
+	frontend := FrontendType(stored.Frontend.Type)
+	listen := ""
+	switch frontend {
+	case FrontendHTTP:
+		if stored.Frontend.HTTPListen == "" || stored.Frontend.GRPCListen != "" {
+			return Config{}, fmt.Errorf("HTTP frontend requires only httpListen")
+		}
+		listen = stored.Frontend.HTTPListen
+	case FrontendGRPC:
+		if stored.Version == legacyConfigFileVersion {
+			return Config{}, fmt.Errorf("configuration version 1 supports only HTTP")
+		}
+		if stored.Frontend.GRPCListen == "" || stored.Frontend.HTTPListen != "" {
+			return Config{}, fmt.Errorf("gRPC frontend requires only grpcListen")
+		}
+		listen = stored.Frontend.GRPCListen
+	default:
 		return Config{}, fmt.Errorf("unsupported frontend %q", stored.Frontend.Type)
 	}
-	return GuidedSetupConfig(
+	return GuidedSetupFrontendConfig(
 		opcda.SourceConfig{ProgID: stored.Source.ProgID, CLSID: stored.Source.CLSID},
-		stored.Frontend.HTTPListen,
+		frontend,
+		listen,
 		stored.WriteEnabled,
 	)
 }
@@ -198,10 +230,17 @@ func WriteConfigFileExclusive(path string, config Config) error {
 			CLSID:  config.Source.CLSID,
 		},
 		Frontend: persistedFrontend{
-			Type:       guidedSetupFrontendHTTP,
-			HTTPListen: config.HTTPListenAddress,
+			Type: string(config.Frontend),
 		},
 		WriteEnabled: config.WriteEnabled,
+	}
+	switch config.Frontend {
+	case FrontendHTTP:
+		stored.Frontend.HTTPListen = config.HTTPListenAddress
+	case FrontendGRPC:
+		stored.Frontend.GRPCListen = config.GRPCListenAddress
+	default:
+		return fmt.Errorf("unsupported frontend %q", config.Frontend)
 	}
 
 	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)

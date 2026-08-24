@@ -6,8 +6,8 @@ body:
   - type: markdown
     attributes:
       value: |
-        The v0 boundary is OPC DA only, local COM only, and HTTP/JSON only.
-        Requests for OPC UA, gRPC, other source protocols, persistence, mapping, or aggregation are out of scope.
+        The boundary is OPC DA only, local COM only, and one explicitly selected HTTP/JSON or unary gRPC frontend per process.
+        Requests for OPC UA, Subscribe/streaming, other source protocols, persistence, mapping, or aggregation are currently out of scope.
   - type: textarea
     id: problem
     attributes:

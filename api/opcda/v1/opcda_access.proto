@@ -1,0 +1,188 @@
+syntax = "proto3";
+
+package opcda.access.v1;
+
+option go_package = "github.com/east-true/opcda-access-adapter/api/opcda/v1;opcdav1";
+
+// OPCDAAccess exposes one explicitly configured local OPC DA source.
+service OPCDAAccess {
+  rpc Status(DAStatusRequest) returns (DAStatusResponse);
+  rpc Browse(DABrowseRequest) returns (DABrowseResponse);
+  rpc Read(DAReadRequest) returns (DAReadResponse);
+  rpc Write(DAWriteRequest) returns (DAWriteResponse);
+}
+
+message DAStatusRequest {}
+
+message DAStatusResponse {
+  string runtime_state = 1;
+  DASource source = 2;
+  DACapabilities capabilities = 3;
+  bool write_enabled = 4;
+  DARuntimeStatus runtime = 5;
+  DAGRPCFrontendStatus frontend = 6;
+}
+
+message DASource {
+  string prog_id = 1;
+  string clsid = 2;
+  uint64 connection_generation = 3;
+  DASourceError last_error = 4;
+}
+
+message DASourceError {
+  string operation = 1;
+  DAHRESULT hresult = 2;
+}
+
+message DACapabilities {
+  string browse = 1;
+  bool read = 2;
+  bool write = 3;
+  bool subscribe = 4;
+}
+
+message DARuntimeStatus {
+  uint32 queue_depth = 1;
+  uint64 reconnect_count = 2;
+  string degraded_reason = 3;
+}
+
+message DAGRPCFrontendStatus {
+  bool listening = 1;
+}
+
+message DABrowseRequest {
+  repeated string path = 1;
+  DABrowseFilter filter = 2;
+}
+
+enum DABrowseFilter {
+  DA_BROWSE_FILTER_ALL = 0;
+  DA_BROWSE_FILTER_BRANCH = 1;
+  DA_BROWSE_FILTER_ITEM = 2;
+}
+
+message DABrowseResponse {
+  repeated string path = 1;
+  repeated DABrowseEntry entries = 2;
+}
+
+message DABrowseEntry {
+  DABrowseEntryKind kind = 1;
+  string name = 2;
+  string item_id = 3;
+  bool item_id_present = 4;
+  DAVarType canonical_data_type = 5;
+  DAAccessRights access_rights = 6;
+}
+
+enum DABrowseEntryKind {
+  DA_BROWSE_ENTRY_KIND_UNSPECIFIED = 0;
+  DA_BROWSE_ENTRY_KIND_BRANCH = 1;
+  DA_BROWSE_ENTRY_KIND_ITEM = 2;
+}
+
+message DAReadRequest {
+  DADataSource source = 1;
+  repeated DAReadItem items = 2;
+}
+
+enum DADataSource {
+  DA_DATA_SOURCE_DEVICE = 0;
+}
+
+message DAReadItem {
+  string item_id = 1;
+}
+
+message DAReadResponse {
+  repeated DAReadResult results = 1;
+}
+
+message DAReadResult {
+  string item_id = 1;
+  bool ok = 2;
+  DAVarType data_type = 3;
+  DAVarType canonical_data_type = 4;
+  DAScalarValue value = 5;
+  uint32 quality_raw = 6;
+  bool quality_present = 7;
+  int64 timestamp_unix_seconds = 8;
+  int32 timestamp_nanos = 9;
+  bool timestamp_present = 10;
+  DAHRESULT hresult = 11;
+  DAAccessRights access_rights = 12;
+  string error_code = 13;
+}
+
+message DAWriteRequest {
+  repeated DAWriteItem items = 1;
+}
+
+message DAWriteItem {
+  string item_id = 1;
+  DAVarType data_type = 2;
+  DAScalarValue value = 3;
+}
+
+message DAWriteResponse {
+  repeated DAWriteResult results = 1;
+}
+
+message DAWriteResult {
+  string item_id = 1;
+  bool ok = 2;
+  DAHRESULT hresult = 3;
+  string error_code = 4;
+}
+
+message DAVarType {
+  uint32 raw = 1;
+  string name = 2;
+  bool array = 3;
+  bool byref = 4;
+}
+
+message DAAccessRights {
+  uint32 raw = 1;
+  bool read = 2;
+  bool write = 3;
+}
+
+message DAHRESULT {
+  sint32 value = 1;
+  fixed32 raw = 2;
+  string hex = 3;
+}
+
+message DAScalarValue {
+  oneof value {
+    bool empty_or_null = 1;
+    sint32 i1_value = 2;
+    uint32 ui1_value = 3;
+    sint32 i2_value = 4;
+    uint32 ui2_value = 5;
+    sint32 i4_value = 6;
+    uint32 ui4_value = 7;
+    sint64 i8_value = 8;
+    uint64 ui8_value = 9;
+    float r4_value = 10;
+    double r8_value = 11;
+    bool bool_value = 12;
+    string bstr_value = 13;
+    sint32 error_value = 14;
+    sint32 int_value = 15;
+    uint32 uint_value = 16;
+  }
+}
+
+// DAOperationError is attached to request-level gRPC status errors. Per-item
+// source failures remain in successful batch responses instead.
+message DAOperationError {
+  string layer = 1;
+  string code = 2;
+  string message = 3;
+  string operation = 4;
+  DAHRESULT hresult = 5;
+}

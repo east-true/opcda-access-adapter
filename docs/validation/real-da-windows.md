@@ -16,7 +16,8 @@ recorded in [ADR-0006](../adr/0006-real-da-validation-fixture.md).
   vendor server process activation;
 - guided explicit source/frontend/action selection, strict configuration
   output, LocalService SCM installation, service-mode connection and device
-  Read, automatic-start metadata, Stop/uninstall, and Event Log cleanup;
+  Read through HTTP and gRPC, automatic-start metadata, Stop/uninstall, and
+  Event Log cleanup;
 - connection, group creation, and capabilities;
 - root and nested stateful Browse with exact ItemIDs;
 - device Read VARTYPE, raw Quality, timestamp presence, access rights, and raw
@@ -24,6 +25,8 @@ recorded in [ADR-0006](../adr/0006-real-da-validation-fixture.md).
 - ordered partial batch failure with `OPC_E_UNKNOWNITEMID`;
 - default-disabled Write, strict VARTYPE mismatch, typed source Write, and a
   source-denied Write to a read-only item;
+- gRPC unary Status, root/nested Browse, ordered partial Read, default-disabled
+  Write, strict typed Write, source-denied Write, and loopback listener bounds;
 - deterministic outage while the server is unregistered, explicit
   unavailable behavior, reconnect count, newer connection generation, and
   lazy re-registration;
@@ -44,7 +47,7 @@ sample parses the first `-` or `/` in its entire command line as the start of
 normal server loop instead. The harness rejects such a path before execution
 and bounds every registration process to 30 seconds.
 
-The harness does not print or upload process values. Its summary contains only
+The HTTP and gRPC probes do not print or upload process values. Their summaries contain only
 operation outcomes, VARTYPE, raw Quality, timestamp presence, HRESULTs,
 iteration count, and bounded resource deltas.
 

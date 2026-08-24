@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	grpcfrontend "github.com/east-true/opcda-access-adapter/internal/frontend/grpc"
 	frontend "github.com/east-true/opcda-access-adapter/internal/frontend/http"
 	"github.com/east-true/opcda-access-adapter/internal/opcda"
 )
@@ -19,6 +20,7 @@ type Service struct {
 	runtime opcda.Runtime
 	http    *frontend.Server
 	server  *stdhttp.Server
+	grpc    *grpcfrontend.Server
 	errors  chan error
 
 	mu       sync.Mutex
@@ -39,32 +41,55 @@ func New(config Config, runtime opcda.Runtime) (*Service, error) {
 			return nil, fmt.Errorf("create OPC DA runtime: %w", err)
 		}
 	}
-	httpServer := frontend.New(runtime, frontend.Config{
-		MaxBodyBytes:        config.MaxHTTPBodyBytes,
-		MaxConcurrent:       config.MaxConcurrentRequests,
-		RequestDeadline:     config.RequestDeadline,
-		MaxReadItems:        config.Runtime.Limits.MaxReadItems,
-		MaxWriteItems:       config.Runtime.Limits.MaxWriteItems,
-		MaxBrowseEntries:    config.Runtime.Limits.MaxBrowseEntries,
-		MaxBrowseDepth:      config.Runtime.Limits.MaxBrowseDepth,
-		MaxItemIDBytes:      config.Runtime.Limits.MaxItemIDBytes,
-		MaxJSONDepth:        config.MaxJSONDepth,
-		RequireLoopbackHost: listenAddressIsLoopback(config.HTTPListenAddress),
-	})
-	return &Service{
+	service := &Service{
 		config:  config,
 		runtime: runtime,
-		http:    httpServer,
-		server: &stdhttp.Server{
+		errors:  make(chan error, 1),
+	}
+	switch config.Frontend {
+	case FrontendHTTP:
+		httpServer := frontend.New(runtime, frontend.Config{
+			MaxBodyBytes:        config.MaxHTTPBodyBytes,
+			MaxConcurrent:       config.MaxConcurrentRequests,
+			RequestDeadline:     config.RequestDeadline,
+			MaxReadItems:        config.Runtime.Limits.MaxReadItems,
+			MaxWriteItems:       config.Runtime.Limits.MaxWriteItems,
+			MaxBrowseEntries:    config.Runtime.Limits.MaxBrowseEntries,
+			MaxBrowseDepth:      config.Runtime.Limits.MaxBrowseDepth,
+			MaxItemIDBytes:      config.Runtime.Limits.MaxItemIDBytes,
+			MaxJSONDepth:        config.MaxJSONDepth,
+			RequireLoopbackHost: listenAddressIsLoopback(config.HTTPListenAddress),
+		})
+		service.http = httpServer
+		service.server = &stdhttp.Server{
 			Handler:           httpServer,
 			ReadHeaderTimeout: config.HTTPReadHeaderTimeout,
 			ReadTimeout:       config.HTTPReadTimeout,
 			WriteTimeout:      config.HTTPWriteTimeout,
 			IdleTimeout:       config.HTTPIdleTimeout,
 			MaxHeaderBytes:    config.MaxHTTPHeaderBytes,
-		},
-		errors: make(chan error, 1),
-	}, nil
+		}
+	case FrontendGRPC:
+		service.grpc = grpcfrontend.New(runtime, grpcfrontend.Config{
+			MaxConcurrent:       config.MaxConcurrentGRPCRPCs,
+			MaxConcurrentStream: config.MaxGRPCStreams,
+			MaxReceiveBytes:     config.MaxGRPCReceiveBytes,
+			MaxSendBytes:        config.MaxGRPCSendBytes,
+			MaxMetadataBytes:    config.MaxGRPCMetadataBytes,
+			ConnectionTimeout:   config.GRPCConnectionTimeout,
+			MaxConnectionIdle:   config.GRPCMaxConnectionIdle,
+			MaxConnectionAge:    config.GRPCMaxConnectionAge,
+			MaxConnectionGrace:  config.GRPCMaxConnectionGrace,
+			KeepaliveMinTime:    config.GRPCKeepaliveMinTime,
+			RequestDeadline:     config.RequestDeadline,
+			MaxReadItems:        config.Runtime.Limits.MaxReadItems,
+			MaxWriteItems:       config.Runtime.Limits.MaxWriteItems,
+			MaxBrowseEntries:    config.Runtime.Limits.MaxBrowseEntries,
+			MaxBrowseDepth:      config.Runtime.Limits.MaxBrowseDepth,
+			MaxItemIDBytes:      config.Runtime.Limits.MaxItemIDBytes,
+		})
+	}
+	return service, nil
 }
 
 func listenAddressIsLoopback(address string) bool {
@@ -84,37 +109,55 @@ func (s *Service) Start() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.listener != nil {
-		return errors.New("HTTP listener already started")
+		return errors.New("frontend listener already started")
 	}
 	if s.terminal {
 		return errors.New("service cannot be restarted after shutdown or startup failure")
 	}
-	listener, err := net.Listen("tcp", s.config.HTTPListenAddress)
+	listenAddress := s.config.HTTPListenAddress
+	maximumConnections := s.config.MaxHTTPConnections
+	if s.config.Frontend == FrontendGRPC {
+		listenAddress = s.config.GRPCListenAddress
+		maximumConnections = s.config.MaxGRPCConnections
+	}
+	listener, err := net.Listen("tcp", listenAddress)
 	if err != nil {
 		s.terminal = true
 		cleanupContext, cancel := context.WithTimeout(context.Background(), startupCleanupTimeout)
 		defer cancel()
 		cleanupErr := s.runtime.Shutdown(cleanupContext)
-		return errors.Join(fmt.Errorf("listen on %s: %w", s.config.HTTPListenAddress, err), cleanupErr)
+		return errors.Join(fmt.Errorf("listen on %s: %w", listenAddress, err), cleanupErr)
 	}
-	listener = newBoundedListener(listener, s.config.MaxHTTPConnections)
+	listener = newBoundedListener(listener, maximumConnections)
 	s.listener = listener
-	s.http.SetListening(true)
-	go func() {
-		err := s.server.Serve(listener)
-		s.http.SetListening(false)
-		if err != nil && !errors.Is(err, stdhttp.ErrServerClosed) {
-			select {
-			case s.errors <- fmt.Errorf("serve HTTP: %w", err):
-			default:
+	if s.config.Frontend == FrontendHTTP {
+		s.http.SetListening(true)
+		go func() {
+			err := s.server.Serve(listener)
+			s.http.SetListening(false)
+			if err != nil && !errors.Is(err, stdhttp.ErrServerClosed) {
+				s.reportListenerError(fmt.Errorf("serve HTTP: %w", err))
 			}
-		}
-	}()
+		}()
+	} else {
+		go func() {
+			if err := s.grpc.Serve(listener); err != nil {
+				s.reportListenerError(fmt.Errorf("serve gRPC: %w", err))
+			}
+		}()
+	}
 	return nil
 }
 
-// Errors reports an unexpected asynchronous HTTP listener failure. Graceful
-// shutdown does not emit an error.
+func (s *Service) reportListenerError(err error) {
+	select {
+	case s.errors <- err:
+	default:
+	}
+}
+
+// Errors reports an unexpected asynchronous frontend listener failure.
+// Graceful shutdown does not emit an error.
 func (s *Service) Errors() <-chan error {
 	return s.errors
 }
@@ -167,12 +210,19 @@ func (s *Service) Address() string {
 	return s.listener.Addr().String()
 }
 
+func (s *Service) Frontend() FrontendType { return s.config.Frontend }
+
 func (s *Service) Shutdown(ctx context.Context) error {
 	s.mu.Lock()
 	s.terminal = true
 	s.mu.Unlock()
-	s.http.SetListening(false)
-	httpErr := s.server.Shutdown(ctx)
+	var frontendErr error
+	if s.config.Frontend == FrontendHTTP {
+		s.http.SetListening(false)
+		frontendErr = s.server.Shutdown(ctx)
+	} else {
+		frontendErr = s.grpc.GracefulStop(ctx)
+	}
 	runtimeErr := s.runtime.Shutdown(ctx)
-	return errors.Join(httpErr, runtimeErr)
+	return errors.Join(frontendErr, runtimeErr)
 }

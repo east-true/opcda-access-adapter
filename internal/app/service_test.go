@@ -10,7 +10,10 @@ import (
 	"testing"
 	"time"
 
+	opcdav1 "github.com/east-true/opcda-access-adapter/api/opcda/v1"
 	"github.com/east-true/opcda-access-adapter/internal/opcda"
+	grpcgo "google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
 )
 
 type lifecycleRuntime struct{}
@@ -65,6 +68,41 @@ func TestServiceLifecycleServesStatus(t *testing.T) {
 	if response.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(response.Body)
 		t.Fatalf("status = %d: %s", response.StatusCode, body)
+	}
+}
+
+func TestServiceLifecycleServesGRPCDAStatus(t *testing.T) {
+	config := DefaultConfig()
+	config.Frontend = FrontendGRPC
+	config.GRPCListenAddress = "127.0.0.1:0"
+	service, err := New(config, lifecycleRuntime{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := service.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		shutdownContext, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		if err := service.Shutdown(shutdownContext); err != nil {
+			t.Errorf("shutdown: %v", err)
+		}
+	})
+
+	connection, err := grpcgo.NewClient(service.Address(), grpcgo.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer connection.Close()
+	requestContext, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	response, err := opcdav1.NewOPCDAAccessClient(connection).Status(requestContext, &opcdav1.DAStatusRequest{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if response.RuntimeState != string(opcda.RuntimeStateNotConfigured) || response.Frontend == nil || !response.Frontend.Listening {
+		t.Fatalf("gRPC status = %+v", response)
 	}
 }
 

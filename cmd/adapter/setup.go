@@ -52,6 +52,7 @@ func runSetup(
 	flags.SetOutput(errorOutput)
 	configPath := flags.String("config", defaultSetupConfigPath, "new configuration file path (must not already exist)")
 	listenAddress := flags.String("listen", "127.0.0.1:8080", "HTTP listen address")
+	grpcListenAddress := flags.String("grpc-listen", "127.0.0.1:50051", "gRPC listen address")
 	writeEnabled := flags.Bool("enable-write", false, "explicitly enable strict typed value Write")
 	serviceName := flags.String("service-name", defaultServiceName, "Windows Service name")
 	timeout := flags.Duration("timeout", defaultDetectionTimeout, "local registration detection deadline")
@@ -95,6 +96,15 @@ func runSetup(
 		fmt.Fprintf(errorOutput, "invalid setup frontend configuration: %v\n", err)
 		return 2
 	}
+	if _, err := app.GuidedSetupFrontendConfig(
+		opcda.SourceConfig{CLSID: "{00000000-0000-0000-0000-000000000000}"},
+		app.FrontendGRPC,
+		*grpcListenAddress,
+		*writeEnabled,
+	); err != nil {
+		fmt.Fprintf(errorOutput, "invalid setup gRPC frontend configuration: %v\n", err)
+		return 2
+	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
 	defer cancel()
@@ -127,14 +137,25 @@ func runSetup(
 
 	fmt.Fprintln(output, "\nAvailable frontends:")
 	fmt.Fprintln(output, "  1) HTTP/JSON (v0)")
-	if _, err := prompt.selectNumber("Select one frontend", 1); err != nil {
+	fmt.Fprintln(output, "  2) gRPC (typed DA-native unary API)")
+	frontendChoice, err := prompt.selectNumber("Select one frontend", 2)
+	if err != nil {
 		fmt.Fprintf(errorOutput, "select frontend: %v\n", err)
 		return 1
 	}
+	frontend := app.FrontendHTTP
+	frontendLabel := "HTTP/JSON"
+	selectedListenAddress := *listenAddress
+	if frontendChoice == 2 {
+		frontend = app.FrontendGRPC
+		frontendLabel = "gRPC"
+		selectedListenAddress = *grpcListenAddress
+	}
 
-	config, err := app.GuidedSetupConfig(
+	config, err := app.GuidedSetupFrontendConfig(
 		opcda.SourceConfig{CLSID: selected.CLSID},
-		*listenAddress,
+		frontend,
+		selectedListenAddress,
 		*writeEnabled,
 	)
 	if err != nil {
@@ -156,8 +177,8 @@ func runSetup(
 	fmt.Fprintln(output, "\nReview:")
 	fmt.Fprintf(output, "  source ProgID: %s\n", displayOptional(selected.ProgID))
 	fmt.Fprintf(output, "  source CLSID: %s\n", selected.CLSID)
-	fmt.Fprintln(output, "  frontend: HTTP/JSON")
-	fmt.Fprintf(output, "  listen: %s\n", config.HTTPListenAddress)
+	fmt.Fprintf(output, "  frontend: %s\n", frontendLabel)
+	fmt.Fprintf(output, "  listen: %s\n", selectedListenAddress)
 	fmt.Fprintf(output, "  typed value Write enabled: %t\n", config.WriteEnabled)
 	fmt.Fprintf(output, "  configuration: %s\n", *configPath)
 	if execution == setupInstallService {
@@ -194,7 +215,11 @@ func runSetup(
 			return 1
 		}
 		fmt.Fprintf(output, "Windows Service %s installed and started.\n", *serviceName)
-		fmt.Fprintf(output, "Status: http://%s/v1/status\n", config.HTTPListenAddress)
+		if config.Frontend == app.FrontendHTTP {
+			fmt.Fprintf(output, "Status: http://%s/v1/status\n", config.HTTPListenAddress)
+		} else {
+			fmt.Fprintf(output, "gRPC endpoint: %s (opcda.access.v1.OPCDAAccess/Status)\n", config.GRPCListenAddress)
+		}
 	case setupSaveOnly:
 		fmt.Fprintf(output, "Run later with: .\\opcda-access-adapter.exe run --config %s\n", quotePowerShellLiteral(*configPath))
 	default:

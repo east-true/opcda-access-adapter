@@ -19,9 +19,10 @@ The same packaging path can be exercised locally on Linux:
 ```
 
 The output directory must be absent or empty. Each archive contains the
-architecture-specific executable, `LICENSE`, `README.md`, and
-`THIRD_PARTY_NOTICES.md`. Release builds embed the version and full commit SHA,
-which can be inspected on Windows:
+architecture-specific executable, `LICENSE`, `README.md`,
+`THIRD_PARTY_NOTICES.md`, and the authoritative
+`api/opcda/v1/opcda_access.proto` gRPC schema. Release builds embed the version
+and full commit SHA, which can be inspected on Windows:
 
 ```powershell
 .\opcda-access-adapter.exe --version
