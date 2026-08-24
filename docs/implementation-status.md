@@ -10,9 +10,9 @@ a claim of broad vendor compatibility or production readiness.
 
 ## Current main SHA
 
-`322892ffc012050ad80cb29d534d0f8c15883b8e` — protected `main` after the
-request-hardening validation record (PR #23). No public tag or GitHub Release
-has been created. The local destructive review below remains a
+`1fc9b803973af81efca4ab3bbe47a14334dac123` — protected `main` after bounded
+local OPC DA 2.0 registration detection (PR #24). No public tag or GitHub
+Release has been created. The local destructive review below remains a
 release-promotion gate.
 
 ## Completed
@@ -56,12 +56,12 @@ release-promotion gate.
 - Unambiguous JSON parsing, exact HTTP request targets and methods, strict
   DA-native result validation, and terminal listener failure handling were
   merged in PR #22 after all eight checks passed.
+- Bounded local `OPC_DA_20` registration detection with no vendor activation,
+  automatic selection, configuration mutation, remote lookup, or multi-server
+  runtime was merged in PR #24 after all eight checks passed.
 
 ## In progress
 
-- Branch `feat/local-da-detection` implements bounded local OPC DA 2.0
-  registration detection without vendor activation or automatic selection.
-  Windows native and real-fixture validation remain before merge.
 - The local KVM/libvirt destructive-validation gate is paused. The dedicated
   `opcda-destructive-review` VM and all of its dedicated host resources were
   removed on 2026-08-24 because this host could not run it alongside another
@@ -81,6 +81,29 @@ release-promotion gate.
   were not executed locally on Windows in this pass.
 - `go mod verify` passed and `go list -m all` still reports only this module;
   local detection adds no third-party dependency.
+- PR #24 CI run
+  [`32706109315`](https://github.com/east-true/opcda-access-adapter/actions/runs/32706109315)
+  passed quality, release packaging, both Windows builds, and native Windows
+  tests on 386 and amd64 at head
+  `387ba9c269848035980b544cb816dafdef92d2d1`. An initial run exposed and
+  removed an invalid test assumption that a shared runner's machine-wide COM
+  registration inventory cannot change during the test; no product behavior
+  was weakened.
+- PR #24 real-DA run
+  [`32706109366`](https://github.com/east-true/opcda-access-adapter/actions/runs/32706109366)
+  passed on Windows Server 2025 for both x86/386 and x64/amd64. After the
+  pinned OPC Foundation DA 2.05a fixture was registered, `detect` returned its
+  exact ProgID and CLSID exactly once. The fixture process count was zero both
+  before and after detection, demonstrating that candidate enumeration did
+  not activate the vendor server. The subsequent full Browse/Read/Write,
+  failure/reconnect, load, and bounded-soak regression also passed. This is
+  registration-detection evidence for that fixture, not broad vendor
+  compatibility.
+- Post-merge CI run
+  [`32706475946`](https://github.com/east-true/opcda-access-adapter/actions/runs/32706475946)
+  passed quality, release packaging, both Windows builds, and both native
+  Windows test jobs at main SHA
+  `1fc9b803973af81efca4ab3bbe47a14334dac123`.
 - On 2026-08-24, `security/request-parser-lifecycle` passed `go test ./...`,
   `go vet ./...`, `go test -race ./...`, and 20 consecutive full-suite runs
   with Go 1.26.0 on Linux. The final five-second fuzz runs processed 14,628
@@ -234,9 +257,10 @@ release-promotion gate.
 
 ## Next exact tasks
 
-1. Complete native x86/x64 validation that the pinned registered DA server is
-   detected exactly once without starting its process, then merge the local
-   detection PR through all protected checks.
+1. Specify the proposed guided setup UX separately: preserve automation-safe
+   startup, require an explicit source choice even for one detected candidate,
+   keep one runtime per server, and treat Windows Service installation as an
+   explicit operation rather than implicit process detachment.
 2. Recreate the isolated Windows environment only when non-contending VM
    capacity is available, then complete the local destructive review including
    local COM launch/access/RunAs permission failures. Do not use a GitHub runner

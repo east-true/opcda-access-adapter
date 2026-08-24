@@ -118,6 +118,24 @@ Both architectures passed all semantic, abnormal-input, timeout, rapid,
 concurrent, backpressure/recovery, source-failure, and soak assertions, and
 both source/output Defender scans found no threats.
 
+### Local registration detection result
+
+PR #24 workflow run
+[`32706109366`](https://github.com/east-true/opcda-access-adapter/actions/runs/32706109366)
+executed at adapter head `387ba9c269848035980b544cb816dafdef92d2d1`
+on ephemeral GitHub-hosted Windows Server 2025 VMs. On both x86/386 and
+x64/amd64, the matching detector returned the pinned fixture's exact registered
+ProgID and CLSID exactly once. The fixture process count was zero immediately
+before and after the command, so registration detection did not activate that
+vendor server. Native repeated COM lifecycle tests also passed on both
+architectures in CI run
+[`32706109315`](https://github.com/east-true/opcda-access-adapter/actions/runs/32706109315).
+
+This observation confirms bounded local component-category enumeration for
+the pinned fixture only. A detected registration is not evidence that the
+class can activate, that its COM permissions are sufficient, or that its DA
+behavior is compatible, so it does not add or upgrade a matrix PASS row.
+
 This result validates the scoped v0 path against this specific official test
 fixture only. Third-party/vendor servers and non-Good Quality observations
 remain untested; compatibility must not be inferred for them.
