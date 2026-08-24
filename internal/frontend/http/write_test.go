@@ -56,7 +56,7 @@ func TestWritePreservesExplicitWidthsOrderAndPartialHRESULT(t *testing.T) {
 	server := newWriteTestServer(runtime, 10)
 	body := []byte(`{"items":[{"itemId":"Exact.Int2","dataType":"VT_I2","valueEncoding":"json","value":-32768},{"itemId":"Wide","dataType":"VT_UI8","valueEncoding":"json","value":"18446744073709551615"}]}`)
 	response := httptest.NewRecorder()
-	server.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/v1/write", bytes.NewReader(body)))
+	server.ServeHTTP(response, newJSONRequest(http.MethodPost, "/v1/write", bytes.NewReader(body)))
 	if response.Code != http.StatusOK {
 		t.Fatalf("status = %d: %s", response.Code, response.Body.String())
 	}
@@ -89,6 +89,18 @@ func TestWritePreservesExplicitWidthsOrderAndPartialHRESULT(t *testing.T) {
 	}
 }
 
+func TestWriteAcceptsJSONMediaTypeParameters(t *testing.T) {
+	runtime := &writeRuntime{enabled: true, results: []opcda.WriteResult{{ItemID: "A", HRESULT: opcda.SOK, HRESULTPresent: true}}}
+	server := newWriteTestServer(runtime, 10)
+	request := newJSONRequest(http.MethodPost, "/v1/write", bytes.NewBufferString(`{"items":[{"itemId":"A","dataType":"VT_I2","valueEncoding":"json","value":1}]}`))
+	request.Header.Set("Content-Type", "application/json; charset=utf-8")
+	response := httptest.NewRecorder()
+	server.ServeHTTP(response, request)
+	if response.Code != http.StatusOK || runtime.calls != 1 {
+		t.Fatalf("response = %d %s, runtime calls = %d", response.Code, response.Body.String(), runtime.calls)
+	}
+}
+
 func TestWriteRejectsOverflowAndAmbiguousWidthsBeforeSourceCall(t *testing.T) {
 	tests := []struct {
 		name string
@@ -105,7 +117,7 @@ func TestWriteRejectsOverflowAndAmbiguousWidthsBeforeSourceCall(t *testing.T) {
 			runtime := &writeRuntime{enabled: true}
 			server := newWriteTestServer(runtime, 10)
 			response := httptest.NewRecorder()
-			server.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/v1/write", bytes.NewBufferString(test.body)))
+			server.ServeHTTP(response, newJSONRequest(http.MethodPost, "/v1/write", bytes.NewBufferString(test.body)))
 			if response.Code != http.StatusBadRequest && response.Code != http.StatusUnprocessableEntity {
 				t.Fatalf("status = %d: %s", response.Code, response.Body.String())
 			}
@@ -124,6 +136,53 @@ func TestWriteDecodesExplicitSpecialFloats(t *testing.T) {
 	if typed, ok := value.(float32); !ok || !math.IsInf(float64(typed), -1) {
 		t.Fatalf("value = %T(%v)", value, value)
 	}
+}
+
+func TestWriteRejectsBrowserAndNonJSONRequestsBeforeSourceCall(t *testing.T) {
+	tests := []struct {
+		name        string
+		contentType string
+		origin      string
+		status      int
+		code        opcda.ErrorCode
+	}{
+		{name: "missing content type", status: http.StatusUnsupportedMediaType, code: opcda.CodeUnsupportedMediaType},
+		{name: "simple text content type", contentType: "text/plain", status: http.StatusUnsupportedMediaType, code: opcda.CodeUnsupportedMediaType},
+		{name: "browser origin", contentType: "application/json", origin: "https://attacker.example", status: http.StatusForbidden, code: opcda.CodeBrowserOriginRejected},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			runtime := &writeRuntime{enabled: true}
+			server := newWriteTestServer(runtime, 10)
+			request := httptest.NewRequest(http.MethodPost, "/v1/write", bytes.NewBufferString(`{"items":[{"itemId":"A","dataType":"VT_I2","valueEncoding":"json","value":1}]}`))
+			if test.contentType != "" {
+				request.Header.Set("Content-Type", test.contentType)
+			}
+			if test.origin != "" {
+				request.Header.Set("Origin", test.origin)
+			}
+			response := httptest.NewRecorder()
+			server.ServeHTTP(response, request)
+			if response.Code != test.status {
+				t.Fatalf("status = %d, want %d: %s", response.Code, test.status, response.Body.String())
+			}
+			if runtime.calls != 0 {
+				t.Fatalf("runtime called %d times", runtime.calls)
+			}
+			assertErrorCode(t, response, string(test.code))
+		})
+	}
+}
+
+func TestWriteFailsClosedOnRuntimeResultMismatch(t *testing.T) {
+	runtime := &writeRuntime{enabled: true, results: []opcda.WriteResult{{ItemID: "Different"}}}
+	server := newWriteTestServer(runtime, 10)
+	response := httptest.NewRecorder()
+	server.ServeHTTP(response, newJSONRequest(http.MethodPost, "/v1/write", bytes.NewBufferString(`{"items":[{"itemId":"Expected","dataType":"VT_I2","valueEncoding":"json","value":1}]}`)))
+	if response.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d: %s", response.Code, response.Body.String())
+	}
+	assertErrorCode(t, response, string(opcda.CodeInternalResultMismatch))
 }
 
 func assertErrorCode(t *testing.T, response *httptest.ResponseRecorder, want string) {

@@ -91,6 +91,10 @@ and restore absence as absence, not as a broad replacement ACL. A test failure
 must still execute cleanup. Machine-wide COM defaults and the unrelated Ubuntu
 VM are never test targets.
 
+The permission-mutation path requires both `-Destructive` and the literal
+confirmation `-DestructiveConfirmation DISPOSABLE_VM_ONLY`. It must never be
+run on a shared or production Windows host.
+
 ## Evidence record
 
 The completed record must include:

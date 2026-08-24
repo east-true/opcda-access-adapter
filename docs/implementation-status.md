@@ -51,6 +51,12 @@ before release promotion.
 
 ## In progress
 
+- VM-free code hardening on branch `security/dcom-destructive-validation` is
+  locally complete and awaiting PR verification. It adds browser-request and
+  DNS-rebinding defenses for the loopback HTTP boundary, aggregate resource
+  ceilings, fail-closed Read/Write result correspondence, fuzz targets, race
+  CI, and stability-probe coverage. These checks do not count as Windows COM
+  or DCOM validation.
 - The local KVM/libvirt destructive-validation gate is paused. The dedicated
   `opcda-destructive-review` VM and all of its dedicated host resources were
   removed on 2026-08-24 because this host could not run it alongside another
@@ -60,6 +66,20 @@ before release promotion.
 
 ## Validation results
 
+- On 2026-08-24, the VM-free hardening branch passed `go test ./...`,
+  `go vet ./...`, `go test -race ./...`, and 20 consecutive full-suite runs
+  with Go 1.26.0 on Linux. Three HTTP/JSON fuzz targets each passed a local
+  five-second fuzz run without a crash.
+- Native `windows/386` and `windows/amd64` adapter executables cross-built,
+  and all five package test executables compiled for each architecture. They
+  were not executed on Windows in this validation pass.
+- A temporary Linux status-only listener verified the real HTTP path without
+  simulating DA data: status `200`, non-loopback Host `421`, `text/plain` POST
+  `415`, browser Origin `403`, non-Windows Read `503`, default-disabled Write
+  `403`, required response security headers, and 500/500 successful status
+  requests at 16-way concurrency. The temporary listener was removed.
+- `go mod verify` passed and `go list -m all` reported only this module; the
+  production code still has no third-party Go module dependency.
 - PRs #1 through #9 were merged only after all required checks passed.
 - Main CI run `32623072909` passed at the Phase 5 merge SHA with five checks:
   Linux formatting/test/vet, Windows 386 build, Windows amd64 build, Windows
@@ -171,12 +191,14 @@ before release promotion.
    capacity is available, then complete the local destructive review including
    local COM launch/access/RunAs permission failures. Do not use a GitHub runner
    as evidence for this gate.
-2. Record exact VM, Defender, x86/x64, load, resource, reboot, DCOM event, and
+2. Open and verify the VM-free HTTP/resource-hardening PR; treat its hosted
+   Windows jobs only as regression tests, not local destructive evidence.
+3. Record exact VM, Defender, x86/x64, load, resource, reboot, DCOM event, and
    cleanup results before proposing a public release.
-3. Continue to treat the existing Apache-2.0 license as authoritative.
-4. Add third-party compatibility rows only from authorized, executed tests;
+4. Continue to treat the existing Apache-2.0 license as authoritative.
+5. Add third-party compatibility rows only from authorized, executed tests;
    do not infer vendor-wide compatibility from the official fixture.
-5. When an authorized server exposes non-Good Quality, an absent timestamp, or
+6. When an authorized server exposes non-Good Quality, an absent timestamp, or
    additional supported scalar types, add exact observations without changing
    source semantics.
 
@@ -188,3 +210,5 @@ before release promotion.
 - [ADR-0004: strict typed value Write](adr/0004-strict-typed-value-write.md)
 - [ADR-0005: reconnect and COM-hang policy](adr/0005-reconnect-and-com-hang-policy.md)
 - [ADR-0006: real-DA validation fixture and supply-chain controls](adr/0006-real-da-validation-fixture.md)
+- [ADR-0007: bounded source failure diagnostic](adr/0007-bounded-source-failure-diagnostic.md)
+- [ADR-0008: HTTP browser boundary and aggregate resource ceilings](adr/0008-http-origin-and-aggregate-bounds.md)

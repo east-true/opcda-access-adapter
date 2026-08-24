@@ -217,7 +217,11 @@ func (p probe) request(method, path string, body []byte, headers map[string]stri
 		request.Header.Set("Content-Type", "application/json")
 	}
 	for name, value := range headers {
-		request.Header.Set(name, value)
+		if strings.EqualFold(name, "Host") {
+			request.Host = value
+		} else {
+			request.Header.Set(name, value)
+		}
 	}
 	response, err := p.client.Do(request)
 	if err != nil {
@@ -298,7 +302,11 @@ func (p probe) validatePartialRead() error {
 }
 
 func (p probe) expectError(name, method, path string, body []byte, expectedStatus int, layer, code string) error {
-	status, responseBody, err := p.request(method, path, body, nil)
+	return p.expectErrorWithHeaders(name, method, path, body, nil, expectedStatus, layer, code)
+}
+
+func (p probe) expectErrorWithHeaders(name, method, path string, body []byte, headers map[string]string, expectedStatus int, layer, code string) error {
+	status, responseBody, err := p.request(method, path, body, headers)
 	if err != nil {
 		return fmt.Errorf("%s transport: %w", name, err)
 	}
@@ -336,6 +344,19 @@ func (p probe) anomalies() error {
 		if err := p.expectError(check.name, check.method, check.path, []byte(check.body), check.status, check.layer, check.code); err != nil {
 			return err
 		}
+	}
+	validRead := []byte(`{"source":"device","items":[{"itemId":"Test/Int32"}]}`)
+	if err := p.expectErrorWithHeaders("non-JSON media type", http.MethodPost, "/v1/read", validRead,
+		map[string]string{"Content-Type": "text/plain"}, 415, "frontend", "UNSUPPORTED_MEDIA_TYPE"); err != nil {
+		return err
+	}
+	if err := p.expectErrorWithHeaders("browser Origin", http.MethodPost, "/v1/read", validRead,
+		map[string]string{"Origin": "https://attacker.example"}, 403, "frontend", "BROWSER_ORIGIN_REJECTED"); err != nil {
+		return err
+	}
+	if err := p.expectErrorWithHeaders("DNS rebinding Host", http.MethodGet, "/v1/status", nil,
+		map[string]string{"Host": "rebind.attacker.example"}, 421, "frontend", "UNTRUSTED_HOST"); err != nil {
+		return err
 	}
 
 	invalidUTF8 := []byte(`{"items":[{"itemId":"`)

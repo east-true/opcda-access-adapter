@@ -14,6 +14,10 @@ minimal reproduction and impact description.
 ## Security posture
 
 The v0 HTTP listener defaults to loopback and Write is disabled by default.
+Loopback mode rejects non-loopback Host values, POST endpoints require
+`application/json`, and direct browser Origin requests are rejected. These
+controls reduce DNS-rebinding and browser request-forgery exposure but are not
+an authentication mechanism.
 The project does not claim a production authentication, authorization, or TLS
 model. Exposing it beyond the local machine is an operator decision that must
 be protected by an appropriate deployment boundary.

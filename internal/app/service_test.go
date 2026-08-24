@@ -5,6 +5,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 
@@ -71,6 +72,46 @@ func TestServiceAppliesHTTPTransportBounds(t *testing.T) {
 		service.server.WriteTimeout != 4*time.Second || service.server.IdleTimeout != 5*time.Second ||
 		service.server.MaxHeaderBytes != 12345 {
 		t.Fatalf("HTTP server bounds not applied: %+v", service.server)
+	}
+}
+
+func TestServiceRejectsInvalidProgrammaticConfigBeforeRuntimeAllocation(t *testing.T) {
+	config := DefaultConfig()
+	config.MaxConcurrentRequests = 0
+	if _, err := New(config, lifecycleRuntime{}); err == nil {
+		t.Fatal("New accepted an unsafe programmatic configuration")
+	}
+}
+
+func TestLoopbackServiceRejectsNonLoopbackHost(t *testing.T) {
+	config := DefaultConfig()
+	config.HTTPListenAddress = "127.0.0.1:0"
+	service, err := New(config, lifecycleRuntime{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := httptest.NewRequest(http.MethodGet, "/v1/status", nil)
+	request.Host = "rebind.attacker.example"
+	response := httptest.NewRecorder()
+	service.http.ServeHTTP(response, request)
+	if response.Code != http.StatusMisdirectedRequest {
+		t.Fatalf("status = %d: %s", response.Code, response.Body.String())
+	}
+}
+
+func TestExplicitExternalListenerDoesNotInferLoopbackHostPolicy(t *testing.T) {
+	config := DefaultConfig()
+	config.HTTPListenAddress = "0.0.0.0:0"
+	service, err := New(config, lifecycleRuntime{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := httptest.NewRequest(http.MethodGet, "/v1/status", nil)
+	request.Host = "adapter.example"
+	response := httptest.NewRecorder()
+	service.http.ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d: %s", response.Code, response.Body.String())
 	}
 }
 

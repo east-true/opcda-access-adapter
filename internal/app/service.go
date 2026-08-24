@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net"
 	stdhttp "net/http"
+	"strings"
 	"sync"
 
 	frontend "github.com/east-true/opcda-access-adapter/internal/frontend/http"
@@ -23,6 +24,9 @@ type Service struct {
 }
 
 func New(config Config, runtime opcda.Runtime) (*Service, error) {
+	if err := config.finalizeAndValidate(); err != nil {
+		return nil, fmt.Errorf("invalid application configuration: %w", err)
+	}
 	if runtime == nil {
 		var err error
 		runtime, err = opcda.New(config.Runtime)
@@ -31,14 +35,15 @@ func New(config Config, runtime opcda.Runtime) (*Service, error) {
 		}
 	}
 	httpServer := frontend.New(runtime, frontend.Config{
-		MaxBodyBytes:     config.MaxHTTPBodyBytes,
-		MaxConcurrent:    config.MaxConcurrentRequests,
-		RequestDeadline:  config.RequestDeadline,
-		MaxReadItems:     config.Runtime.Limits.MaxReadItems,
-		MaxWriteItems:    config.Runtime.Limits.MaxWriteItems,
-		MaxBrowseEntries: config.Runtime.Limits.MaxBrowseEntries,
-		MaxBrowseDepth:   config.Runtime.Limits.MaxBrowseDepth,
-		MaxItemIDBytes:   config.Runtime.Limits.MaxItemIDBytes,
+		MaxBodyBytes:        config.MaxHTTPBodyBytes,
+		MaxConcurrent:       config.MaxConcurrentRequests,
+		RequestDeadline:     config.RequestDeadline,
+		MaxReadItems:        config.Runtime.Limits.MaxReadItems,
+		MaxWriteItems:       config.Runtime.Limits.MaxWriteItems,
+		MaxBrowseEntries:    config.Runtime.Limits.MaxBrowseEntries,
+		MaxBrowseDepth:      config.Runtime.Limits.MaxBrowseDepth,
+		MaxItemIDBytes:      config.Runtime.Limits.MaxItemIDBytes,
+		RequireLoopbackHost: listenAddressIsLoopback(config.HTTPListenAddress),
 	})
 	return &Service{
 		config:  config,
@@ -53,6 +58,19 @@ func New(config Config, runtime opcda.Runtime) (*Service, error) {
 			MaxHeaderBytes:    config.MaxHTTPHeaderBytes,
 		},
 	}, nil
+}
+
+func listenAddressIsLoopback(address string) bool {
+	host, _, err := net.SplitHostPort(address)
+	if err != nil {
+		return false
+	}
+	host = strings.TrimSuffix(strings.ToLower(host), ".")
+	if host == "localhost" {
+		return true
+	}
+	ip := net.ParseIP(strings.Trim(host, "[]"))
+	return ip != nil && ip.IsLoopback()
 }
 
 func (s *Service) Start() error {

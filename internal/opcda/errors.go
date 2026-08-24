@@ -7,6 +7,9 @@ type ErrorCode string
 const (
 	CodeInvalidRequest            ErrorCode = "INVALID_REQUEST"
 	CodeRequestBodyTooLarge       ErrorCode = "REQUEST_BODY_TOO_LARGE"
+	CodeUnsupportedMediaType      ErrorCode = "UNSUPPORTED_MEDIA_TYPE"
+	CodeBrowserOriginRejected     ErrorCode = "BROWSER_ORIGIN_REJECTED"
+	CodeUntrustedHost             ErrorCode = "UNTRUSTED_HOST"
 	CodeRequestLimitExceeded      ErrorCode = "REQUEST_LIMIT_EXCEEDED"
 	CodeQueueFull                 ErrorCode = "QUEUE_FULL"
 	CodeRuntimeUnavailable        ErrorCode = "RUNTIME_UNAVAILABLE"
@@ -20,6 +23,7 @@ const (
 	CodeItemIDTooLong             ErrorCode = "ITEM_ID_TOO_LONG"
 	CodeBSTRTooLong               ErrorCode = "BSTR_TOO_LONG"
 	CodeRegisteredItemLimit       ErrorCode = "REGISTERED_ITEM_LIMIT_EXCEEDED"
+	CodeInternalResultMismatch    ErrorCode = "INTERNAL_RESULT_MISMATCH"
 )
 
 // AdapterError identifies an adapter/runtime failure without replacing source

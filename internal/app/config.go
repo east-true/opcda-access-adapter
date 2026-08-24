@@ -2,6 +2,7 @@ package app
 
 import (
 	"fmt"
+	"net"
 	"os"
 	"strconv"
 	"time"
@@ -24,6 +25,11 @@ type Config struct {
 	RequestDeadline       time.Duration
 	Runtime               opcda.Config
 }
+
+const (
+	maximumInflightHTTPBodyBytes = uint64(256 << 20)
+	maximumInflightHeaderBytes   = uint64(64 << 20)
+)
 
 func DefaultConfig() Config {
 	limits := opcda.DefaultLimits()
@@ -114,41 +120,56 @@ func LoadConfig() (Config, error) {
 		}
 	}
 
+	if err := config.finalizeAndValidate(); err != nil {
+		return Config{}, err
+	}
+	return config, nil
+}
+
+func (config *Config) finalizeAndValidate() error {
 	if config.Source.ProgID != "" && config.Source.CLSID != "" {
-		return Config{}, fmt.Errorf("set exactly one of OPCDA_SOURCE_PROG_ID and OPCDA_SOURCE_CLSID")
+		return fmt.Errorf("set exactly one of OPCDA_SOURCE_PROG_ID and OPCDA_SOURCE_CLSID")
 	}
 	if config.MaxHTTPBodyBytes <= 0 || config.MaxHTTPConnections <= 0 || config.MaxConcurrentRequests <= 0 ||
 		config.MaxHTTPHeaderBytes <= 0 || config.HTTPReadHeaderTimeout <= 0 || config.HTTPReadTimeout <= 0 ||
 		config.HTTPWriteTimeout <= 0 || config.HTTPIdleTimeout <= 0 || config.RequestDeadline <= 0 {
-		return Config{}, fmt.Errorf("HTTP bounds and timeouts must be positive")
+		return fmt.Errorf("HTTP bounds and timeouts must be positive")
 	}
 	if config.MaxHTTPBodyBytes > 64<<20 || config.MaxHTTPConnections > 2048 || config.MaxConcurrentRequests > 1024 ||
 		config.MaxHTTPHeaderBytes > 1<<20 || config.HTTPReadHeaderTimeout > 24*time.Hour ||
 		config.HTTPReadTimeout > 24*time.Hour || config.HTTPWriteTimeout > 24*time.Hour ||
 		config.HTTPIdleTimeout > 24*time.Hour || config.RequestDeadline > 24*time.Hour {
-		return Config{}, fmt.Errorf("HTTP bound or timeout exceeds the v0 hard ceiling")
+		return fmt.Errorf("HTTP bound or timeout exceeds the v0 hard ceiling")
+	}
+	if uint64(config.MaxHTTPBodyBytes)*uint64(config.MaxConcurrentRequests) > maximumInflightHTTPBodyBytes {
+		return fmt.Errorf("configured concurrent HTTP body budget exceeds the v0 hard ceiling")
+	}
+	if uint64(config.MaxHTTPHeaderBytes)*uint64(config.MaxHTTPConnections) > maximumInflightHeaderBytes {
+		return fmt.Errorf("configured concurrent HTTP header budget exceeds the v0 hard ceiling")
+	}
+	_, port, err := net.SplitHostPort(config.HTTPListenAddress)
+	if err != nil {
+		return fmt.Errorf("OPCDA_HTTP_LISTEN must be a host:port address: %w", err)
+	}
+	if _, err := strconv.ParseUint(port, 10, 16); err != nil {
+		return fmt.Errorf("OPCDA_HTTP_LISTEN port must be numeric and between 0 and 65535: %w", err)
 	}
 	if config.Runtime.ReconnectInitial <= 0 || config.Runtime.ReconnectMax <= 0 || config.Runtime.COMCallWatchdog <= 0 {
-		return Config{}, fmt.Errorf("reconnect and COM watchdog durations must be positive")
+		return fmt.Errorf("reconnect and COM watchdog durations must be positive")
 	}
 	if config.Runtime.ReconnectInitial > config.Runtime.ReconnectMax {
-		return Config{}, fmt.Errorf("OPCDA_RECONNECT_INITIAL must not exceed OPCDA_RECONNECT_MAX")
-	}
-	for _, setting := range limitSettings {
-		if *setting.target <= 0 {
-			return Config{}, fmt.Errorf("%s must be positive", setting.key)
-		}
+		return fmt.Errorf("OPCDA_RECONNECT_INITIAL must not exceed OPCDA_RECONNECT_MAX")
 	}
 	if err := config.Runtime.Limits.ValidateForConfiguration(); err != nil {
-		return Config{}, err
+		return err
 	}
 
 	config.Runtime.Source = config.Source
 	config.Runtime.WriteEnabled = config.WriteEnabled
 	if err := config.Runtime.ValidateForConfiguration(); err != nil {
-		return Config{}, err
+		return err
 	}
-	return config, nil
+	return nil
 }
 
 func valueOrDefault(key, fallback string) string {

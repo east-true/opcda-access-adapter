@@ -19,6 +19,8 @@ param(
 
     [switch]$Destructive,
 
+    [string]$DestructiveConfirmation,
+
     [ValidateRange(0, 20)]
     [int]$AdapterCrashCycles = 0,
 
@@ -29,6 +31,13 @@ param(
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 Add-Type -AssemblyName System.Net.Http
+
+if ($Destructive.IsPresent -and $DestructiveConfirmation -cne 'DISPOSABLE_VM_ONLY') {
+    throw '-Destructive requires -DestructiveConfirmation DISPOSABLE_VM_ONLY'
+}
+if (-not $Destructive.IsPresent -and -not [string]::IsNullOrEmpty($DestructiveConfirmation)) {
+    throw '-DestructiveConfirmation is valid only with -Destructive'
+}
 
 function Assert-True {
     param(
@@ -331,6 +340,39 @@ function Convert-SDDLToBinary {
     return $bytes
 }
 
+function Restore-COMPermissionSnapshots {
+    param(
+        [Parameter(Mandatory = $true)]
+        [Microsoft.Win32.RegistryKey]$Key,
+
+        [Parameter(Mandatory = $true)]
+        [object]$LaunchSnapshot,
+
+        [Parameter(Mandatory = $true)]
+        [object]$AccessSnapshot,
+
+        [Parameter(Mandatory = $true)]
+        [object]$RunAsSnapshot
+    )
+
+    $restoreErrors = [Collections.Generic.List[string]]::new()
+    foreach ($entry in @(
+        [pscustomobject]@{ Name = 'LaunchPermission'; Snapshot = $LaunchSnapshot },
+        [pscustomobject]@{ Name = 'AccessPermission'; Snapshot = $AccessSnapshot },
+        [pscustomobject]@{ Name = 'RunAs'; Snapshot = $RunAsSnapshot }
+    )) {
+        try {
+            Restore-RegistryValue -Key $Key -Name $entry.Name -Snapshot $entry.Snapshot
+        }
+        catch {
+            [void]$restoreErrors.Add("$($entry.Name): $($_.Exception.Message)")
+        }
+    }
+    if ($restoreErrors.Count -ne 0) {
+        throw "one or more COM permission values could not be restored: $($restoreErrors -join '; ')"
+    }
+}
+
 function Invoke-DestructiveCOMPermissionValidation {
     param(
         [Parameter(Mandatory = $true)]
@@ -416,10 +458,15 @@ function Invoke-DestructiveCOMPermissionValidation {
         }
         finally {
             Stop-Adapter $permissionAdapter
-            Restore-RegistryValue -Key $appKey -Name 'LaunchPermission' -Snapshot $launchSnapshot
-            Restore-RegistryValue -Key $appKey -Name 'AccessPermission' -Snapshot $accessSnapshot
-            Restore-RegistryValue -Key $appKey -Name 'RunAs' -Snapshot $runAsSnapshot
-            Stop-ServerProcesses
+            try {
+                Restore-COMPermissionSnapshots -Key $appKey `
+                    -LaunchSnapshot $launchSnapshot `
+                    -AccessSnapshot $accessSnapshot `
+                    -RunAsSnapshot $runAsSnapshot
+            }
+            finally {
+                Stop-ServerProcesses
+            }
         }
     }
     finally {
