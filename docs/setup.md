@@ -10,7 +10,7 @@ inventory into one reviewed adapter configuration:
 It asks for:
 
 1. one locally registered OPC DA 2.0 source;
-2. one frontend (`HTTP/JSON` is the only v0 choice);
+2. one frontend (`HTTP/JSON` or DA-native gRPC);
 3. foreground, Windows Service, or save-only execution;
 4. final confirmation.
 
@@ -22,6 +22,7 @@ enumeration does not activate or probe the vendor server.
 
 - configuration: `opcda-access-adapter.json` in the current directory;
 - HTTP listener: `127.0.0.1:8080`;
+- gRPC listener: `127.0.0.1:50051` when gRPC is selected;
 - typed value Write: disabled;
 - Windows Service name: `OPCDAAccessAdapter`;
 - service account: `NT AUTHORITY\LocalService`.
@@ -32,6 +33,7 @@ Change the reversible setup defaults explicitly when required:
 .\opcda-access-adapter.exe setup `
   --config C:\ProgramData\OPCDAAccessAdapter\line-a.json `
   --listen 127.0.0.1:18080 `
+  --grpc-listen 127.0.0.1:50051 `
   --service-name OPCDAAccessAdapter_LineA
 ```
 
@@ -51,7 +53,7 @@ state.
 
 ```json
 {
-  "version": 1,
+  "version": 2,
   "source": {
     "clsid": "{00000000-0000-0000-0000-000000000000}"
   },
@@ -62,6 +64,19 @@ state.
   "writeEnabled": false
 }
 ```
+
+For gRPC, the frontend object is instead:
+
+```json
+"frontend": {
+  "type": "grpc",
+  "grpcListen": "127.0.0.1:50051"
+}
+```
+
+Existing version 1 HTTP configuration remains readable. Version 2 keeps the
+selected frontend unambiguous: an HTTP config has only `httpListen`, and a gRPC
+config has only `grpcListen`.
 
 Unknown or duplicate fields, multiple JSON values, unsupported versions,
 invalid listener/bounds, and zero or multiple sources fail closed. Environment
@@ -98,8 +113,9 @@ Install and uninstall require an elevated terminal. The service uses
 LocalService rather than LocalSystem and stores no password. Lifecycle,
 configuration-load, listener, and shutdown errors are written to the Windows
 Application Event Log under the configured service name; process values are
-not logged. DA connection HRESULTs remain in the bounded `/v1/status` source
-diagnostic.
+not logged. DA connection HRESULTs remain in the bounded HTTP `/v1/status` or
+gRPC `OPCDAAccess.Status` source diagnostic, according to the selected
+frontend.
 
 The SCM command records absolute executable and configuration paths. Put both
 in a stable location readable by LocalService before installing, and do not
@@ -123,4 +139,5 @@ service identity and may be unsuitable for LocalService operation.
 Each configuration and service still owns exactly one local OPC DA source.
 Different service names can operate independent adapter processes, but there
 is no aggregation, shared routing, automatic source selection, remote DCOM,
-or remote discovery. See [ADR-0011](adr/0011-guided-setup-and-windows-service.md).
+or remote discovery. See [ADR-0011](adr/0011-guided-setup-and-windows-service.md)
+and [ADR-0012](adr/0012-grpc-da-native-frontend.md).

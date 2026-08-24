@@ -55,10 +55,12 @@ history and does not replace per-item Read/Write HRESULTs.
 `opcda-access-adapter setup` can create a versioned, bounded configuration for
 `run --config` or Windows Service execution. File-based execution does not
 merge ambient environment variables. See [guided setup](setup.md). The
-existing no-argument mode reads the environment variables below.
+existing no-argument mode reads the environment variables below. New files use
+configuration version 2; version 1 HTTP files remain readable.
 
 | Environment variable | Default | Purpose |
 |---|---:|---|
+| `OPCDA_FRONTEND` | `http` | select HTTP; `grpc` selects the separate typed frontend |
 | `OPCDA_HTTP_LISTEN` | `127.0.0.1:8080` | HTTP bind address |
 | `OPCDA_WRITE_ENABLED` | `false` | enable value Write explicitly |
 | `OPCDA_MAX_HTTP_BODY_BYTES` | `1048576` | request body bound |
@@ -82,6 +84,10 @@ existing no-argument mode reads the environment variables below.
 | `OPCDA_MAX_REGISTERED_ITEMS` | `1024` | lazy item-registration cache bound |
 | `OPCDA_MAX_ITEM_ID_BYTES` | `1024` | exact ItemID UTF-8 byte bound |
 | `OPCDA_MAX_BSTR_CODE_UNITS` | `65536` | source/request BSTR UTF-16 bound |
+
+gRPC-specific listener and transport bounds are documented in the
+[gRPC API reference](grpc-api.md). Only one frontend listener is selected per
+adapter process; both frontends call the same DA runtime semantics.
 
 The runtime also applies the hard per-batch, Browse, ItemID, BSTR, command
 queue, and registration limits recorded in ADR-0001. No recent operation or

@@ -4,8 +4,8 @@
 [![Real DA validation](https://github.com/east-true/opcda-access-adapter/actions/workflows/real-da-validation.yml/badge.svg)](https://github.com/east-true/opcda-access-adapter/actions/workflows/real-da-validation.yml)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
-DA-native HTTP/JSON access to one local OPC DA server—without making modern
-applications speak COM or changing the source data model.
+DA-native HTTP/JSON and typed gRPC access to one local OPC DA server—without
+making modern applications speak COM or changing the source data model.
 
 > [!IMPORTANT]
 > This is a Windows-only, pre-1.0 project for controlled local-COM
@@ -18,15 +18,15 @@ applications speak COM or changing the source data model.
 
 OPC DA applications normally need Windows COM knowledge and direct access to
 the server. This adapter keeps that legacy boundary on the DA machine and
-offers a small HTTP API for Browse, device Read, and strictly typed value
-Write.
+offers an explicitly selected HTTP/JSON or typed unary gRPC frontend for
+Browse, device Read, and strictly typed value Write.
 
 ```text
-HTTP client
+HTTP or gRPC client
     │
-    │  DA-native JSON
+    │  DA-native transport contract
     ▼
-bounded HTTP frontend
+explicitly selected bounded frontend
     │
     ▼
 dedicated locked DA thread
@@ -48,6 +48,7 @@ process values.
 - guided source/frontend selection with reviewed configuration output
 - optional SCM-managed Windows Service using the LocalService account
 - `GET /v1/status`
+- typed unary gRPC Status, Browse, Read, and Write
 - optional, source-backed DA 2.x Browse
 - ordered batch device Read with per-item failures
 - strict typed value Write, disabled by default and never retried
@@ -57,9 +58,9 @@ process values.
   timeouts
 - native `windows/386` and `windows/amd64` builds and tests
 
-OPC UA, gRPC, Subscribe, remote DCOM, multiple DA servers in one adapter
+OPC UA, Subscribe/streaming, remote DCOM, multiple DA servers in one adapter
 instance, tag mapping, normalization, persistence, and plugin systems are
-deliberately out of scope.
+deliberately out of the current scope.
 
 ## Requirements
 
@@ -110,13 +111,14 @@ The recommended first run is the guided setup:
 It walks through four reviewed decisions:
 
 1. choose one locally registered OPC DA 2.0 server;
-2. choose the frontend (`HTTP/JSON` is the only v0 option);
+2. choose the frontend (`HTTP/JSON` or typed DA-native gRPC);
 3. run in the current terminal, install a Windows Service, or save only; and
 4. confirm the exact configuration before anything is written or started.
 
-Even one detected candidate requires an explicit choice. The defaults are
-`127.0.0.1:8080` and Write disabled. Setup never silently overwrites an
-existing file or service and never changes COM/DCOM or firewall permissions.
+Even one detected candidate requires an explicit choice. HTTP defaults to
+`127.0.0.1:8080`, gRPC defaults to `127.0.0.1:50051`, and Write is disabled.
+Setup never silently overwrites an existing file or service and never changes
+COM/DCOM or firewall permissions.
 
 For a Windows Service, use an elevated PowerShell terminal and put the
 executable and configuration in stable paths readable by LocalService:
@@ -144,6 +146,10 @@ Verify the running adapter:
 ```powershell
 Invoke-RestMethod http://127.0.0.1:8080/v1/status
 ```
+
+For a gRPC selection, call
+`opcda.access.v1.OPCDAAccess/Status` at `127.0.0.1:50051` with a client
+generated from [`api/opcda/v1/opcda_access.proto`](api/opcda/v1/opcda_access.proto).
 
 The status must name the selected source, show the listener, and eventually
 report `connected`. Do not treat a detected registration alone as proof that
@@ -185,8 +191,8 @@ the reviewed configuration.
 | `opcda-access-adapter` | Run the original environment-variable workflow in the foreground |
 | `opcda-access-adapter --version` | Print embedded version and source revision metadata |
 
-Use `--help` on the command or subcommand for bounded detection, listener,
-configuration-path, Write, and service-name options.
+Use `--help` on the command or subcommand for bounded detection, HTTP/gRPC
+listener, configuration-path, Write, and service-name options.
 
 ### Local registration detection
 
@@ -239,9 +245,29 @@ See the [HTTP API reference](docs/http-api.md) for request/response contracts,
 lossless value encodings, error layers, limits, and all configuration
 variables.
 
+## gRPC API
+
+The typed service is `opcda.access.v1.OPCDAAccess`:
+
+| RPC | Purpose |
+|---|---|
+| `Status` | Runtime, exact source, generation, capability, and listener status |
+| `Browse` | Serialized DA Browse with branch/item distinction and exact ItemIDs |
+| `Read` | Ordered batch device Read with raw DA metadata and partial failures |
+| `Write` | Strict VARTYPE-matched value Write when explicitly enabled |
+
+The authoritative protobuf is
+[`api/opcda/v1/opcda_access.proto`](api/opcda/v1/opcda_access.proto). See the
+[gRPC API reference](docs/grpc-api.md) for scalar `oneof` mappings, typed error
+details, limits, client generation, and plaintext-loopback security boundary.
+Subscribe is not exposed before the DA callback core exists.
+
 ## Safety defaults
 
 - HTTP binds to loopback unless an external address is explicitly configured.
+- gRPC is plaintext and binds to loopback unless an external address is
+  explicitly configured; the project currently has no TLS/authentication
+  platform.
 - Loopback mode rejects non-loopback Host values; POST requires JSON and
   rejects direct browser Origin requests.
 - Request paths, JSON field spelling, nesting, content encoding, and runtime
@@ -249,7 +275,7 @@ variables.
 - Write returns `403 WRITE_DISABLED` unless it is explicitly enabled with
   setup's `--enable-write` option or `OPCDA_WRITE_ENABLED=true` in the original
   environment-variable workflow.
-- The adapter has no authentication, authorization, or TLS layer in v0.
+- The adapter currently has no authentication, authorization, or TLS layer.
 - An in-flight Write is never automatically retried or replayed.
 - A disconnected source never returns a cached last-good value.
 - Process values, including Write values, are not logged or persisted.
@@ -283,6 +309,7 @@ source pins, observed DA metadata, resource deltas, and untested conditions.
 | [Local server detection](docs/local-detection.md) | Registration inventory contract, bounds, architecture views, and limitations |
 | [Design baseline](docs/design.md) | Product boundary, invariants, architecture, and v0 definition |
 | [HTTP API](docs/http-api.md) | Endpoints, JSON contracts, configuration, limits, and errors |
+| [gRPC API](docs/grpc-api.md) | Protobuf service, DA scalar mappings, typed errors, bounds, and client generation |
 | [Compatibility](docs/compatibility.md) | Executed server results and honest compatibility scope |
 | [Windows validation](docs/validation/real-da-windows.md) | Reproducible real-DA VM procedure |
 | [Windows COM security](docs/security-windows.md) | Local activation, identity, ACL, and HRESULT guidance |

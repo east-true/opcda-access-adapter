@@ -2,9 +2,9 @@
 
 ## Purpose
 
-A thin, Windows-only access adapter for exactly one local OPC DA server. v0
-exposes DA-native Browse, Read, and typed value Write over HTTP/JSON without
-changing source semantics.
+A thin, Windows-only access adapter for exactly one local OPC DA server. The
+completed HTTP/JSON v0 and the current typed gRPC frontend expose DA-native
+Browse, Read, and typed value Write without changing source semantics.
 
 ## Authoritative documents
 
@@ -48,10 +48,11 @@ branch, update the status document, run the commands above, push, open a PR,
 confirm CI, merge, and continue. Do not claim real DA compatibility without a
 real server result in `docs/compatibility.md`.
 
-## Current v0 definition
+## Current implementation definition
 
-v0 is HTTP-only and targets OPC DA 2.05a. It includes status, Browse, device
-Read, and strict typed value Write plus reconnect and bounds. gRPC, OPC UA,
-Subscribe, UI, storage, and all non-DA sources are explicitly out of scope.
-Local CLI detection is registration inventory only and does not alter the
-single explicitly configured runtime source.
+The completed v0 is HTTP-only and targets OPC DA 2.05a. Phase 6 adds an
+explicitly selected typed unary gRPC frontend for Status, Browse, device Read,
+and strict typed value Write. It does not add Subscribe or simultaneous
+frontend listeners. OPC UA, Subscribe, UI, storage, and all non-DA sources
+remain out of scope. Local CLI detection is registration inventory only and
+does not alter the single explicitly configured runtime source.

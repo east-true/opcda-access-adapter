@@ -17,7 +17,12 @@ on:
       - internal/opcda/**
       - internal/app/**
       - internal/frontend/http/**
+      - internal/frontend/grpc/**
       - internal/validation/stabilityprobe/**
+      - internal/validation/grpcprobe/**
+      - api/opcda/**
+      - go.mod
+      - go.sum
       - docs/validation/**
       - docs/compatibility.md
       - docs/implementation-status.md
@@ -72,6 +77,7 @@ jobs:
         run: |
           go build -trimpath -o "_test/adapter-${{ matrix.arch }}.exe" ./cmd/adapter
           go build -trimpath -o "_test/stability-probe-${{ matrix.arch }}.exe" ./internal/validation/stabilityprobe
+          go build -trimpath -o "_test/grpc-probe-${{ matrix.arch }}.exe" ./internal/validation/grpcprobe
 
       - name: Audit, Defender-scan, and build OPC Foundation test server
         shell: pwsh
@@ -82,7 +88,7 @@ jobs:
           -StageRoot "${{ runner.temp }}/opccorestage_${{ matrix.platform }}"
           -Platform "${{ matrix.platform }}"
 
-      - name: Validate real DA semantics, failure recovery, HTTP stability, and soak
+      - name: Validate real DA semantics, frontend stability, failure recovery, and soak
         shell: pwsh
         env:
           SOAK_ITERATIONS: ${{ inputs.soak_iterations || '200' }}
@@ -93,4 +99,5 @@ jobs:
           -AdapterArch "${{ matrix.arch }}"
           -SoakIterations ([int]$env:SOAK_ITERATIONS)
           -StabilityProbePath "_test/stability-probe-${{ matrix.arch }}.exe"
+          -GRPCProbePath "_test/grpc-probe-${{ matrix.arch }}.exe"
           -FailureCycles 3

@@ -108,7 +108,7 @@ func TestLoadConfigFileRejectsInvalidInput(t *testing.T) {
 		"unknown field":         `{"version":1,"source":{"clsid":"{A}"},"frontend":{"type":"http","httpListen":"127.0.0.1:8080"},"writeEnabled":false,"extra":true}`,
 		"duplicate field":       `{"version":1,"version":1,"source":{"clsid":"{A}"},"frontend":{"type":"http","httpListen":"127.0.0.1:8080"},"writeEnabled":false}`,
 		"trailing value":        `{"version":1,"source":{"clsid":"{A}"},"frontend":{"type":"http","httpListen":"127.0.0.1:8080"},"writeEnabled":false} {}`,
-		"future version":        `{"version":2,"source":{"clsid":"{A}"},"frontend":{"type":"http","httpListen":"127.0.0.1:8080"},"writeEnabled":false}`,
+		"future version":        `{"version":3,"source":{"clsid":"{A}"},"frontend":{"type":"http","httpListen":"127.0.0.1:8080"},"writeEnabled":false}`,
 		"wrong frontend":        `{"version":1,"source":{"clsid":"{A}"},"frontend":{"type":"grpc","httpListen":"127.0.0.1:8080"},"writeEnabled":false}`,
 		"two sources":           `{"version":1,"source":{"progId":"A","clsid":"{A}"},"frontend":{"type":"http","httpListen":"127.0.0.1:8080"},"writeEnabled":false}`,
 		"missing source":        `{"version":1,"source":{},"frontend":{"type":"http","httpListen":"127.0.0.1:8080"},"writeEnabled":false}`,
@@ -124,6 +124,42 @@ func TestLoadConfigFileRejectsInvalidInput(t *testing.T) {
 				t.Fatal("invalid configuration was accepted")
 			}
 		})
+	}
+}
+
+func TestConfigFileGRPCRoundTripAndLegacyHTTP(t *testing.T) {
+	config, err := GuidedSetupFrontendConfig(
+		opcda.SourceConfig{CLSID: "{BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBBBBBB}"},
+		FrontendGRPC,
+		"127.0.0.1:55051",
+		false,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "grpc.json")
+	if err := WriteConfigFileExclusive(path, config); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := LoadConfigFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.Frontend != FrontendGRPC || loaded.GRPCListenAddress != "127.0.0.1:55051" || loaded.Source != config.Source {
+		t.Fatalf("loaded gRPC config = %+v", loaded)
+	}
+
+	legacyPath := filepath.Join(t.TempDir(), "legacy-http.json")
+	legacy := `{"version":1,"source":{"progId":"Vendor.Server.1"},"frontend":{"type":"http","httpListen":"127.0.0.1:8080"},"writeEnabled":false}`
+	if err := os.WriteFile(legacyPath, []byte(legacy), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	legacyLoaded, err := LoadConfigFile(legacyPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if legacyLoaded.Frontend != FrontendHTTP || legacyLoaded.HTTPListenAddress != "127.0.0.1:8080" {
+		t.Fatalf("legacy config = %+v", legacyLoaded)
 	}
 }
 

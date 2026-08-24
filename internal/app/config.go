@@ -11,41 +11,77 @@ import (
 )
 
 type Config struct {
-	Source                opcda.SourceConfig
-	HTTPListenAddress     string
-	WriteEnabled          bool
-	MaxHTTPBodyBytes      int64
-	MaxHTTPConnections    int
-	MaxConcurrentRequests int
-	MaxHTTPHeaderBytes    int
-	MaxJSONDepth          int
-	HTTPReadHeaderTimeout time.Duration
-	HTTPReadTimeout       time.Duration
-	HTTPWriteTimeout      time.Duration
-	HTTPIdleTimeout       time.Duration
-	RequestDeadline       time.Duration
-	Runtime               opcda.Config
+	Source                 opcda.SourceConfig
+	Frontend               FrontendType
+	HTTPListenAddress      string
+	GRPCListenAddress      string
+	WriteEnabled           bool
+	MaxHTTPBodyBytes       int64
+	MaxHTTPConnections     int
+	MaxConcurrentRequests  int
+	MaxHTTPHeaderBytes     int
+	MaxJSONDepth           int
+	MaxGRPCReceiveBytes    int
+	MaxGRPCSendBytes       int
+	MaxGRPCConnections     int
+	MaxConcurrentGRPCRPCs  int
+	MaxGRPCStreams         uint32
+	MaxGRPCMetadataBytes   uint32
+	GRPCConnectionTimeout  time.Duration
+	GRPCMaxConnectionIdle  time.Duration
+	GRPCMaxConnectionAge   time.Duration
+	GRPCMaxConnectionGrace time.Duration
+	GRPCKeepaliveMinTime   time.Duration
+	HTTPReadHeaderTimeout  time.Duration
+	HTTPReadTimeout        time.Duration
+	HTTPWriteTimeout       time.Duration
+	HTTPIdleTimeout        time.Duration
+	RequestDeadline        time.Duration
+	Runtime                opcda.Config
 }
 
+type FrontendType string
+
 const (
-	maximumInflightHTTPBodyBytes = uint64(256 << 20)
-	maximumInflightHeaderBytes   = uint64(64 << 20)
+	FrontendHTTP FrontendType = "http"
+	FrontendGRPC FrontendType = "grpc"
+)
+
+const (
+	maximumInflightHTTPBodyBytes    = uint64(256 << 20)
+	maximumInflightHeaderBytes      = uint64(64 << 20)
+	maximumInflightGRPCReceiveBytes = uint64(256 << 20)
+	maximumInflightGRPCSendBytes    = uint64(256 << 20)
+	maximumInflightGRPCMetadata     = uint64(64 << 20)
 )
 
 func DefaultConfig() Config {
 	limits := opcda.DefaultLimits()
 	return Config{
-		HTTPListenAddress:     "127.0.0.1:8080",
-		MaxHTTPBodyBytes:      1 << 20,
-		MaxHTTPConnections:    64,
-		MaxConcurrentRequests: 32,
-		MaxHTTPHeaderBytes:    32 << 10,
-		MaxJSONDepth:          64,
-		HTTPReadHeaderTimeout: 5 * time.Second,
-		HTTPReadTimeout:       15 * time.Second,
-		HTTPWriteTimeout:      15 * time.Second,
-		HTTPIdleTimeout:       30 * time.Second,
-		RequestDeadline:       10 * time.Second,
+		Frontend:               FrontendHTTP,
+		HTTPListenAddress:      "127.0.0.1:8080",
+		GRPCListenAddress:      "127.0.0.1:50051",
+		MaxHTTPBodyBytes:       1 << 20,
+		MaxHTTPConnections:     64,
+		MaxConcurrentRequests:  32,
+		MaxHTTPHeaderBytes:     32 << 10,
+		MaxJSONDepth:           64,
+		MaxGRPCReceiveBytes:    1 << 20,
+		MaxGRPCSendBytes:       4 << 20,
+		MaxGRPCConnections:     16,
+		MaxConcurrentGRPCRPCs:  32,
+		MaxGRPCStreams:         16,
+		MaxGRPCMetadataBytes:   32 << 10,
+		GRPCConnectionTimeout:  5 * time.Second,
+		GRPCMaxConnectionIdle:  2 * time.Minute,
+		GRPCMaxConnectionAge:   30 * time.Minute,
+		GRPCMaxConnectionGrace: 30 * time.Second,
+		GRPCKeepaliveMinTime:   30 * time.Second,
+		HTTPReadHeaderTimeout:  5 * time.Second,
+		HTTPReadTimeout:        15 * time.Second,
+		HTTPWriteTimeout:       15 * time.Second,
+		HTTPIdleTimeout:        30 * time.Second,
+		RequestDeadline:        10 * time.Second,
 		Runtime: opcda.Config{
 			Limits:           limits,
 			ReconnectInitial: time.Second,
@@ -61,7 +97,9 @@ func LoadConfig() (Config, error) {
 	config := DefaultConfig()
 	config.Source.ProgID = os.Getenv("OPCDA_SOURCE_PROG_ID")
 	config.Source.CLSID = os.Getenv("OPCDA_SOURCE_CLSID")
+	config.Frontend = FrontendType(valueOrDefault("OPCDA_FRONTEND", string(config.Frontend)))
 	config.HTTPListenAddress = valueOrDefault("OPCDA_HTTP_LISTEN", config.HTTPListenAddress)
+	config.GRPCListenAddress = valueOrDefault("OPCDA_GRPC_LISTEN", config.GRPCListenAddress)
 
 	var err error
 	if config.WriteEnabled, err = boolEnv("OPCDA_WRITE_ENABLED", false); err != nil {
@@ -80,6 +118,39 @@ func LoadConfig() (Config, error) {
 		return Config{}, err
 	}
 	if config.MaxJSONDepth, err = intEnv("OPCDA_MAX_JSON_DEPTH", config.MaxJSONDepth); err != nil {
+		return Config{}, err
+	}
+	if config.MaxGRPCReceiveBytes, err = intEnv("OPCDA_MAX_GRPC_RECEIVE_BYTES", config.MaxGRPCReceiveBytes); err != nil {
+		return Config{}, err
+	}
+	if config.MaxGRPCSendBytes, err = intEnv("OPCDA_MAX_GRPC_SEND_BYTES", config.MaxGRPCSendBytes); err != nil {
+		return Config{}, err
+	}
+	if config.MaxGRPCConnections, err = intEnv("OPCDA_MAX_GRPC_CONNECTIONS", config.MaxGRPCConnections); err != nil {
+		return Config{}, err
+	}
+	if config.MaxConcurrentGRPCRPCs, err = intEnv("OPCDA_MAX_CONCURRENT_GRPC_RPCS", config.MaxConcurrentGRPCRPCs); err != nil {
+		return Config{}, err
+	}
+	if config.MaxGRPCStreams, err = uint32Env("OPCDA_MAX_GRPC_STREAMS", config.MaxGRPCStreams); err != nil {
+		return Config{}, err
+	}
+	if config.MaxGRPCMetadataBytes, err = uint32Env("OPCDA_MAX_GRPC_METADATA_BYTES", config.MaxGRPCMetadataBytes); err != nil {
+		return Config{}, err
+	}
+	if config.GRPCConnectionTimeout, err = durationEnv("OPCDA_GRPC_CONNECTION_TIMEOUT", config.GRPCConnectionTimeout); err != nil {
+		return Config{}, err
+	}
+	if config.GRPCMaxConnectionIdle, err = durationEnv("OPCDA_GRPC_MAX_CONNECTION_IDLE", config.GRPCMaxConnectionIdle); err != nil {
+		return Config{}, err
+	}
+	if config.GRPCMaxConnectionAge, err = durationEnv("OPCDA_GRPC_MAX_CONNECTION_AGE", config.GRPCMaxConnectionAge); err != nil {
+		return Config{}, err
+	}
+	if config.GRPCMaxConnectionGrace, err = durationEnv("OPCDA_GRPC_MAX_CONNECTION_AGE_GRACE", config.GRPCMaxConnectionGrace); err != nil {
+		return Config{}, err
+	}
+	if config.GRPCKeepaliveMinTime, err = durationEnv("OPCDA_GRPC_KEEPALIVE_MIN_TIME", config.GRPCKeepaliveMinTime); err != nil {
 		return Config{}, err
 	}
 	if config.HTTPReadHeaderTimeout, err = durationEnv("OPCDA_HTTP_READ_HEADER_TIMEOUT", config.HTTPReadHeaderTimeout); err != nil {
@@ -140,6 +211,33 @@ func (config *Config) finalizeAndValidate() error {
 		config.HTTPWriteTimeout <= 0 || config.HTTPIdleTimeout <= 0 || config.RequestDeadline <= 0 {
 		return fmt.Errorf("HTTP bounds and timeouts must be positive")
 	}
+	if config.Frontend != FrontendHTTP && config.Frontend != FrontendGRPC {
+		return fmt.Errorf("frontend must be http or grpc")
+	}
+	if config.MaxGRPCReceiveBytes <= 0 || config.MaxGRPCSendBytes <= 0 || config.MaxGRPCConnections <= 0 ||
+		config.MaxConcurrentGRPCRPCs <= 0 || config.MaxGRPCStreams == 0 || config.MaxGRPCMetadataBytes == 0 ||
+		config.GRPCConnectionTimeout <= 0 || config.GRPCMaxConnectionIdle <= 0 || config.GRPCMaxConnectionAge <= 0 ||
+		config.GRPCMaxConnectionGrace <= 0 || config.GRPCKeepaliveMinTime <= 0 {
+		return fmt.Errorf("gRPC bounds must be positive")
+	}
+	if config.MaxGRPCReceiveBytes > 64<<20 || config.MaxGRPCSendBytes > 64<<20 || config.MaxGRPCConnections > 2048 ||
+		config.MaxConcurrentGRPCRPCs > 1024 || config.MaxGRPCStreams > 4096 || config.MaxGRPCMetadataBytes > 1<<20 {
+		return fmt.Errorf("gRPC bound exceeds the hard ceiling")
+	}
+	if config.GRPCConnectionTimeout > 24*time.Hour || config.GRPCMaxConnectionIdle > 24*time.Hour ||
+		config.GRPCMaxConnectionAge > 24*time.Hour || config.GRPCMaxConnectionGrace > 24*time.Hour ||
+		config.GRPCKeepaliveMinTime > 24*time.Hour || config.GRPCMaxConnectionGrace > config.GRPCMaxConnectionAge {
+		return fmt.Errorf("gRPC timeout exceeds the hard ceiling or age grace exceeds age")
+	}
+	if uint64(config.MaxGRPCReceiveBytes)*uint64(config.MaxGRPCConnections)*uint64(config.MaxGRPCStreams) > maximumInflightGRPCReceiveBytes {
+		return fmt.Errorf("configured concurrent gRPC receive budget exceeds the hard ceiling")
+	}
+	if uint64(config.MaxGRPCSendBytes)*uint64(config.MaxConcurrentGRPCRPCs) > maximumInflightGRPCSendBytes {
+		return fmt.Errorf("configured concurrent gRPC send budget exceeds the hard ceiling")
+	}
+	if uint64(config.MaxGRPCMetadataBytes)*uint64(config.MaxGRPCConnections)*uint64(config.MaxGRPCStreams) > maximumInflightGRPCMetadata {
+		return fmt.Errorf("configured concurrent gRPC metadata budget exceeds the hard ceiling")
+	}
 	if config.MaxHTTPBodyBytes > 64<<20 || config.MaxHTTPConnections > 2048 || config.MaxConcurrentRequests > 1024 ||
 		config.MaxHTTPHeaderBytes > 1<<20 || config.MaxJSONDepth > 256 || config.HTTPReadHeaderTimeout > 24*time.Hour ||
 		config.HTTPReadTimeout > 24*time.Hour || config.HTTPWriteTimeout > 24*time.Hour ||
@@ -152,12 +250,18 @@ func (config *Config) finalizeAndValidate() error {
 	if uint64(config.MaxHTTPHeaderBytes)*uint64(config.MaxHTTPConnections) > maximumInflightHeaderBytes {
 		return fmt.Errorf("configured concurrent HTTP header budget exceeds the v0 hard ceiling")
 	}
-	_, port, err := net.SplitHostPort(config.HTTPListenAddress)
+	listenAddress := config.HTTPListenAddress
+	listenSetting := "OPCDA_HTTP_LISTEN"
+	if config.Frontend == FrontendGRPC {
+		listenAddress = config.GRPCListenAddress
+		listenSetting = "gRPC listen address"
+	}
+	_, port, err := net.SplitHostPort(listenAddress)
 	if err != nil {
-		return fmt.Errorf("OPCDA_HTTP_LISTEN must be a host:port address: %w", err)
+		return fmt.Errorf("%s must be a host:port address: %w", listenSetting, err)
 	}
 	if _, err := strconv.ParseUint(port, 10, 16); err != nil {
-		return fmt.Errorf("OPCDA_HTTP_LISTEN port must be numeric and between 0 and 65535: %w", err)
+		return fmt.Errorf("%s port must be numeric and between 0 and 65535: %w", listenSetting, err)
 	}
 	if config.Runtime.ReconnectInitial <= 0 || config.Runtime.ReconnectMax <= 0 || config.Runtime.COMCallWatchdog <= 0 {
 		return fmt.Errorf("reconnect and COM watchdog durations must be positive")
@@ -218,6 +322,18 @@ func int64Env(key string, fallback int64) (int64, error) {
 		return 0, fmt.Errorf("%s: %w", key, err)
 	}
 	return parsed, nil
+}
+
+func uint32Env(key string, fallback uint32) (uint32, error) {
+	value := os.Getenv(key)
+	if value == "" {
+		return fallback, nil
+	}
+	parsed, err := strconv.ParseUint(value, 10, 32)
+	if err != nil {
+		return 0, fmt.Errorf("%s: %w", key, err)
+	}
+	return uint32(parsed), nil
 }
 
 func durationEnv(key string, fallback time.Duration) (time.Duration, error) {

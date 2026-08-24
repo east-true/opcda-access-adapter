@@ -66,7 +66,7 @@ func runForeground(config app.Config) error {
 	if err := service.Start(); err != nil {
 		return fmt.Errorf("start adapter: %w", err)
 	}
-	slog.Info("HTTP listener started", "address", service.Address())
+	slog.Info("frontend listener started", "frontend", service.Frontend(), "address", service.Address())
 
 	signals := make(chan os.Signal, 1)
 	signal.Notify(signals, os.Interrupt, syscall.SIGTERM)

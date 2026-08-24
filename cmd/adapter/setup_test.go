@@ -113,6 +113,37 @@ func TestGuidedSetupSaveOnlyWritesLoadableConfiguration(t *testing.T) {
 	}
 }
 
+func TestGuidedSetupExplicitGRPCSelectionWritesGRPCConfiguration(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "grpc-adapter.json")
+	dependencies := guidedSetupDependencies{
+		detect: func(context.Context, opcda.LocalDetectionLimits) ([]opcda.DetectedLocalServer, error) {
+			return []opcda.DetectedLocalServer{{CLSID: "{CCCCCCCC-CCCC-CCCC-CCCC-CCCCCCCCCCCC}", ProgID: "Vendor.GRPC.1"}}, nil
+		},
+		writeConfig: app.WriteConfigFileExclusive,
+	}
+	var output, errorOutput bytes.Buffer
+	code := runSetup(
+		[]string{"--config", path, "--grpc-listen", "127.0.0.1:55051"},
+		strings.NewReader("1\n2\n3\ny\n"),
+		&output,
+		&errorOutput,
+		dependencies,
+	)
+	if code != 0 {
+		t.Fatalf("exit=%d stderr=%s", code, errorOutput.String())
+	}
+	loaded, err := app.LoadConfigFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.Frontend != app.FrontendGRPC || loaded.GRPCListenAddress != "127.0.0.1:55051" || loaded.WriteEnabled {
+		t.Fatalf("loaded config = %+v", loaded)
+	}
+	if !strings.Contains(output.String(), "frontend: gRPC") {
+		t.Fatalf("gRPC review missing: %s", output.String())
+	}
+}
+
 func TestPowerShellConfigPathQuoteIsLiteral(t *testing.T) {
 	if got, want := quotePowerShellLiteral(`C:\Program Files\operator's adapter.json`), `'C:\Program Files\operator''s adapter.json'`; got != want {
 		t.Fatalf("quote=%q want=%q", got, want)
@@ -181,7 +212,7 @@ func TestGuidedSetupRejectsEmptyDetectionInvalidFlagsAndBoundedInput(t *testing.
 		called = true
 		return []opcda.DetectedLocalServer{{CLSID: "{A}"}}, nil
 	}
-	invalid := [][]string{{"extra"}, {"--timeout", "0s"}, {"--max-results", "5000"}, {"--service-name", "bad name"}, {"--listen", "missing-port"}, {"--config", strings.Repeat("x", 4097)}}
+	invalid := [][]string{{"extra"}, {"--timeout", "0s"}, {"--max-results", "5000"}, {"--service-name", "bad name"}, {"--listen", "missing-port"}, {"--grpc-listen", "missing-port"}, {"--config", strings.Repeat("x", 4097)}}
 	for _, arguments := range invalid {
 		output.Reset()
 		errorOutput.Reset()

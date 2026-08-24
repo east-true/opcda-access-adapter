@@ -6,8 +6,9 @@
 > **작업명:** OPC DA Access Adapter  
 > **구현 언어:** Go  
 > **배포 대상:** Windows  
-> **초기 검증 Frontend:** HTTP/JSON  
-> **향후 승인된 Frontend 방향:** gRPC, OPC UA
+> **완료된 초기 Frontend:** HTTP/JSON
+> **현재 확장 Frontend:** gRPC unary Status/Browse/Read/Write
+> **향후 승인된 Frontend 방향:** OPC UA; DA callback core 이후 gRPC stream
 >
 > 이 문서는 프로젝트의 목적, 설계 철학, 경계, 런타임 구조, 데이터 계약, 초기 HTTP API, 향후 Frontend 확장 규칙, COM 제약, 오류/재연결/보안/테스트/호환성 정책을 하나의 기준 문서로 정의한다.  
 > 별도 ADR 또는 명시적인 설계 변경 없이 이 문서의 **불변 조건(Invariants)** 을 깨는 구현은 허용하지 않는다.
@@ -31,7 +32,7 @@
 5. OPC DA/COM이라는 레거시 기술의 제약을 Go 런타임 안에서 어떻게 격리할지
 6. Frontend가 늘어나더라도 왜 Gateway/Integration Platform으로 변질되지 않아야 하는지
 7. 초기 HTTP 구현이 최종 제품의 중심이 아니라 **DA Runtime 검증 도구이자 첫 Access Frontend**라는 점
-8. 향후 gRPC와 OPC UA가 추가될 때도 동일한 DA-native contract를 공유해야 한다는 점
+8. gRPC와 향후 OPC UA가 추가될 때도 동일한 DA-native contract를 공유해야 한다는 점
 
 이 문서를 읽은 사람은 과거 대화나 설계 배경을 알지 못해도 구현 방향과 금지선을 이해할 수 있어야 한다.
 
@@ -1841,23 +1842,25 @@ v0에서는 thread 강제 종료로 “복구한 척”하지 않는다.
 
 ---
 
-# 34. gRPC Frontend — 향후
+# 34. gRPC Frontend — Phase 6
 
 gRPC의 목적:
 
 - typed client API
 - Go/Java/.NET 등 서비스 연동
-- Subscribe의 server streaming
+- 향후 Subscribe의 server streaming
 
-예상 service:
+Phase 6 unary service:
 
 ```text
+Status
 Browse
 Read
 Write
-Subscribe
-Status
 ```
+
+Subscribe와 server stream은 Phase 6에 포함하지 않는다. DA callback core를
+먼저 구현하고 검증한 뒤 별도 Phase에서 추가한다.
 
 protobuf도 DA-native field를 유지한다.
 
@@ -2837,14 +2840,15 @@ POST /v1/write
 
 ---
 
-## Phase 6 — Next Frontend
+## Phase 6 — gRPC Frontend
 
-DA Runtime이 실제로 안정화된 후에만 선택한다.
-
-유력:
+검증된 DA Runtime 위에 다음 unary service를 추가한다.
 
 ```text
-gRPC
+Status
+Browse
+Read
+Write
 ```
 
 이유:
@@ -2852,7 +2856,9 @@ gRPC
 - typed API
 - future Subscribe streaming
 
-단, 실제 수요가 없다면 추가하지 않을 수 있다.
+protobuf는 DA-native 용어와 scalar width를 보존하며, 하나의 process는
+HTTP 또는 gRPC 중 하나만 명시적으로 선택한다. Subscribe/streaming,
+frontend registry, multi-source routing은 이 Phase에 포함하지 않는다.
 
 ---
 
@@ -3117,7 +3123,8 @@ Frontend 수가 성공 지표가 되어서는 안 된다.
 - no process-data persistence
 - Browse/Read/Write, 향후 Subscribe
 - 초기 Frontend: HTTP/JSON
-- 이후 후보: gRPC, OPC UA
+- 현재 확장 Frontend: gRPC unary Status/Browse/Read/Write
+- 이후 후보: OPC UA; DA callback core 이후 gRPC Subscribe stream
 - COM access dedicated OS thread
 - Browse optional capability로 취급
 - partial per-item failure 보존

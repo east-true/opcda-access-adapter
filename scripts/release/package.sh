@@ -44,7 +44,7 @@ archive_version=${release_version#v}
 for architecture in 386 amd64; do
   archive_base="opcda-access-adapter_${archive_version}_windows_${architecture}"
   package_directory="$staging_root/$archive_base"
-  mkdir -p "$package_directory"
+  mkdir -p "$package_directory/api/opcda/v1"
 
   env GOOS=windows GOARCH="$architecture" CGO_ENABLED=0 \
     go build -trimpath -buildvcs=false \
@@ -52,7 +52,11 @@ for architecture in 386 amd64; do
     -o "$package_directory/opcda-access-adapter.exe" ./cmd/adapter
   cp "$repository_root/LICENSE" "$repository_root/README.md" \
     "$repository_root/THIRD_PARTY_NOTICES.md" "$package_directory/"
-  touch -d "@$source_date_epoch" "$package_directory" "$package_directory"/*
+  cp "$repository_root/api/opcda/v1/opcda_access.proto" "$package_directory/api/opcda/v1/"
+  touch -d "@$source_date_epoch" \
+    "$package_directory" "$package_directory"/* \
+    "$package_directory/api/opcda" "$package_directory/api/opcda/v1" \
+    "$package_directory/api/opcda/v1/opcda_access.proto"
 
   (
     cd "$staging_root"
@@ -60,6 +64,7 @@ for architecture in 386 amd64; do
       "$archive_base/LICENSE" \
       "$archive_base/README.md" \
       "$archive_base/THIRD_PARTY_NOTICES.md" \
+      "$archive_base/api/opcda/v1/opcda_access.proto" \
       "$archive_base/opcda-access-adapter.exe"
   )
 done
