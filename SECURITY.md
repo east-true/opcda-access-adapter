@@ -29,3 +29,8 @@ not request remote DCOM. Windows AppID Launch/Activation, Access, server
 identity, and 32/64-bit registry-view considerations are documented in
 [Windows COM security and permissions](docs/security-windows.md). Do not
 weaken machine-wide DCOM defaults to troubleshoot one server.
+
+The `detect` command is a local CLI operation, not an HTTP endpoint. It reads
+only the bounded OPC DA 2.0 component-category registration inventory through
+the Windows Component Categories Manager. It does not activate a detected
+vendor class, probe credentials, select a server, or perform remote discovery.

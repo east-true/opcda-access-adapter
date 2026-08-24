@@ -504,6 +504,35 @@ function Unregister-Server {
     Write-Host 'Unregistered OPC Foundation local COM test server'
 }
 
+function Test-LocalDetection {
+    $before = @(Get-ServerProcesses)
+    Assert-True ($before.Count -eq 0) 'test server was running before registration-only detection'
+
+    $output = @(& $script:AdapterExecutable detect --timeout 10s 2>&1)
+    if ($LASTEXITCODE -ne 0) {
+        throw "local detection failed with exit code ${LASTEXITCODE}: $($output -join [Environment]::NewLine)"
+    }
+    try {
+        $detected = ($output -join [Environment]::NewLine) | ConvertFrom-Json
+    }
+    catch {
+        throw "local detection did not return valid JSON: $($_.Exception.Message)"
+    }
+    Assert-True ($detected.scope -ceq 'local') 'detection scope was not local'
+    Assert-True ($detected.category -ceq 'OPC_DA_20') 'detection category was not OPC_DA_20'
+    Assert-True ($detected.categoryId -ceq '{63D5F432-CFE4-11D1-B2C8-0060083BA1FB}') `
+        'detection category ID was not the official OPC DA 2.0 CATID'
+    Assert-True ($detected.detectorArchitecture -ceq $AdapterArch) 'detection architecture did not match the adapter build'
+
+    $matches = @($detected.servers | Where-Object {
+        $_.progId -ceq $script:ProgID -and ([Guid]$_.clsid) -eq ([Guid]$expectedCLSID)
+    })
+    Assert-True ($matches.Count -eq 1) 'registered OPC Foundation DA server was not detected exactly once'
+    $after = @(Get-ServerProcesses)
+    Assert-True ($after.Count -eq 0) 'registration-only detection activated the vendor DA server'
+    Write-Host "Local OPC_DA_20 detection passed without vendor activation: $($script:ProgID)"
+}
+
 function Read-Items {
     param([string[]]$ItemIDs)
 
@@ -609,6 +638,7 @@ try {
     }
 
     Write-Host "Registered source=$($script:ProgID) architecture=$serverPlatform using local COM"
+    Test-LocalDetection
 
     if ($Destructive.IsPresent) {
         Write-Host 'Starting destructive local COM permission validation'

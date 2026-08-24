@@ -16,6 +16,8 @@ changing source semantics.
 ## Critical invariants
 
 - Source is OPC DA only; one adapter instance serves one local-COM server.
+- Local detection may enumerate bounded DA 2.0 registrations, but must not
+  activate candidates, auto-select a source, or accept a remote machine.
 - Do not add remote DCOM, aggregation, mapping, renaming, scaling, common
   Asset/Metric models, persistence, gateway transports, or a plugin framework.
 - Preserve exact ItemID, VARTYPE, raw Quality, timestamp presence, HRESULT,
@@ -48,3 +50,5 @@ real server result in `docs/compatibility.md`.
 v0 is HTTP-only and targets OPC DA 2.05a. It includes status, Browse, device
 Read, and strict typed value Write plus reconnect and bounds. gRPC, OPC UA,
 Subscribe, UI, storage, and all non-DA sources are explicitly out of scope.
+Local CLI detection is registration inventory only and does not alter the
+single explicitly configured runtime source.

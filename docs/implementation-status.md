@@ -10,10 +10,10 @@ a claim of broad vendor compatibility or production readiness.
 
 ## Current main SHA
 
-`62a5aae82b3dd8acbe9b7019d3732ca69d072c3a` — protected `main` after request
-parser and lifecycle hardening (PR #22). No public tag or GitHub Release has
-been created. The local destructive review below remains a release-promotion
-gate.
+`322892ffc012050ad80cb29d534d0f8c15883b8e` — protected `main` after the
+request-hardening validation record (PR #23). No public tag or GitHub Release
+has been created. The local destructive review below remains a
+release-promotion gate.
 
 ## Completed
 
@@ -59,6 +59,9 @@ gate.
 
 ## In progress
 
+- Branch `feat/local-da-detection` implements bounded local OPC DA 2.0
+  registration detection without vendor activation or automatic selection.
+  Windows native and real-fixture validation remain before merge.
 - The local KVM/libvirt destructive-validation gate is paused. The dedicated
   `opcda-destructive-review` VM and all of its dedicated host resources were
   removed on 2026-08-24 because this host could not run it alongside another
@@ -68,6 +71,16 @@ gate.
 
 ## Validation results
 
+- On 2026-08-24, `feat/local-da-detection` passed `go test ./...`,
+  `go vet ./...`, `go test -race ./...`, and 20 consecutive full-suite runs
+  with Go 1.26.0 on Linux. The non-Windows command failed explicitly without
+  returning a fake registration inventory.
+- All five package test executables cross-compiled for both `windows/386` and
+  `windows/amd64`, including the Windows detection ABI/ownership tests. Both
+  release-shaped archives built and passed their SHA-256 manifest. The tests
+  were not executed locally on Windows in this pass.
+- `go mod verify` passed and `go list -m all` still reports only this module;
+  local detection adds no third-party dependency.
 - On 2026-08-24, `security/request-parser-lifecycle` passed `go test ./...`,
   `go vet ./...`, `go test -race ./...`, and 20 consecutive full-suite runs
   with Go 1.26.0 on Linux. The final five-second fuzz runs processed 14,628
@@ -221,16 +234,19 @@ gate.
 
 ## Next exact tasks
 
-1. Recreate the isolated Windows environment only when non-contending VM
+1. Complete native x86/x64 validation that the pinned registered DA server is
+   detected exactly once without starting its process, then merge the local
+   detection PR through all protected checks.
+2. Recreate the isolated Windows environment only when non-contending VM
    capacity is available, then complete the local destructive review including
    local COM launch/access/RunAs permission failures. Do not use a GitHub runner
    as evidence for this gate.
-2. Record exact VM, Defender, x86/x64, load, resource, reboot, DCOM event, and
+3. Record exact VM, Defender, x86/x64, load, resource, reboot, DCOM event, and
    cleanup results before proposing a public release.
-3. Continue to treat the existing Apache-2.0 license as authoritative.
-4. Add third-party compatibility rows only from authorized, executed tests;
+4. Continue to treat the existing Apache-2.0 license as authoritative.
+5. Add third-party compatibility rows only from authorized, executed tests;
    do not infer vendor-wide compatibility from the official fixture.
-5. When an authorized server exposes non-Good Quality, an absent timestamp, or
+6. When an authorized server exposes non-Good Quality, an absent timestamp, or
    additional supported scalar types, add exact observations without changing
    source semantics.
 
@@ -245,3 +261,4 @@ gate.
 - [ADR-0007: bounded source failure diagnostic](adr/0007-bounded-source-failure-diagnostic.md)
 - [ADR-0008: HTTP browser boundary and aggregate resource ceilings](adr/0008-http-origin-and-aggregate-bounds.md)
 - [ADR-0009: request parser and lifecycle hardening](adr/0009-request-parser-and-lifecycle-hardening.md)
+- [ADR-0010: local OPC DA registration detection](adr/0010-local-da-registration-detection.md)
