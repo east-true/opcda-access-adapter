@@ -297,6 +297,12 @@ lifecycle on both architectures: explicit selection, exact-CLSID configuration,
 LocalService startup, service-mode device Read, bounded Application Event Log
 records, uninstall, and event-source cleanup.
 
+The Phase 6 run additionally passes the selected gRPC frontend on both
+architectures: Status, root/nested Browse, ordered partial Read, disabled and
+strict typed Write, source-denied Write, LocalService execution, and loopback
+listener checks. These are fixture-specific results, not a claim that every DA
+server or external gRPC deployment is compatible.
+
 These results apply only to the exact recorded fixture and environment. See
 the [compatibility matrix](docs/compatibility.md) for immutable workflow runs,
 source pins, observed DA metadata, resource deltas, and untested conditions.

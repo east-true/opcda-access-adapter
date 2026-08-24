@@ -105,3 +105,12 @@ service/event-source cleanup on both x86/386 and x64/amd64 at adapter head
 complete semantic, failure/reconnect, load/backpressure, and 200-Read soak
 regression. See the compatibility matrix for the exact observations and the
 limits of this evidence.
+
+Phase 6 gRPC run
+[`32752269529`](https://github.com/east-true/opcda-access-adapter/actions/runs/32752269529)
+passed the explicit gRPC guided LocalService lifecycle plus unary Status,
+root/nested Browse, ordered partial Read, disabled Write, strict typed Write,
+source-denied Write, loopback-listener, cleanup, and no-value-logging checks on
+both x86/386 and x64/amd64 at adapter head
+`b83b7c2b159194cbac94ce66f52b325b9c22031f`. The established HTTP and
+failure/reconnect/load/soak regression also passed in both jobs.
