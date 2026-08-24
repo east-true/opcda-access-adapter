@@ -44,6 +44,8 @@ process values.
 
 - OPC DA 2.05a baseline over local COM
 - bounded local OPC DA 2.0 registration detection without vendor activation
+- guided source/frontend selection with reviewed configuration output
+- optional SCM-managed Windows Service using the LocalService account
 - `GET /v1/status`
 - optional, source-backed DA 2.x Browse
 - ordered batch device Read with per-item failures
@@ -54,8 +56,9 @@ process values.
   timeouts
 - native `windows/386` and `windows/amd64` builds and tests
 
-OPC UA, gRPC, Subscribe, remote DCOM, multiple DA servers, tag mapping,
-normalization, persistence, and plugin systems are deliberately out of scope.
+OPC UA, gRPC, Subscribe, remote DCOM, multiple DA servers in one adapter
+instance, tag mapping, normalization, persistence, and plugin systems are
+deliberately out of scope.
 
 ## Requirements
 
@@ -91,7 +94,20 @@ go build -trimpath -o opcda-access-adapter-386.exe ./cmd/adapter
 Remove-Item Env:GOARCH
 ```
 
-Configure exactly one source identifier and start the adapter:
+For guided source selection, configuration creation, and foreground or
+background Windows Service execution:
+
+```powershell
+.\opcda-access-adapter.exe setup
+```
+
+Even one detected candidate requires an explicit choice. v0 presents only the
+HTTP/JSON frontend, keeps loopback and Write-disabled defaults, shows the final
+configuration for confirmation, and never silently overwrites an existing
+file or service. See [guided setup and Windows Service](docs/setup.md).
+
+For the original environment-variable workflow, configure exactly one source
+identifier and start the adapter:
 
 ```powershell
 $env:OPCDA_SOURCE_PROG_ID = "Vendor.Server.1"

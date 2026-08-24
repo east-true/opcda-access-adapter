@@ -18,9 +18,10 @@ The same packaging path can be exercised locally on Linux:
 (cd dist && sha256sum --check SHA256SUMS)
 ```
 
-The output directory must be absent or empty. Each archive contains only the
-architecture-specific executable, `LICENSE`, and `README.md`. Release builds
-embed the version and full commit SHA, which can be inspected on Windows:
+The output directory must be absent or empty. Each archive contains the
+architecture-specific executable, `LICENSE`, `README.md`, and
+`THIRD_PARTY_NOTICES.md`. Release builds embed the version and full commit SHA,
+which can be inspected on Windows:
 
 ```powershell
 .\opcda-access-adapter.exe --version

@@ -50,7 +50,8 @@ for architecture in 386 amd64; do
     go build -trimpath -buildvcs=false \
     -ldflags "-s -w -X main.version=$release_version -X main.commit=$release_commit" \
     -o "$package_directory/opcda-access-adapter.exe" ./cmd/adapter
-  cp "$repository_root/LICENSE" "$repository_root/README.md" "$package_directory/"
+  cp "$repository_root/LICENSE" "$repository_root/README.md" \
+    "$repository_root/THIRD_PARTY_NOTICES.md" "$package_directory/"
   touch -d "@$source_date_epoch" "$package_directory" "$package_directory"/*
 
   (
@@ -58,6 +59,7 @@ for architecture in 386 amd64; do
     TZ=UTC zip -X -q "$output_directory/$archive_base.zip" \
       "$archive_base/LICENSE" \
       "$archive_base/README.md" \
+      "$archive_base/THIRD_PARTY_NOTICES.md" \
       "$archive_base/opcda-access-adapter.exe"
   )
 done

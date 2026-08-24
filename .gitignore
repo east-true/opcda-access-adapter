@@ -26,6 +26,7 @@ go.work.sum
 
 # env file
 .env
+/opcda-access-adapter.json
 
 # Editor/IDE
 # .idea/

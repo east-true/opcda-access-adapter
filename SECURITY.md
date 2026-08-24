@@ -34,3 +34,11 @@ The `detect` command is a local CLI operation, not an HTTP endpoint. It reads
 only the bounded OPC DA 2.0 component-category registration inventory through
 the Windows Component Categories Manager. It does not activate a detected
 vendor class, probe credentials, select a server, or perform remote discovery.
+
+Guided setup creates configuration only after an explicit review and refuses
+implicit overwrite. A background installation uses the low-privilege Windows
+LocalService account and never stores a password or changes DCOM permissions.
+The executable and configuration must remain in stable paths readable by that
+account. Follow [guided setup](docs/setup.md) and the scoped
+[Windows COM permission guidance](docs/security-windows.md); do not grant
+machine-wide or remote DCOM rights to make a service work.

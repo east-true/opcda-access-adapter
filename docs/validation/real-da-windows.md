@@ -14,6 +14,9 @@ recorded in [ADR-0006](../adr/0006-real-da-validation-fixture.md).
 - local ProgID registration and exact CLSID resolution;
 - bounded `OPC_DA_20` registration detection with exact ProgID/CLSID and no
   vendor server process activation;
+- guided explicit source/frontend/action selection, strict configuration
+  output, LocalService SCM installation, service-mode connection and device
+  Read, automatic-start metadata, Stop/uninstall, and Event Log cleanup;
 - connection, group creation, and capabilities;
 - root and nested stateful Browse with exact ItemIDs;
 - device Read VARTYPE, raw Quality, timestamp presence, access rights, and raw
