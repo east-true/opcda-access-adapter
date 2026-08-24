@@ -18,6 +18,9 @@ changing source semantics.
 - Source is OPC DA only; one adapter instance serves one local-COM server.
 - Local detection may enumerate bounded DA 2.0 registrations, but must not
   activate candidates, auto-select a source, or accept a remote machine.
+- Guided setup must require explicit source/frontend/action choices, create a
+  new bounded configuration without implicit overwrite, and keep each
+  foreground process or Windows Service bound to exactly one local source.
 - Do not add remote DCOM, aggregation, mapping, renaming, scaling, common
   Asset/Metric models, persistence, gateway transports, or a plugin framework.
 - Preserve exact ItemID, VARTYPE, raw Quality, timestamp presence, HRESULT,

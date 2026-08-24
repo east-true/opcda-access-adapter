@@ -23,6 +23,23 @@ Use only a server registration and binary whose provenance is trusted. An
 administrator who can replace COM registration or its executable can cause
 code to run in or alongside the adapter.
 
+## Windows Service identity
+
+Guided background setup installs the adapter as
+`NT AUTHORITY\LocalService`, not LocalSystem, and stores no password. The SCM
+records absolute paths to the adapter executable and reviewed configuration;
+both must be in a stable location readable by LocalService. Installation and
+uninstallation require Administrator rights, but the running adapter does not
+retain those rights.
+
+LocalService can have different COM registration, file, vendor-configuration,
+LaunchPermission, AccessPermission, and interactive-desktop access than the
+user who ran setup. A successful foreground connection therefore does not
+prove service-mode compatibility. The installer does not edit AppID/DCOM ACLs
+or retry under a stronger identity. Service lifecycle and startup errors are
+recorded in the Windows Application Event Log under the configured service
+name without process values.
+
 ## Permission layers
 
 A local out-of-process server can fail at several independent layers:
@@ -48,6 +65,9 @@ A local out-of-process server can fail at several independent layers:
    needs the required batch-logon right and a credential configured through
    supported Windows administration. Do not place passwords in adapter
    environment variables or repository files.
+6. **Adapter service identity.** For background mode, test LocalService Local
+   Launch, Local Activation, and local Access only where the vendor supports
+   that identity. Never add Remote Launch/Activation/Access for this adapter.
 
 Change application-specific permissions through Component Services or the
 vendor installer. Do not weaken `DefaultLaunchPermission`,

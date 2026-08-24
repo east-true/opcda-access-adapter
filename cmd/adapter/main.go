@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"os"
 	"os/signal"
@@ -18,7 +19,17 @@ func main() {
 	if printVersion(arguments, os.Stdout) {
 		return
 	}
-	if handled, exitCode := handleUtilityCommand(arguments, os.Stdout, os.Stderr, opcda.DetectLocalServers); handled {
+	dependencies := utilityDependencies{
+		detect:        opcda.DetectLocalServers,
+		writeConfig:   app.WriteConfigFileExclusive,
+		runForeground: runForegroundConfig,
+		service: serviceCommandDependencies{
+			installAndStart: installAndStartWindowsService,
+			uninstall:       uninstallWindowsService,
+			runDispatcher:   runWindowsServiceDispatcher,
+		},
+	}
+	if handled, exitCode := handleUtilityCommand(arguments, os.Stdin, os.Stdout, os.Stderr, dependencies); handled {
 		if exitCode != 0 {
 			os.Exit(exitCode)
 		}
@@ -33,34 +44,44 @@ func main() {
 		slog.Error("invalid configuration", "error", err)
 		os.Exit(2)
 	}
-	service, err := app.New(config, nil)
-	if err != nil {
-		slog.Error("create service", "error", err)
+	if err := runForeground(config); err != nil {
+		slog.Error("adapter stopped with an error", "error", err)
 		os.Exit(1)
 	}
+}
+
+func runForegroundConfig(path string) error {
+	config, err := app.LoadConfigFile(path)
+	if err != nil {
+		return err
+	}
+	return runForeground(config)
+}
+
+func runForeground(config app.Config) error {
+	service, err := app.New(config, nil)
+	if err != nil {
+		return fmt.Errorf("create adapter: %w", err)
+	}
 	if err := service.Start(); err != nil {
-		slog.Error("start service", "error", err)
-		os.Exit(1)
+		return fmt.Errorf("start adapter: %w", err)
 	}
 	slog.Info("HTTP listener started", "address", service.Address())
 
 	signals := make(chan os.Signal, 1)
 	signal.Notify(signals, os.Interrupt, syscall.SIGTERM)
-	exitCode := 0
+	defer signal.Stop(signals)
+	var listenerErr error
 	select {
 	case <-signals:
-	case err := <-service.Errors():
-		slog.Error("HTTP listener failed", "error", err)
-		exitCode = 1
+	case listenerErr = <-service.Errors():
 	}
 
 	shutdownContext, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	if err := service.Shutdown(shutdownContext); err != nil && !errors.Is(err, context.Canceled) {
-		slog.Error("shutdown service", "error", err)
-		exitCode = 1
+	shutdownErr := service.Shutdown(shutdownContext)
+	if errors.Is(shutdownErr, context.Canceled) {
+		shutdownErr = nil
 	}
-	if exitCode != 0 {
-		os.Exit(exitCode)
-	}
+	return errors.Join(listenerErr, shutdownErr)
 }

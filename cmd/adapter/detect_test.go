@@ -23,7 +23,7 @@ func TestDetectCommandEmitsBoundedLocalRegistrationJSON(t *testing.T) {
 	var output, errorOutput bytes.Buffer
 	handled, exitCode := handleUtilityCommand(
 		[]string{"detect", "--max-results", "17", "--max-progid-code-units", "80"},
-		&output, &errorOutput, detector,
+		strings.NewReader(""), &output, &errorOutput, utilityDependencies{detect: detector},
 	)
 	if !handled || exitCode != 0 {
 		t.Fatalf("handled=%t exit=%d stderr=%s", handled, exitCode, errorOutput.String())
@@ -106,13 +106,13 @@ func TestUtilityCommandHelpAndNoAutomaticDetection(t *testing.T) {
 		return nil, nil
 	}
 	var output, errorOutput bytes.Buffer
-	if handled, code := handleUtilityCommand([]string{"--help"}, &output, &errorOutput, detector); !handled || code != 0 {
+	if handled, code := handleUtilityCommand([]string{"--help"}, strings.NewReader(""), &output, &errorOutput, utilityDependencies{detect: detector}); !handled || code != 0 {
 		t.Fatalf("help handled=%t exit=%d", handled, code)
 	}
 	if !strings.Contains(output.String(), "detect") {
 		t.Fatalf("help = %q", output.String())
 	}
-	if handled, _ := handleUtilityCommand(nil, &output, &errorOutput, detector); handled {
+	if handled, _ := handleUtilityCommand(nil, strings.NewReader(""), &output, &errorOutput, utilityDependencies{detect: detector}); handled {
 		t.Fatal("normal adapter startup was treated as a utility command")
 	}
 }

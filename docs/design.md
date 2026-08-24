@@ -2196,6 +2196,11 @@ resource limits
 logging
 ```
 
+환경변수 기반 foreground 실행 외에 guided setup이 생성하는 bounded,
+versioned configuration file을 사용할 수 있다. File-based 실행은 ambient
+environment를 merge하지 않으며 정확히 하나의 source와 하나의 HTTP
+frontend만 포함한다. 기존 파일은 암묵적으로 overwrite하지 않는다.
+
 금지되는 config:
 
 ```text
@@ -2224,6 +2229,10 @@ Detection은:
 - HTTP endpoint가 아닌 local CLI operation임
 - local registration metadata만 반환함
 - remote DCOM discovery로 확장하지 않음
+
+Guided setup은 detection 결과가 하나여도 operator의 명시적 선택을
+요구한다. 선택 결과는 exact CLSID로 configuration에 고정되며 detection
+단계에서 candidate를 activate하지 않는다.
 
 ---
 
@@ -2563,9 +2572,14 @@ COM integration test는 일반 GitHub-hosted runner에서 실제 DA Server가 �
 - changelog/release notes
 - reproducible build에 가까운 절차
 
-초기에는 installer보다 단일 binary 실행을 우선한다.
+단일 binary는 foreground 실행과 SCM service dispatcher를 함께 제공한다.
+Guided setup의 background 선택은 detached child process가 아니라 실제
+Windows Service를 명시적으로 install/start한다.
 
-Windows Service packaging은 core가 안정된 후 검토한다.
+Service는 LocalService identity, automatic start, SCM Stop/Shutdown,
+bounded graceful shutdown을 사용한다. AppID/DCOM permission이나 RunAs를
+자동 변경하지 않으며 service name 하나당 configuration/source 하나만
+소유한다. 세부 결정은 ADR-0011을 따른다.
 
 ---
 
@@ -3132,10 +3146,10 @@ Frontend 수가 성공 지표가 되어서는 안 된다.
 - gRPC 도입 시점
 - Subscribe 도입 시점
 - OPC UA security profile
-- Windows Service packaging
 - release signing
 
 이 항목들은 “모름”을 숨기기보다 명시적으로 관리한다.
+Windows Service packaging의 v0 방식은 ADR-0011에서 확정했다.
 
 ---
 

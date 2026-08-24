@@ -52,6 +52,11 @@ history and does not replace per-item Read/Write HRESULTs.
 
 ## Configuration
 
+`opcda-access-adapter setup` can create a versioned, bounded configuration for
+`run --config` or Windows Service execution. File-based execution does not
+merge ambient environment variables. See [guided setup](setup.md). The
+existing no-argument mode reads the environment variables below.
+
 | Environment variable | Default | Purpose |
 |---|---:|---|
 | `OPCDA_HTTP_LISTEN` | `127.0.0.1:8080` | HTTP bind address |

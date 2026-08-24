@@ -10,10 +10,9 @@ a claim of broad vendor compatibility or production readiness.
 
 ## Current main SHA
 
-`1fc9b803973af81efca4ab3bbe47a14334dac123` — protected `main` after bounded
-local OPC DA 2.0 registration detection (PR #24). No public tag or GitHub
-Release has been created. The local destructive review below remains a
-release-promotion gate.
+`1feb18180909cb5d9ccb0e0effa13ed4223bcd51` — protected `main` after the local
+detection validation record (PR #25). No public tag or GitHub Release has been
+created. The local destructive review below remains a release-promotion gate.
 
 ## Completed
 
@@ -62,6 +61,10 @@ release-promotion gate.
 
 ## In progress
 
+- Branch `feat/guided-setup` implements explicit source/frontend/action
+  selection, a strict bounded configuration file, foreground handoff, and an
+  SCM-managed LocalService background lifecycle. Native x86/x64 and real-DA
+  service identity/cleanup validation remain before merge.
 - The local KVM/libvirt destructive-validation gate is paused. The dedicated
   `opcda-destructive-review` VM and all of its dedicated host resources were
   removed on 2026-08-24 because this host could not run it alongside another
@@ -81,6 +84,10 @@ release-promotion gate.
   were not executed locally on Windows in this pass.
 - `go mod verify` passed and `go list -m all` still reports only this module;
   local detection adds no third-party dependency.
+- The guided setup branch added the pinned Go-project low-level dependency
+  `golang.org/x/sys v0.47.0` for Windows SCM, service dispatch, and Event Log
+  APIs. Its BSD-3-Clause license, provenance, module graph, and runtime impact
+  are reviewed in ADR-0011; it is not an OPC SDK.
 - PR #24 CI run
   [`32706109315`](https://github.com/east-true/opcda-access-adapter/actions/runs/32706109315)
   passed quality, release packaging, both Windows builds, and native Windows
@@ -216,9 +223,9 @@ release-promotion gate.
 
 - All Appendix B implementation items in `docs/design.md` have code, unit or
   Windows-platform coverage, and the scoped x86/x64 real-server result above.
-- Production Go code has no third-party module dependency, process-data file
-  or database persistence, non-DA source, extra frontend transport, or plugin
-  path.
+- Production Go code has one reviewed general-purpose Windows syscall module
+  and no OPC SDK dependency, process-data file or database persistence,
+  non-DA source, extra frontend transport, or plugin path.
 - The only production logs are bounded lifecycle/configuration/listener
   metadata; Read and Write values are not logged.
 - Default loopback binding, default-disabled value-only Write, hard resource
@@ -242,6 +249,9 @@ release-promotion gate.
   process restart; subprocess hard isolation is out of scope.
 - v0 has no production authentication/TLS/RBAC platform. The default listener
   is loopback and Write is disabled unless explicitly enabled.
+- Service-mode compatibility depends on the vendor accepting the LocalService
+  identity and its scoped local COM/DCOM permissions. Setup does not edit
+  AppID permissions or silently elevate to LocalSystem.
 
 ## External blockers
 
@@ -257,10 +267,9 @@ release-promotion gate.
 
 ## Next exact tasks
 
-1. Specify the proposed guided setup UX separately: preserve automation-safe
-   startup, require an explicit source choice even for one detected candidate,
-   keep one runtime per server, and treat Windows Service installation as an
-   explicit operation rather than implicit process detachment.
+1. Complete guided setup and LocalService lifecycle tests on native x86/x64,
+   validate the real DA fixture through setup/service/Read/uninstall, and merge
+   only after all protected checks pass.
 2. Recreate the isolated Windows environment only when non-contending VM
    capacity is available, then complete the local destructive review including
    local COM launch/access/RunAs permission failures. Do not use a GitHub runner
@@ -286,3 +295,4 @@ release-promotion gate.
 - [ADR-0008: HTTP browser boundary and aggregate resource ceilings](adr/0008-http-origin-and-aggregate-bounds.md)
 - [ADR-0009: request parser and lifecycle hardening](adr/0009-request-parser-and-lifecycle-hardening.md)
 - [ADR-0010: local OPC DA registration detection](adr/0010-local-da-registration-detection.md)
+- [ADR-0011: guided setup and Windows Service lifecycle](adr/0011-guided-setup-and-windows-service.md)

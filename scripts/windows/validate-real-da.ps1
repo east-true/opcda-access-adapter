@@ -61,7 +61,9 @@ function Invoke-NativeProcess {
         [string[]]$ArgumentList = @(),
 
         [ValidateRange(1, 1800)]
-        [int]$TimeoutSeconds = 30
+        [int]$TimeoutSeconds = 30,
+
+        [string]$StandardInputText
     )
 
     $startInfo = [Diagnostics.ProcessStartInfo]::new()
@@ -70,6 +72,7 @@ function Invoke-NativeProcess {
     $startInfo.CreateNoWindow = $true
     $startInfo.RedirectStandardOutput = $true
     $startInfo.RedirectStandardError = $true
+    $startInfo.RedirectStandardInput = $PSBoundParameters.ContainsKey('StandardInputText')
     # ProcessStartInfo.ArgumentList is unavailable in Windows PowerShell 5.1.
     # Quote with the CommandLineToArgvW/MSVC rules so this validation script
     # runs on a stock Windows Server VM as well as PowerShell 7 runners.
@@ -94,6 +97,10 @@ function Invoke-NativeProcess {
     }
     $standardOutput = $process.StandardOutput.ReadToEndAsync()
     $standardError = $process.StandardError.ReadToEndAsync()
+    if ($PSBoundParameters.ContainsKey('StandardInputText')) {
+        $process.StandardInput.Write($StandardInputText)
+        $process.StandardInput.Close()
+    }
     if (-not $process.WaitForExit($TimeoutSeconds * 1000)) {
         try {
             $process.Kill($true)
@@ -528,9 +535,106 @@ function Test-LocalDetection {
         $_.progId -ceq $script:ProgID -and ([Guid]$_.clsid) -eq ([Guid]$expectedCLSID)
     })
     Assert-True ($matches.Count -eq 1) 'registered OPC Foundation DA server was not detected exactly once'
+    $script:DetectedRegistrations = $detected
     $after = @(Get-ServerProcesses)
     Assert-True ($after.Count -eq 0) 'registration-only detection activated the vendor DA server'
     Write-Host "Local OPC_DA_20 detection passed without vendor activation: $($script:ProgID)"
+}
+
+function Test-GuidedSetupWindowsService {
+    $selectedIndex = -1
+    for ($index = 0; $index -lt $script:DetectedRegistrations.servers.Count; $index++) {
+        $candidate = $script:DetectedRegistrations.servers[$index]
+        if ($candidate.progId -ceq $script:ProgID -and ([Guid]$candidate.clsid) -eq ([Guid]$expectedCLSID)) {
+            $selectedIndex = $index
+            break
+        }
+    }
+    Assert-True ($selectedIndex -ge 0) 'guided setup fixture candidate index was not found'
+
+    $script:GuidedServiceName = "OPCDAAccessAdapterFixture$AdapterArch"
+    $script:GuidedConfigDirectory = Join-Path $env:ProgramData "OPCDAAccessAdapterValidation-$AdapterArch-$PID"
+    New-Item -ItemType Directory -Path $script:GuidedConfigDirectory | Out-Null
+    $script:GuidedConfigPath = Join-Path $script:GuidedConfigDirectory 'adapter.json'
+    $guidedPort = if ($AdapterArch -eq '386') { 18081 } else { 18082 }
+    $answers = "$($selectedIndex + 1)`r`n1`r`n2`r`ny`r`n"
+    $serviceTestStarted = Get-Date
+
+    try {
+        Invoke-NativeProcess -FilePath $script:AdapterExecutable -ArgumentList @(
+            'setup',
+            '--config', $script:GuidedConfigPath,
+            '--listen', "127.0.0.1:$guidedPort",
+            '--service-name', $script:GuidedServiceName
+        ) -TimeoutSeconds 60 -StandardInputText $answers
+
+        $guidedConfig = Get-Content -LiteralPath $script:GuidedConfigPath -Raw | ConvertFrom-Json
+        Assert-True ($guidedConfig.version -eq 1) 'guided config version changed'
+        Assert-True (([Guid]$guidedConfig.source.clsid) -eq ([Guid]$expectedCLSID)) 'guided config did not preserve the selected exact CLSID'
+        Assert-True ($guidedConfig.frontend.type -ceq 'http') 'guided config selected a non-HTTP frontend'
+        Assert-True ($guidedConfig.frontend.httpListen -ceq "127.0.0.1:$guidedPort") 'guided config listener changed'
+        Assert-True (-not [bool]$guidedConfig.writeEnabled) 'guided setup enabled Write by default'
+
+        $installed = Get-CimInstance Win32_Service -Filter "Name='$($script:GuidedServiceName)'"
+        Assert-True ($null -ne $installed) 'guided setup did not install the Windows Service'
+        Assert-True ($installed.StartName -ceq 'NT AUTHORITY\LocalService') 'guided service did not use LocalService'
+        Assert-True ($installed.StartMode -ceq 'Auto') 'guided service did not use automatic startup'
+        Assert-True ($installed.PathName -match 'service run') 'guided service command did not use the SCM dispatcher'
+
+        $savedBaseURL = $script:BaseURL
+        try {
+            $script:BaseURL = "http://127.0.0.1:$guidedPort"
+            $status = Wait-Connected -TimeoutSeconds 60
+            Assert-True (([Guid]$status.source.clsid) -eq ([Guid]$expectedCLSID)) 'guided service connected to a different source'
+            Assert-True (-not [bool]$status.writeEnabled) 'guided service reported Write enabled'
+            Assert-True ([bool]$status.frontend.http.listening) 'guided service listener was not running'
+            $read = Read-Items @('Test/Int32')
+            Assert-True ($read.results.Count -eq 1 -and [bool]$read.results[0].ok) 'guided service device Read failed'
+        }
+        finally {
+            $script:BaseURL = $savedBaseURL
+        }
+
+        $eventDeadline = [DateTime]::UtcNow.AddSeconds(10)
+        $serviceEvents = @()
+        do {
+            $serviceEvents = @(Get-WinEvent -FilterHashtable @{
+                LogName = 'Application'
+                ProviderName = $script:GuidedServiceName
+                StartTime = $serviceTestStarted
+            } -ErrorAction SilentlyContinue)
+            if ($serviceEvents.Count -eq 0) {
+                Start-Sleep -Milliseconds 200
+            }
+        } while ($serviceEvents.Count -eq 0 -and [DateTime]::UtcNow -lt $eventDeadline)
+        Assert-True ($serviceEvents.Count -ge 1) 'guided service did not write a lifecycle Event Log record'
+
+        Invoke-NativeProcess -FilePath $script:AdapterExecutable -ArgumentList @(
+            'service', 'uninstall', '--name', $script:GuidedServiceName
+        ) -TimeoutSeconds 60
+        Assert-True ($null -eq (Get-Service -Name $script:GuidedServiceName -ErrorAction SilentlyContinue)) `
+            'guided service still existed after uninstall'
+        Assert-True (-not (Test-Path -LiteralPath "HKLM:\SYSTEM\CurrentControlSet\Services\EventLog\Application\$($script:GuidedServiceName)")) `
+            'guided service Event Log source remained after uninstall'
+        Stop-ServerProcesses
+        Write-Host "GUIDED_SETUP_SERVICE_PASS arch=$AdapterArch account=LocalService configVersion=1 source=exact-clsid frontend=http writeEnabled=false"
+    }
+    finally {
+        if ($null -ne (Get-Service -Name $script:GuidedServiceName -ErrorAction SilentlyContinue)) {
+            try {
+                Invoke-NativeProcess -FilePath $script:AdapterExecutable -ArgumentList @(
+                    'service', 'uninstall', '--name', $script:GuidedServiceName
+                ) -TimeoutSeconds 60
+            }
+            catch {
+                Write-Warning "guided service cleanup failed: $($_.Exception.Message)"
+            }
+        }
+        Stop-ServerProcesses
+        if (Test-Path -LiteralPath $script:GuidedConfigDirectory) {
+            Remove-Item -LiteralPath $script:GuidedConfigDirectory -Recurse -Force
+        }
+    }
 }
 
 function Read-Items {
@@ -600,6 +704,10 @@ else {
 $proxyNames = @('opccomn_ps.dll', 'opcproxy.dll', 'opcsec_ps.dll')
 $registeredProxies = [Collections.Generic.List[string]]::new()
 $script:ServerRegistered = $false
+$script:DetectedRegistrations = $null
+$script:GuidedServiceName = $null
+$script:GuidedConfigDirectory = $null
+$script:GuidedConfigPath = $null
 $adapter = $null
 $script:BaseURL = 'http://127.0.0.1:18080'
 $script:HTTPClient = [Net.Http.HttpClient]::new()
@@ -639,6 +747,7 @@ try {
 
     Write-Host "Registered source=$($script:ProgID) architecture=$serverPlatform using local COM"
     Test-LocalDetection
+    Test-GuidedSetupWindowsService
 
     if ($Destructive.IsPresent) {
         Write-Host 'Starting destructive local COM permission validation'

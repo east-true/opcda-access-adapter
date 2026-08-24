@@ -54,6 +54,9 @@ jobs:
             unzip -q "$archive" -d "${{ runner.temp }}/release-inspect"
           done
           test "$(find "${{ runner.temp }}/release-inspect" -type f -name 'opcda-access-adapter.exe' | wc -l)" -eq 2
+          test "$(find "${{ runner.temp }}/release-inspect" -type f -name 'THIRD_PARTY_NOTICES.md' | wc -l)" -eq 2
+          grep -F 'golang.org/x/sys' "${{ runner.temp }}/release-inspect/opcda-access-adapter_0.0.0-dev_windows_386/THIRD_PARTY_NOTICES.md"
+          grep -F 'BSD-3-Clause' "${{ runner.temp }}/release-inspect/opcda-access-adapter_0.0.0-dev_windows_amd64/THIRD_PARTY_NOTICES.md"
           while IFS= read -r executable; do
             strings "$executable" | grep -Fx -- "v0.0.0-dev"
             strings "$executable" | grep -Fx -- "$GITHUB_SHA"
