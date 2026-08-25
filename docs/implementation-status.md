@@ -15,9 +15,10 @@ vendor-compatibility claim.
 
 **PHASE 7 DA SUBSCRIBE CORE IMPLEMENTED, NOT YET SERVER-VALIDATED** — the
 `IOPCDataCallback` connection-point core exists in the DA runtime and passed
-Linux quality gates and both cross-architecture test builds. It has not been
-run against a real DA server, and the Windows-only callback tests have not been
-executed on Windows outside CI. No frontend exposes Subscribe.
+all eight PR checks, including native Windows execution of the callback tests
+on both architectures. It has **not** been exercised against a real DA server:
+no `OnDataChange` from a vendor or fixture server has been observed. No
+frontend exposes Subscribe.
 
 ## Current main SHA
 
@@ -104,12 +105,23 @@ created. The local destructive review below remains a release-promotion gate.
   under `GOOS=windows` for both `386` and `amd64`, which is what covers the
   Windows-only callback file. All seven package test executables cross-compiled
   for both `windows/386` and `windows/amd64`.
-- The Windows-only `IOPCDataCallback` tests — vtable population, COM ABI
-  offsets, QueryInterface/AddRef/Release, OnDataChange coalescing, preserved
-  per-item HRESULTs, rejected inconsistent notifications, and teardown
-  invalidation — were compiled but **not executed** on this Linux host. Their
-  first execution is the native Windows CI job. No real DA server was involved
-  in any result above.
+- PR #31 CI run
+  [`32801171651`](https://github.com/east-true/opcda-access-adapter/actions/runs/32801171651)
+  passed quality, race/fuzz checks, release packaging, both Windows builds, and
+  both native Windows test jobs at head `a35a46a`. The Windows jobs run
+  `go test ./...` under `GOARCH=386` and `GOARCH=amd64`, so the Windows-only
+  `IOPCDataCallback` tests executed there for the first time and passed on both
+  architectures: vtable population, COM ABI offsets,
+  QueryInterface/AddRef/Release, OnDataChange coalescing, preserved per-item
+  HRESULTs, rejected inconsistent notifications, and teardown invalidation. A
+  populated vtable also confirms `syscall.NewCallback` accepts every
+  IOPCDataCallback signature, including the eleven-argument `OnDataChange`.
+- PR #31 real-DA run
+  [`32801171659`](https://github.com/east-true/opcda-access-adapter/actions/runs/32801171659)
+  passed on both x86/386 and x64/amd64, but it covers only the existing
+  Browse/Read/Write, reconnect, load, and soak regression. **The harness does
+  not subscribe**, so no real server has delivered `OnDataChange` and this run
+  is not Subscribe evidence.
 
 - On 2026-08-25, the Phase 6 working tree passed uncached `go test ./...`,
   `go test -race ./...`, `go vet ./...`, and 20 consecutive full-suite runs
