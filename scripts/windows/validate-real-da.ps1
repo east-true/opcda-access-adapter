@@ -528,6 +528,38 @@ function Get-ServerProcesses {
     return @(Get-Process -Name $script:ServerProcessName -ErrorAction SilentlyContinue)
 }
 
+function Wait-ServiceLifecycleEvent {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$ProviderName,
+
+        [Parameter(Mandatory = $true)]
+        [DateTime]$Since,
+
+        [ValidateRange(1, 300)]
+        [int]$TimeoutSeconds = 60
+    )
+
+    # The service writes its record synchronously, but the Application log makes
+    # it queryable asynchronously, and a loaded shared runner has been observed
+    # taking more than ten seconds. The wait stays bounded; only the bound is
+    # generous enough that a pass means the record was written, not that the
+    # runner happened to be fast.
+    $deadline = [DateTime]::UtcNow.AddSeconds($TimeoutSeconds)
+    do {
+        $events = @(Get-WinEvent -FilterHashtable @{
+            LogName = 'Application'
+            ProviderName = $ProviderName
+            StartTime = $Since
+        } -ErrorAction SilentlyContinue)
+        if ($events.Count -gt 0) {
+            return $events
+        }
+        Start-Sleep -Milliseconds 250
+    } while ([DateTime]::UtcNow -lt $deadline)
+    return @()
+}
+
 function Stop-ServerProcesses {
     foreach ($process in Get-ServerProcesses) {
         Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
@@ -634,18 +666,7 @@ function Test-GuidedSetupWindowsService {
             $script:BaseURL = $savedBaseURL
         }
 
-        $eventDeadline = [DateTime]::UtcNow.AddSeconds(10)
-        $serviceEvents = @()
-        do {
-            $serviceEvents = @(Get-WinEvent -FilterHashtable @{
-                LogName = 'Application'
-                ProviderName = $script:GuidedServiceName
-                StartTime = $serviceTestStarted
-            } -ErrorAction SilentlyContinue)
-            if ($serviceEvents.Count -eq 0) {
-                Start-Sleep -Milliseconds 200
-            }
-        } while ($serviceEvents.Count -eq 0 -and [DateTime]::UtcNow -lt $eventDeadline)
+        $serviceEvents = Wait-ServiceLifecycleEvent -ProviderName $script:GuidedServiceName -Since $serviceTestStarted
         Assert-True ($serviceEvents.Count -ge 1) 'guided service did not write a lifecycle Event Log record'
 
         Invoke-NativeProcess -FilePath $script:AdapterExecutable -ArgumentList @(
@@ -724,16 +745,7 @@ function Test-GuidedSetupGRPCWindowsService {
             '-timeout', '60s'
         ) -TimeoutSeconds 90
 
-        $eventDeadline = [DateTime]::UtcNow.AddSeconds(10)
-        $serviceEvents = @()
-        do {
-            $serviceEvents = @(Get-WinEvent -FilterHashtable @{
-                LogName = 'Application'
-                ProviderName = $serviceName
-                StartTime = $serviceTestStarted
-            } -ErrorAction SilentlyContinue)
-            if ($serviceEvents.Count -eq 0) { Start-Sleep -Milliseconds 200 }
-        } while ($serviceEvents.Count -eq 0 -and [DateTime]::UtcNow -lt $eventDeadline)
+        $serviceEvents = Wait-ServiceLifecycleEvent -ProviderName $serviceName -Since $serviceTestStarted
         Assert-True ($serviceEvents.Count -ge 1) 'gRPC guided service did not write a lifecycle Event Log record'
 
         Invoke-NativeProcess -FilePath $script:AdapterExecutable -ArgumentList @(

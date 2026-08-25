@@ -109,6 +109,15 @@ release-promotion gate.
   under `GOOS=windows` for both `386` and `amd64`, which is what covers the
   Windows-only callback file. All seven package test executables cross-compiled
   for both `windows/386` and `windows/amd64`.
+- The PR #32 documentation run exposed a timing flake in the pre-existing
+  guided-service check: the amd64 real-DA job failed with "gRPC guided service
+  did not write a lifecycle Event Log record" because the Application log became
+  queryable later than its ten-second deadline on a loaded shared runner. The
+  386 job and an immediate re-run of amd64 both passed, and the Subscribe probe
+  had not yet run when the job failed. Both guided-service waits now share one
+  bounded helper with a sixty-second deadline, so a pass means the record was
+  written rather than that the runner happened to be fast. No product behavior
+  and no assertion were weakened.
 - Post-merge CI run
   [`32806556135`](https://github.com/east-true/opcda-access-adapter/actions/runs/32806556135)
   passed quality, release packaging, both Windows builds, and both native
