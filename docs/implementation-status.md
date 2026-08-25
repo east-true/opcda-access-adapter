@@ -13,6 +13,12 @@ unary Status/Browse/Read/Write frontend passed PR CI and the source-built OPC
 Foundation fixture on both supported architectures. This is not a broad
 vendor-compatibility claim.
 
+**PHASE 7 DA SUBSCRIBE CORE IMPLEMENTED, NOT YET SERVER-VALIDATED** — the
+`IOPCDataCallback` connection-point core exists in the DA runtime and passed
+Linux quality gates and both cross-architecture test builds. It has not been
+run against a real DA server, and the Windows-only callback tests have not been
+executed on Windows outside CI. No frontend exposes Subscribe.
+
 ## Current main SHA
 
 `21345739af98de981d12de36c6805f64e5b502ff` — protected `main` after the
@@ -76,6 +82,13 @@ created. The local destructive review below remains a release-promotion gate.
 
 ## In progress
 
+- Phase 7 DA Subscribe core is on `feat/da-subscribe-core` and awaits PR CI and
+  a real-DA callback run. The remaining evidence is: `OnDataChange` delivery
+  from the source-built OPC Foundation fixture, group/advise cleanup on
+  unsubscribe and shutdown, subscription invalidation across an induced
+  disconnect, and confirmation that no group or advise cookie survives a
+  reconnect. Until those pass, Subscribe is implemented but unproven.
+
 - The local KVM/libvirt destructive-validation gate is paused. The dedicated
   `opcda-destructive-review` VM and all of its dedicated host resources were
   removed on 2026-08-24 because this host could not run it alongside another
@@ -84,6 +97,19 @@ created. The local destructive review below remains a release-promotion gate.
   `docs/validation/local-vm-destructive.md`.
 
 ## Validation results
+
+- On 2026-08-25, the Phase 7 Subscribe branch passed `gofmt -l .`,
+  `go vet ./...`, `go test ./...` (207 tests in 8 packages), and
+  `go test -race ./...` with Go 1.26.0 on Linux. `go vet` was additionally run
+  under `GOOS=windows` for both `386` and `amd64`, which is what covers the
+  Windows-only callback file. All seven package test executables cross-compiled
+  for both `windows/386` and `windows/amd64`.
+- The Windows-only `IOPCDataCallback` tests — vtable population, COM ABI
+  offsets, QueryInterface/AddRef/Release, OnDataChange coalescing, preserved
+  per-item HRESULTs, rejected inconsistent notifications, and teardown
+  invalidation — were compiled but **not executed** on this Linux host. Their
+  first execution is the native Windows CI job. No real DA server was involved
+  in any result above.
 
 - On 2026-08-25, the Phase 6 working tree passed uncached `go test ./...`,
   `go test -race ./...`, `go vet ./...`, and 20 consecutive full-suite runs
@@ -361,6 +387,10 @@ created. The local destructive review below remains a release-promotion gate.
    source semantics.
 6. Phase 7 is the DA callback/Subscribe core before any gRPC stream. Do not
    start OPC UA first or infer a streaming contract from the unary frontend.
+7. The Subscribe core is implemented but unproven. Do not build the streaming
+   frontend on it, and do not claim callback support, until a real DA server
+   has delivered `OnDataChange` and the cleanup and reconnect-invalidation
+   evidence in "In progress" has been recorded.
 
 ## Decisions
 
@@ -376,3 +406,4 @@ created. The local destructive review below remains a release-promotion gate.
 - [ADR-0010: local OPC DA registration detection](adr/0010-local-da-registration-detection.md)
 - [ADR-0011: guided setup and Windows Service lifecycle](adr/0011-guided-setup-and-windows-service.md)
 - [ADR-0012: DA-native gRPC frontend](adr/0012-grpc-da-native-frontend.md)
+- [ADR-0013: DA-native Subscribe core](adr/0013-da-native-subscribe-core.md)

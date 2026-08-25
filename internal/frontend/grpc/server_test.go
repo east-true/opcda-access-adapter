@@ -41,6 +41,17 @@ func (runtime *testRuntime) WriteBatch(ctx context.Context, items []opcda.WriteI
 	}
 	return runtime.write(ctx, items)
 }
+
+// Subscribe is not exposed by any frontend in this phase; the stub only
+// satisfies the DA runtime interface.
+func (*testRuntime) Subscribe(context.Context, opcda.SubscribeRequest) (opcda.Subscription, error) {
+	return nil, opcda.NewAdapterError(opcda.CodeSubscribeUnsupported, "subscribe is not exposed by this frontend")
+}
+
+func (*testRuntime) Unsubscribe(context.Context, opcda.SubscriptionID) error {
+	return opcda.NewAdapterError(opcda.CodeSubscribeUnsupported, "subscribe is not exposed by this frontend")
+}
+
 func (*testRuntime) Shutdown(context.Context) error { return nil }
 
 func TestReadPreservesDAWidthsQualityTimestampHRESULTAndPartialFailure(t *testing.T) {

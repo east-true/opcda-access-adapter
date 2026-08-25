@@ -43,6 +43,7 @@ type RuntimeStatus struct {
 	Capabilities         Capabilities
 	WriteEnabled         bool
 	QueueDepth           int
+	SubscriptionCount    int
 	DegradedReason       string
 	LastSourceError      SourceDiagnostic
 	LastSourceErrorSet   bool

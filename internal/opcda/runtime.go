@@ -14,6 +14,8 @@ type Runtime interface {
 	Browse(context.Context, BrowseRequest) (BrowseResult, error)
 	ReadBatch(context.Context, ReadRequest) ([]ReadResult, error)
 	WriteBatch(context.Context, []WriteItem) ([]WriteResult, error)
+	Subscribe(context.Context, SubscribeRequest) (Subscription, error)
+	Unsubscribe(context.Context, SubscriptionID) error
 	Shutdown(context.Context) error
 }
 
@@ -27,14 +29,16 @@ type Config struct {
 }
 
 const (
-	defaultReconnectInitial = time.Second
-	defaultReconnectMax     = 30 * time.Second
-	defaultCOMCallWatchdog  = 30 * time.Second
-	maximumRuntimeDuration  = 24 * time.Hour
-	maximumBatchBSTRUnits   = uint64(8 << 20)
-	maximumBrowseBSTRUnits  = uint64(128 << 20)
-	maximumBatchItemIDBytes = uint64(64 << 20)
-	maximumCacheItemIDBytes = uint64(128 << 20)
+	defaultReconnectInitial        = time.Second
+	defaultReconnectMax            = 30 * time.Second
+	defaultCOMCallWatchdog         = 30 * time.Second
+	maximumRuntimeDuration         = 24 * time.Hour
+	maximumBatchBSTRUnits          = uint64(8 << 20)
+	maximumBrowseBSTRUnits         = uint64(128 << 20)
+	maximumBatchItemIDBytes        = uint64(64 << 20)
+	maximumCacheItemIDBytes        = uint64(128 << 20)
+	maximumSubscriptionBSTRUnits   = uint64(128 << 20)
+	maximumSubscriptionItemIDBytes = uint64(64 << 20)
 )
 
 func (config Config) withDefaults() Config {
@@ -73,26 +77,30 @@ func (config Config) ValidateForConfiguration() error {
 }
 
 type Limits struct {
-	CommandQueue       int
-	MaxReadItems       int
-	MaxWriteItems      int
-	MaxBrowseEntries   int
-	MaxBrowseDepth     int
-	MaxRegisteredItems int
-	MaxItemIDBytes     int
-	MaxBSTRCodeUnits   int
+	CommandQueue         int
+	MaxReadItems         int
+	MaxWriteItems        int
+	MaxBrowseEntries     int
+	MaxBrowseDepth       int
+	MaxRegisteredItems   int
+	MaxItemIDBytes       int
+	MaxBSTRCodeUnits     int
+	MaxSubscriptions     int
+	MaxSubscriptionItems int
 }
 
 func DefaultLimits() Limits {
 	return Limits{
-		CommandQueue:       64,
-		MaxReadItems:       100,
-		MaxWriteItems:      100,
-		MaxBrowseEntries:   1000,
-		MaxBrowseDepth:     64,
-		MaxRegisteredItems: 1024,
-		MaxItemIDBytes:     1024,
-		MaxBSTRCodeUnits:   65536,
+		CommandQueue:         64,
+		MaxReadItems:         100,
+		MaxWriteItems:        100,
+		MaxBrowseEntries:     1000,
+		MaxBrowseDepth:       64,
+		MaxRegisteredItems:   1024,
+		MaxItemIDBytes:       1024,
+		MaxBSTRCodeUnits:     65536,
+		MaxSubscriptions:     16,
+		MaxSubscriptionItems: 100,
 	}
 }
 
@@ -104,7 +112,9 @@ func (limits Limits) validate() error {
 		limits.MaxBrowseDepth <= 0 ||
 		limits.MaxRegisteredItems <= 0 ||
 		limits.MaxItemIDBytes <= 0 ||
-		limits.MaxBSTRCodeUnits <= 0 {
+		limits.MaxBSTRCodeUnits <= 0 ||
+		limits.MaxSubscriptions <= 0 ||
+		limits.MaxSubscriptionItems <= 0 {
 		return fmt.Errorf("all DA runtime limits must be positive")
 	}
 	if limits.CommandQueue > 4096 ||
@@ -114,7 +124,9 @@ func (limits Limits) validate() error {
 		limits.MaxBrowseDepth > 256 ||
 		limits.MaxRegisteredItems > 1000000 ||
 		limits.MaxItemIDBytes > 65536 ||
-		limits.MaxBSTRCodeUnits > 1048576 {
+		limits.MaxBSTRCodeUnits > 1048576 ||
+		limits.MaxSubscriptions > 256 ||
+		limits.MaxSubscriptionItems > 10000 {
 		return fmt.Errorf("one or more DA runtime limits exceed the v0 hard ceiling")
 	}
 	if uint64(limits.MaxReadItems)*uint64(limits.MaxBSTRCodeUnits) > maximumBatchBSTRUnits ||
@@ -131,6 +143,13 @@ func (limits Limits) validate() error {
 	}
 	if uint64(limits.MaxRegisteredItems)*uint64(limits.MaxItemIDBytes) > maximumCacheItemIDBytes {
 		return fmt.Errorf("configured registration-cache ItemID budget exceeds the v0 hard ceiling")
+	}
+	// Each subscription retains at most one pending value per active item.
+	if uint64(limits.MaxSubscriptions)*uint64(limits.MaxSubscriptionItems)*uint64(limits.MaxBSTRCodeUnits) > maximumSubscriptionBSTRUnits {
+		return fmt.Errorf("configured subscription pending-value budget exceeds the v0 hard ceiling")
+	}
+	if uint64(limits.MaxSubscriptions)*uint64(limits.MaxSubscriptionItems)*uint64(limits.MaxItemIDBytes) > maximumSubscriptionItemIDBytes {
+		return fmt.Errorf("configured subscription ItemID budget exceeds the v0 hard ceiling")
 	}
 	return nil
 }
