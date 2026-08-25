@@ -114,11 +114,12 @@ release-promotion gate.
 
 ## In progress
 
-- Phase 8 OPC UA continues on `feat/opcua-binary-encoding` with the bounded UA
-  Binary codec for the built-in types, transcribed from OPC 10000-6 clause 5.2.
-  The DA-to-UA mapping merged in PR #37. There is still no UA listener, no
-  framing or chunking, and no UA dependency. No conformance or interoperability
-  claim is made.
+- Phase 8 OPC UA continues on `feat/opcua-uacp-framing` with the connection
+  protocol framing, Hello/Acknowledge/Error bodies, buffer negotiation, and
+  chunk accounting from OPC 10000-6 clause 7.1. The DA-to-UA mapping merged in
+  PR #37 and the UA Binary codec in PR #38. There is still no listener, no
+  SecureChannel, and no UA dependency. No conformance or interoperability claim
+  is made.
 
 - The local KVM/libvirt destructive-validation gate is paused. The dedicated
   `opcda-destructive-review` VM and all of its dedicated host resources were
