@@ -50,4 +50,12 @@ func (r *unsupportedRuntime) WriteBatch(context.Context, []WriteItem) ([]WriteRe
 	return nil, NewAdapterError(CodeRuntimeUnavailable, "OPC DA runtime requires Windows")
 }
 
+func (*unsupportedRuntime) Subscribe(context.Context, SubscribeRequest) (Subscription, error) {
+	return nil, NewAdapterError(CodeRuntimeUnavailable, "OPC DA runtime requires Windows")
+}
+
+func (*unsupportedRuntime) Unsubscribe(context.Context, SubscriptionID) error {
+	return NewAdapterError(CodeRuntimeUnavailable, "OPC DA runtime requires Windows")
+}
+
 func (*unsupportedRuntime) Shutdown(context.Context) error { return nil }

@@ -16,6 +16,9 @@ type daThreadCommand struct {
 	context context.Context
 	name    string
 	run     func(*daThreadSession)
+	// skipped answers the caller when the DA thread drops the command because
+	// its context expired before the command could run.
+	skipped func()
 }
 
 type daThreadSession struct {
@@ -29,10 +32,14 @@ type daThreadSession struct {
 	generation        uint64
 	registrations     *registrationCache
 	nextClientHandle  uint32
-	lastGeneration    uint64
-	reconnectAttempt  uint32
-	reconnectAt       time.Time
-	jitterState       uint64
+
+	subscriptions            map[SubscriptionID]*daSubscription
+	nextGroupClientHandle    uint32
+	nextSubscriptionSequence uint64
+	lastGeneration           uint64
+	reconnectAttempt         uint32
+	reconnectAt              time.Time
+	jitterState              uint64
 }
 
 type windowsRuntime struct {
@@ -110,6 +117,7 @@ func (r *windowsRuntime) runDAThread(started chan<- error) {
 			status.State = RuntimeStateStopped
 			status.Capabilities = Capabilities{Browse: "unavailable"}
 			status.QueueDepth = 0
+			status.SubscriptionCount = 0
 		})
 	}()
 
@@ -125,6 +133,11 @@ func (r *windowsRuntime) runDAThread(started chan<- error) {
 	for {
 		if !r.processReadyCommands(session) {
 			return
+		}
+		// Connection point callbacks are marshalled into this STA as window
+		// messages, so they must be dispatched while subscriptions exist.
+		if len(session.subscriptions) > 0 {
+			pumpWindowMessages()
 		}
 		if !r.degraded.Load() && !session.reconnectAt.IsZero() && !time.Now().Before(session.reconnectAt) {
 			r.tryConnect(session, true)
@@ -188,6 +201,11 @@ func (session *daThreadSession) beginConnectionGeneration(maxRegisteredItems int
 	session.lastGeneration++
 	session.generation = session.lastGeneration
 	session.registrations = newRegistrationCache(maxRegisteredItems, session.generation)
+	session.subscriptions = make(map[SubscriptionID]*daSubscription)
+	session.nextSubscriptionSequence = 0
+	// Group client handle 1 belongs to the shared SyncIO group, so subscription
+	// groups start at 2 and no OnDataChange can be attributed ambiguously.
+	session.nextGroupClientHandle = 1
 }
 
 func (r *windowsRuntime) tryConnect(session *daThreadSession, reconnect bool) {
@@ -217,7 +235,7 @@ func (r *windowsRuntime) tryConnect(session *daThreadSession, reconnect bool) {
 	r.updateStatus(func(status *RuntimeStatus) {
 		status.State = RuntimeStateConnected
 		status.ConnectionGeneration = session.generation
-		status.Capabilities = Capabilities{Browse: session.browseCapability, Read: true, Write: true}
+		status.Capabilities = Capabilities{Browse: session.browseCapability, Read: true, Write: true, Subscribe: true}
 		status.DegradedReason = ""
 		status.LastSourceError = SourceDiagnostic{}
 		status.LastSourceErrorSet = false
@@ -256,6 +274,10 @@ func (session *daThreadSession) waitDuration(now time.Time, degraded bool) time.
 }
 
 func (session *daThreadSession) disconnect() {
+	session.invalidateSubscriptions(NewAdapterError(
+		CodeSubscriptionInvalidated,
+		"OPC DA subscription was invalidated by source disconnect; explicit resubscribe is required",
+	))
 	if session.browse != nil {
 		session.browse.release()
 		session.browse = nil
@@ -285,6 +307,16 @@ func (session *daThreadSession) disconnect() {
 	session.generation = 0
 }
 
+// invalidateSubscriptions releases every DA group and advise cookie of the
+// ending connection generation. Pending values are dropped rather than
+// delivered, and no subscription is re-created implicitly on reconnect.
+func (session *daThreadSession) invalidateSubscriptions(err error) {
+	for id, subscription := range session.subscriptions {
+		subscription.teardown(session.server, err)
+		delete(session.subscriptions, id)
+	}
+}
+
 func (r *windowsRuntime) processReadyCommands(session *daThreadSession) bool {
 	for {
 		if r.degraded.Load() {
@@ -306,6 +338,8 @@ func (r *windowsRuntime) processReadyCommands(session *daThreadSession) bool {
 				finishWatchdog := r.beginCOMWatchdog(command.name)
 				command.run(session)
 				finishWatchdog()
+			} else if command.skipped != nil {
+				command.skipped()
 			}
 		default:
 			r.updateQueueDepth()
@@ -485,6 +519,134 @@ func (r *windowsRuntime) WriteBatch(ctx context.Context, items []WriteItem) ([]W
 	}
 }
 
+func (r *windowsRuntime) Subscribe(ctx context.Context, request SubscribeRequest) (Subscription, error) {
+	if err := request.validate(r.config.Limits); err != nil {
+		return nil, err
+	}
+
+	type response struct {
+		subscription Subscription
+		err          error
+	}
+	responses := make(chan response, 1)
+	deadline := func() response {
+		return response{err: &AdapterError{
+			Code:    CodeRuntimeDeadline,
+			Message: "Subscribe deadline exceeded",
+			Cause:   ctx.Err(),
+		}}
+	}
+	command := daThreadCommand{
+		context: ctx,
+		name:    "Subscribe",
+		skipped: func() { responses <- deadline() },
+		run: func(session *daThreadSession) {
+			if session.server == nil || session.subscriptions == nil {
+				responses <- response{err: NewAdapterError(CodeRuntimeUnavailable, "OPC DA runtime is not connected")}
+				return
+			}
+			if len(session.subscriptions) >= r.config.Limits.MaxSubscriptions {
+				responses <- response{err: NewAdapterError(CodeSubscriptionLimit, "subscription limit exceeded")}
+				return
+			}
+			session.nextSubscriptionSequence++
+			id := subscriptionIDFor(session.generation, session.nextSubscriptionSequence)
+			subscription, err := session.createSubscription(id, request, r.config.Limits.MaxBSTRCodeUnits)
+			if err != nil {
+				r.handleOperationFailure(session, err)
+				responses <- response{err: err}
+				return
+			}
+			// An advised DA group must never outlive the caller that asked for
+			// it, so a group created after the deadline is torn down here on the
+			// owning thread rather than left unowned in the session.
+			if ctx.Err() != nil {
+				subscription.teardown(session.server, NewAdapterError(
+					CodeSubscriptionInvalidated,
+					"OPC DA subscription was removed because Subscribe exceeded its deadline",
+				))
+				responses <- deadline()
+				return
+			}
+			session.subscriptions[id] = subscription
+			r.updateSubscriptionCount(len(session.subscriptions))
+			responses <- response{subscription: subscription}
+		},
+	}
+	if err := r.enqueue(ctx, command); err != nil {
+		return nil, err
+	}
+	select {
+	case response := <-responses:
+		return response.subscription, response.err
+	case <-r.stopped:
+		return nil, NewAdapterError(CodeRuntimeUnavailable, "OPC DA runtime stopped before Subscribe completed")
+	case <-ctx.Done():
+		// A subscription the DA thread finished creating is handed over rather
+		// than orphaned; otherwise the command tears it down itself.
+		select {
+		case response := <-responses:
+			return response.subscription, response.err
+		default:
+			return nil, deadline().err
+		}
+	}
+}
+
+func (r *windowsRuntime) Unsubscribe(ctx context.Context, id SubscriptionID) error {
+	if id == "" {
+		return NewAdapterError(CodeInvalidRequest, "subscriptionId must not be empty")
+	}
+	responses := make(chan error, 1)
+	command := daThreadCommand{
+		context: ctx,
+		name:    "Unsubscribe",
+		skipped: func() {
+			responses <- &AdapterError{Code: CodeRuntimeDeadline, Message: "Unsubscribe deadline exceeded", Cause: ctx.Err()}
+		},
+		run: func(session *daThreadSession) {
+			if session.subscriptions == nil {
+				responses <- NewAdapterError(CodeRuntimeUnavailable, "OPC DA runtime is not connected")
+				return
+			}
+			subscription, ok := session.subscriptions[id]
+			if !ok {
+				responses <- NewAdapterError(CodeSubscriptionNotFound, "subscription is not known to this connection generation")
+				return
+			}
+			delete(session.subscriptions, id)
+			subscription.teardown(session.server, NewAdapterError(
+				CodeSubscriptionInvalidated,
+				"OPC DA subscription was removed by an explicit unsubscribe",
+			))
+			r.updateSubscriptionCount(len(session.subscriptions))
+			responses <- nil
+		},
+	}
+	if err := r.enqueue(ctx, command); err != nil {
+		return err
+	}
+	select {
+	case err := <-responses:
+		return err
+	case <-r.stopped:
+		return NewAdapterError(CodeRuntimeUnavailable, "OPC DA runtime stopped before Unsubscribe completed")
+	case <-ctx.Done():
+		select {
+		case err := <-responses:
+			return err
+		default:
+			return &AdapterError{Code: CodeRuntimeDeadline, Message: "Unsubscribe deadline exceeded", Cause: ctx.Err()}
+		}
+	}
+}
+
+func (r *windowsRuntime) updateSubscriptionCount(count int) {
+	r.updateStatus(func(status *RuntimeStatus) {
+		status.SubscriptionCount = count
+	})
+}
+
 func (r *windowsRuntime) Shutdown(ctx context.Context) error {
 	r.stopOnce.Do(func() {
 		r.setState(RuntimeStateStopping)
@@ -585,6 +747,7 @@ func (r *windowsRuntime) markDegraded(reason string) {
 	r.updateStatus(func(status *RuntimeStatus) {
 		status.State = RuntimeStateDegraded
 		status.Capabilities = Capabilities{Browse: "unavailable"}
+		status.SubscriptionCount = 0
 		status.DegradedReason = reason
 	})
 }
@@ -594,6 +757,7 @@ func (r *windowsRuntime) setState(state RuntimeState) {
 		status.State = state
 		if state != RuntimeStateConnected {
 			status.Capabilities = Capabilities{Browse: "unavailable"}
+			status.SubscriptionCount = 0
 		}
 	})
 }

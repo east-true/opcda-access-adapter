@@ -29,6 +29,10 @@ const (
 	CodeBSTRTooLong                  ErrorCode = "BSTR_TOO_LONG"
 	CodeRegisteredItemLimit          ErrorCode = "REGISTERED_ITEM_LIMIT_EXCEEDED"
 	CodeInternalResultMismatch       ErrorCode = "INTERNAL_RESULT_MISMATCH"
+	CodeSubscriptionLimit            ErrorCode = "SUBSCRIPTION_LIMIT_EXCEEDED"
+	CodeSubscriptionNotFound         ErrorCode = "SUBSCRIPTION_NOT_FOUND"
+	CodeSubscriptionInvalidated      ErrorCode = "SUBSCRIPTION_INVALIDATED"
+	CodeSubscribeUnsupported         ErrorCode = "SUBSCRIBE_UNSUPPORTED"
 )
 
 // AdapterError identifies an adapter/runtime failure without replacing source

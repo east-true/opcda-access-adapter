@@ -30,6 +30,17 @@ func (lifecycleRuntime) ReadBatch(context.Context, opcda.ReadRequest) ([]opcda.R
 func (lifecycleRuntime) WriteBatch(context.Context, []opcda.WriteItem) ([]opcda.WriteResult, error) {
 	return nil, nil
 }
+
+// Subscribe is not exposed by any frontend in this phase; the stub only
+// satisfies the DA runtime interface.
+func (lifecycleRuntime) Subscribe(context.Context, opcda.SubscribeRequest) (opcda.Subscription, error) {
+	return nil, opcda.NewAdapterError(opcda.CodeSubscribeUnsupported, "subscribe is not exposed by this frontend")
+}
+
+func (lifecycleRuntime) Unsubscribe(context.Context, opcda.SubscriptionID) error {
+	return opcda.NewAdapterError(opcda.CodeSubscribeUnsupported, "subscribe is not exposed by this frontend")
+}
+
 func (lifecycleRuntime) Shutdown(context.Context) error { return nil }
 
 type shutdownTrackingRuntime struct {

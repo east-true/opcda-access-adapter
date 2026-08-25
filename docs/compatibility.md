@@ -5,10 +5,10 @@
 The matrix records only executed real local-COM results. Unit doubles,
 cross-builds, and Windows ABI tests are not interoperability results.
 
-| DA Server | Version | Windows | Server bitness | Adapter arch | Connect | Browse | Read | Write | Reconnect | Notes |
-|---|---|---|---|---|---|---|---|---|---|---|
-| OPC Foundation OPC Classic Core Components TestServer | source commit `efe0d1d1` | Server 2025 | x86 | 386 | PASS | PASS | PASS | PASS | PASS | DA 2.05a fixture; [HTTP/reconnect evidence](https://github.com/east-true/opcda-access-adapter/actions/runs/32632091320), [gRPC evidence](https://github.com/east-true/opcda-access-adapter/actions/runs/32752269529) |
-| OPC Foundation OPC Classic Core Components TestServer | source commit `efe0d1d1` | Server 2025 | x64 | amd64 | PASS | PASS | PASS | PASS | PASS | DA 2.05a fixture; [HTTP/reconnect evidence](https://github.com/east-true/opcda-access-adapter/actions/runs/32632091320), [gRPC evidence](https://github.com/east-true/opcda-access-adapter/actions/runs/32752269529) |
+| DA Server | Version | Windows | Server bitness | Adapter arch | Connect | Browse | Read | Write | Subscribe | Reconnect | Notes |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| OPC Foundation OPC Classic Core Components TestServer | source commit `efe0d1d1` | Server 2025 | x86 | 386 | PASS | PASS | PASS | PASS | PASS | PASS | DA 2.05a fixture; [HTTP/reconnect evidence](https://github.com/east-true/opcda-access-adapter/actions/runs/32632091320), [gRPC evidence](https://github.com/east-true/opcda-access-adapter/actions/runs/32752269529), [Subscribe evidence](https://github.com/east-true/opcda-access-adapter/actions/runs/32803232555) |
+| OPC Foundation OPC Classic Core Components TestServer | source commit `efe0d1d1` | Server 2025 | x64 | amd64 | PASS | PASS | PASS | PASS | PASS | PASS | DA 2.05a fixture; [HTTP/reconnect evidence](https://github.com/east-true/opcda-access-adapter/actions/runs/32632091320), [gRPC evidence](https://github.com/east-true/opcda-access-adapter/actions/runs/32752269529), [Subscribe evidence](https://github.com/east-true/opcda-access-adapter/actions/runs/32803232555) |
 
 ## Recorded result: OPC Foundation DA 2.05a fixture
 
@@ -41,6 +41,39 @@ cross-builds, and Windows ABI tests are not interoperability results.
 - Fixture executable SHA-256 for run `32628886186`: x86
   `35B18E2542131907A256929FE1C5A54B204CAB8421AA9F90305E6C8B6583F681`;
   x64 `C715BFA24DE1414D6CC1E8A6B5F61FEE42530EB43A619BC6BD5185A7B0F6DDF7`.
+
+### Phase 7 DA Subscribe core result
+
+PR #31 workflow run
+[`32803232555`](https://github.com/east-true/opcda-access-adapter/actions/runs/32803232555)
+tested adapter head `a287b215960a251ececa5003480d027cff9f6210` on both native
+x86/386 and x64/amd64. No frontend exposes Subscribe, so the probe drove the DA
+runtime directly. Each architecture passed:
+
+- one DA group per subscription with all three fixture items activated, and the
+  server's requested rate of `250ms` revised to `300ms` and reported unchanged;
+- a real `IOPCDataCallback::OnDataChange` snapshot delivered into the Go
+  callback vtable for `Test/Int32`, `Test/Float`, and `Test/String`, each entry
+  preserving its exact ItemID, VARTYPE, canonical type, access rights, raw
+  Quality, timestamp presence, and HRESULT;
+- three change-driven notifications: the fixture's `Test` items are static, so
+  the probe wrote distinct `VT_R4` values to `Test/Float` through the ordinary
+  typed Write path and the source reported every change;
+- the coalescing bound, with no drained batch exceeding the subscription's
+  active item count;
+- 24 subscribe/unsubscribe cycles against a `MaxSubscriptions` limit of 16 with
+  no leaked DA group or advise cookie, and no reused identifier;
+- invalidation across an induced fixture termination, with pending values
+  discarded rather than delivered, nothing restored implicitly by reconnect,
+  the previous identifier unknown afterwards, and an explicit resubscribe
+  receiving a new generation-scoped identity that delivered again
+  (`sub-1-26` generation 1 to `sub-2-1` generation 2 on x64);
+- no process value written to any probe output.
+
+This is fixture evidence for the OPC Foundation DA 2.05a test server, not a
+broad vendor-compatibility claim. A vendor server that rejects connection
+points, revises rates differently, or reports Quality or timestamps
+differently has not been tested.
 
 ### Phase 6 gRPC frontend result
 

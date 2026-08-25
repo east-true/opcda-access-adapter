@@ -16,6 +16,8 @@ param(
 
     [string]$GRPCProbePath,
 
+    [string]$SubscribeProbePath,
+
     [ValidateRange(0, 10)]
     [int]$FailureCycles = 0,
 
@@ -762,6 +764,26 @@ function Test-GuidedSetupGRPCWindowsService {
     }
 }
 
+function Test-SubscribeCore {
+    Assert-True ($null -ne $script:SubscribeProbeExecutable) 'subscribe probe path is required for Subscribe validation'
+    Write-Host 'Starting DA Subscribe core validation against the real local COM server'
+    Stop-ServerProcesses
+    try {
+        Invoke-NativeProcess -FilePath $script:SubscribeProbeExecutable -ArgumentList @(
+            '-clsid', $expectedCLSID,
+            '-update-rate', '250ms',
+            '-server-process', $script:ServerProcessName,
+            '-timeout', '150s'
+        ) -TimeoutSeconds 210
+    }
+    finally {
+        # The probe terminates the fixture to induce a disconnect; leave no
+        # activated server behind for the scenarios that follow.
+        Stop-ServerProcesses
+    }
+    Write-Host 'Completed DA Subscribe core validation'
+}
+
 function Test-GRPCWriteEnabledForeground {
     Assert-True ($null -ne $script:GRPCProbeExecutable) 'gRPC probe path is required for gRPC validation'
     $grpcPort = if ($AdapterArch -eq '386') { 18651 } else { 18652 }
@@ -817,6 +839,12 @@ $script:GRPCProbeExecutable = if ([string]::IsNullOrWhiteSpace($GRPCProbePath)) 
 }
 else {
     (Resolve-Path -LiteralPath $GRPCProbePath).Path
+}
+$script:SubscribeProbeExecutable = if ([string]::IsNullOrWhiteSpace($SubscribeProbePath)) {
+    $null
+}
+else {
+    (Resolve-Path -LiteralPath $SubscribeProbePath).Path
 }
 $script:ServerRoot = (Resolve-Path -LiteralPath $ServerDirectory).Path
 $script:WorkingDirectory = Join-Path ([IO.Path]::GetTempPath()) "opcda-adapter-real-da-$AdapterArch-$RunLabel"
@@ -905,6 +933,9 @@ try {
     Test-GuidedSetupWindowsService
     Test-GuidedSetupGRPCWindowsService
     Test-GRPCWriteEnabledForeground
+    if ($null -ne $script:SubscribeProbeExecutable) {
+        Test-SubscribeCore
+    }
 
     if ($Destructive.IsPresent) {
         Write-Host 'Starting destructive local COM permission validation'
@@ -1194,7 +1225,8 @@ try {
     Assert-True ($valueLogMatches.Count -eq 0) 'adapter logs contained a process-value JSON field'
 
     $stabilityEnabled = $null -ne $script:StabilityProbeExecutable
-    Write-Host "REAL_DA_VALIDATION_PASS arch=$AdapterArch server=$serverPlatform browse=root+nested read=partial write=disabled+typed+denied reconnect=true failureCycles=$FailureCycles destructive=$($Destructive.IsPresent) adapterCrashCycles=$AdapterCrashCycles stability=$stabilityEnabled soakIterations=$SoakIterations"
+    $subscribeEnabled = $null -ne $script:SubscribeProbeExecutable
+    Write-Host "REAL_DA_VALIDATION_PASS arch=$AdapterArch server=$serverPlatform browse=root+nested read=partial write=disabled+typed+denied reconnect=true failureCycles=$FailureCycles destructive=$($Destructive.IsPresent) adapterCrashCycles=$AdapterCrashCycles stability=$stabilityEnabled subscribe=$subscribeEnabled soakIterations=$SoakIterations"
     Write-Host "READ_METADATA actualType=$($known.dataType.name) canonicalType=$($known.canonicalDataType.name) qualityRaw=$($known.quality) timestampPresent=$($known.timestampPresent) successHRESULT=$($known.hresult.hex) invalidHRESULT=$($unknown.hresult.hex)"
     Write-Host "RESOURCE_DELTAS adapterHandles=$adapterHandleDelta adapterPrivateBytes=$adapterPrivateDelta serverHandles=$serverHandleDelta serverPrivateBytes=$serverPrivateDelta"
 }
