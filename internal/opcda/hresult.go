@@ -10,6 +10,10 @@ const (
 	SOK          HRESULT = 0
 	SFalse       HRESULT = 1
 	ENoInterface HRESULT = -2147467262 // 0x80004002
+	// ConnectENoConnection is returned by IConnectionPointContainer::
+	// FindConnectionPoint when the object has no connection point for the
+	// requested sink interface.
+	ConnectENoConnection HRESULT = -2147220992 // 0x80040200
 )
 
 // Succeeded implements the COM SUCCEEDED macro semantics. Non-negative values

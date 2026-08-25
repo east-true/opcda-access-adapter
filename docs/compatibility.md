@@ -286,16 +286,45 @@ remain untested; compatibility must not be inferred for them.
    an increased reconnect count, a strictly newer connection generation, and
    lazy re-registration rather than old-handle reuse. Do not accept any
    last-good value during the outage.
-8. Repeat the required scenarios for each applicable adapter architecture and
+8. Check `capabilities.subscribe` in status. The adapter probes the group's
+   `IOPCDataCallback` connection point at connect time and never advertises
+   Subscribe without it. If it is false, record **UNSUPPORTED** in the Subscribe
+   column rather than FAIL: a synchronous-only DA 2.0 server is a legitimate
+   source for Browse, Read, and Write. Confirm that a Subscribe attempt is
+   refused immediately as `SUBSCRIBE_UNSUPPORTED` instead of failing late.
+9. If Subscribe is supported, open a gRPC Subscribe stream against a safe item
+   set. Record the requested rate, the server's revised rate, per-item activation
+   status, and whether the source delivers an initial snapshot, change-driven
+   notifications, or both. Then close the stream and confirm
+   `subscription_count` returns to zero.
+10. Repeat the required scenarios for each applicable adapter architecture and
    record actual PASS/FAIL/BLOCKED results in the table above.
-9. For soak validation, repeatedly exercise a bounded safe Read batch while
+11. For soak validation, repeatedly exercise a bounded safe Read batch while
    monitoring process private bytes, handle count, goroutine count, and
    request errors. Exercise Browse and an authorized safe Write at controlled
    intervals. Do not persist response values; record only duration, counts,
    resource deltas, and failure metadata. A VM without an installed real DA
    server cannot satisfy this step.
 
-Do not place process values in this document.
+### Vendor variations to record
+
+The fixture results above cover one server. These are the behaviors most likely
+to differ on a third-party server, and each should be recorded as an exact
+observation rather than used to change source semantics.
+
+| Variation | What to record | Adapter behavior today |
+|---|---|---|
+| No `IOPCDataCallback` connection point | `capabilities.subscribe` false | Probed at connect; Subscribe refused as `SUBSCRIBE_UNSUPPORTED` |
+| Different revised update rate, or a rate the server refuses | requested and revised values | The server's revised rate is reported unchanged |
+| Non-Good Quality | the exact raw 16-bit Quality | Passed through as data, never a transport failure |
+| Absent source timestamp | `timestampPresent` false with a zero timestamp | Presence is an independent bit; no timestamp is synthesized |
+| Scalar VARTYPE outside the supported set | the exact raw VARTYPE | Explicit `UNSUPPORTED_VARTYPE`; never coerced or narrowed |
+| Vendor-specific disconnect HRESULT | the exact operation and HRESULT from `lastError` | **Not recognized as a disconnect.** Per ADR-0005 the adapter does not guess: an unrecognized HRESULT stays a source error, so the runtime keeps reporting `connected` and does not reconnect until the process restarts. Recording the exact HRESULT is what justifies adding it. |
+| `AppID`/`RunAs` that refuses `NT AUTHORITY\LocalService` | the exact activation HRESULT and the DCOM event | Setup never edits COM/DCOM or firewall permissions; run the adapter in the foreground under an account the vendor policy permits |
+
+Adding a row to the matrix requires an executed result on that server. Do not
+infer vendor-wide compatibility from one installation, and do not place process
+values in this document.
 
 ## Automated isolated fixture
 
