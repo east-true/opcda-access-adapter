@@ -117,6 +117,16 @@ The implemented subset and actual interoperability results are recorded instead.
 - **Mapping `VT_INT` and `VT_ERROR` onto the `VT_I4` row:** rejected as an
   invention; the DA core's internal decoding choice is not a UA mapping.
 
+## Later refinements
+
+Two things this ADR left unbound have since been closed from primary sources:
+`MessageSecurityMode`'s wire values from OPC 10000-4 Table 139, and
+`SecurityTokenRequestType`'s from the OPC Foundation UA NodeSet's `DataType`
+definition. The SecurityPolicy URI strings and the per-policy
+`LegacySequenceNumbers` flag remain unbound; both belong to OPC 10000-7, which
+has not been obtainable in a transcribable form, and the URI binds with endpoint
+description.
+
 ## Consequences
 
 - `internal/opcua` exists with the mapping and its tests. No listener, no wire

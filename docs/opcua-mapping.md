@@ -355,6 +355,35 @@ does not decode structures it has no schema for.
 
 `FuzzDecodeStructuredTypes` drives all of these with arbitrary bytes in CI.
 
+## SecureChannel services
+
+`internal/opcua/service.go` implements the `OpenSecureChannel` and
+`CloseSecureChannel` bodies of **OPC 10000-6 Table 64**, plus `ServiceFault`.
+
+**OPC 10000-6 5.2.9**: a message is a structure prefixed by the `NodeId` of its
+`DataTypeEncoding`, with **no length field** — unlike an `ExtensionObject`.
+Enumerations are encoded as `Int32` (5.2.4). The encoding identifiers come from
+the OPC Foundation NodeIds table: `ServiceFault` 397,
+`OpenSecureChannelRequest` 446, `OpenSecureChannelResponse` 449,
+`CloseSecureChannelRequest` 452, `CloseSecureChannelResponse` 455. A `TypeId`
+that is not a standard numeric identifier in namespace 0 is refused with
+`Bad_ServiceUnsupported`.
+
+`SecurityTokenRequestType` is now bound — `Issue` 0, `Renew` 1 — from the OPC
+Foundation UA NodeSet's `DataType` definition, which closes the gap ADR-0016
+recorded. Both enumerations are validated on decode: a value outside the
+enumeration is **refused**, not reduced to a neighbouring one, so a malformed
+field can never look like a deliberate choice of no security.
+
+`ChannelService` joins the decoded message to the token lifecycle. It checks the
+protocol version against the Hello first, as 6.7.4 requires, and a renewal must
+name an existing channel and must not change the security mode that channel was
+opened with. With `SecurityMode` `None` the server nonce is written as **null**
+rather than an empty byte string, so a client cannot read it as a zero-length
+random value; 6.7.4 states the nonces are ignored and should be null.
+
+`FuzzDecodeSecureChannelService` drives the bodies with arbitrary bytes in CI.
+
 ## What is not decided here
 
 Certificate handling and the signed and encrypted security policies, address
