@@ -418,6 +418,40 @@ test of the framing passed, because the encoder and decoder agreed with each
 other. It only surfaced when a client parsed a real frame off a socket, which is
 why this slice came before more service logic.
 
+## GetEndpoints
+
+`internal/opcua/endpoints.go` implements `EndpointDescription`,
+`ApplicationDescription`, `UserTokenPolicy` and the `GetEndpoints` service from
+**OPC 10000-4 Tables 135, 109, 192 and 5**, with the `ApplicationType` and
+`UserTokenType` values of Tables 111 and 193. The listener answers it on an open
+channel: **OPC 10000-4 Table 5 states the authenticationToken is always null and
+shall be ignored if provided**, so this service needs no session, which is why it
+is the first one served.
+
+Table 5 also fixes the filter's meaning: all endpoints are returned when the
+profile list is empty, so a **non-empty** list that does not name this
+endpoint's transport profile returns nothing rather than everything.
+
+A service that is not implemented is answered with a `ServiceFault` carrying
+`Bad_ServiceUnsupported`, which leaves the channel open — the channel is
+healthy, only the request is unsupported. A `MSG` on a channel the server does
+not know is refused at the transport instead, because there is no channel to
+answer on.
+
+The adapter publishes one endpoint, because it serves one source over one
+listener. It carries no certificate, and its `securityLevel` is 0, which Table
+135 defines as "not recommended" — an accurate description of an unsecured
+endpoint.
+
+### The security policy URI is configuration, not a constant
+
+`EndpointConfig.SecurityPolicyURI` is **required and never defaulted**. The set
+of known URIs is defined by **OPC 10000-7**, which this project has not been
+able to obtain in a transcribable form. A server that published a wrong policy
+URI would be unusable by a real client, which is precisely why the value is
+supplied by configuration rather than written from recollection. The same
+applies to the transport profile URI.
+
 ## What is not decided here
 
 Certificate handling and the signed and encrypted security policies, address

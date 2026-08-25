@@ -1,6 +1,7 @@
 package opcua
 
 import (
+	"errors"
 	"io"
 	"net"
 	"testing"
@@ -14,6 +15,25 @@ type testClient struct {
 	conn     net.Conn
 	limits   BinaryLimits
 	sequence uint32
+}
+
+// testEndpointConfig supplies the values the adapter refuses to invent: the
+// endpoint URLs and the security policy URI defined by OPC 10000-7.
+func testEndpointConfig() EndpointConfig {
+	return EndpointConfig{
+		EndpointURL:         "opc.tcp://127.0.0.1:4840",
+		ApplicationURI:      "urn:example:opcda-access-adapter",
+		ProductURI:          "urn:example:opcda-access-adapter",
+		ApplicationName:     "OPC DA Access Adapter",
+		SecurityPolicyURI:   "urn:test:security-policy:none",
+		TransportProfileURI: "urn:test:transport:uatcp-uasc-uabinary",
+	}
+}
+
+func testListenerConfig() ListenerConfig {
+	config := DefaultListenerConfig()
+	config.Endpoint = testEndpointConfig()
+	return config
 }
 
 func startTestListener(t *testing.T, config ListenerConfig) (*Listener, string) {
@@ -194,9 +214,77 @@ func (c *testClient) openChannel(channelID uint32, requestType TokenRequestType,
 	return serviceDecoder.ReadOpenSecureChannelResponse()
 }
 
+// callService sends a MSG on an open channel and returns the service TypeId and
+// the decoder positioned at the response body.
+func (c *testClient) callService(token ChannelSecurityToken, requestID uint32, serviceBody []byte) (uint32, *Decoder, error) {
+	c.t.Helper()
+	body, err := NewEncoder(c.limits)
+	if err != nil {
+		c.t.Fatal(err)
+	}
+	body.WriteUInt32(token.SecureChannelID)
+	body.WriteUInt32(token.TokenID)
+	c.sequence++
+	body.WriteUInt32(c.sequence)
+	body.WriteUInt32(requestID)
+	body.write(serviceBody)
+	encoded, err := body.Bytes()
+	if err != nil {
+		c.t.Fatal(err)
+	}
+	c.send(MessageTypeSecure, ChunkFinal, encoded)
+
+	header, response, err := c.receive()
+	if err != nil {
+		return 0, nil, err
+	}
+	if header.Type == MessageTypeError {
+		protocolError, decodeErr := DecodeProtocolError(response, c.limits)
+		if decodeErr != nil {
+			return 0, nil, decodeErr
+		}
+		return 0, nil, &CodecError{Status: protocolError.Error, Message: protocolError.Reason}
+	}
+	if header.Type != MessageTypeSecure {
+		c.t.Fatalf("response type = %s", header.Type)
+	}
+	// Skip the SecureChannelId, TokenId, and sequence header.
+	decoder, err := NewDecoder(response[8+SequenceHeaderSize:], c.limits)
+	if err != nil {
+		c.t.Fatal(err)
+	}
+	identifier, err := decoder.ReadServiceTypeID()
+	if err != nil {
+		return 0, nil, err
+	}
+	return identifier, decoder, nil
+}
+
+func (c *testClient) getEndpoints(token ChannelSecurityToken, requestID uint32, profileURIs []string) (uint32, *Decoder, error) {
+	c.t.Helper()
+	encoder, err := NewEncoder(c.limits)
+	if err != nil {
+		c.t.Fatal(err)
+	}
+	encoder.WriteGetEndpointsRequest(GetEndpointsRequest{
+		Header: RequestHeader{
+			AuthenticationToken: NumericNodeID(0, 0),
+			RequestHandle:       requestID,
+			AdditionalHeader:    NullExtensionObject(),
+		},
+		EndpointURL: "opc.tcp://127.0.0.1:4840",
+		ProfileURIs: profileURIs,
+	})
+	serviceBody, err := encoder.Bytes()
+	if err != nil {
+		c.t.Fatal(err)
+	}
+	return c.callService(token, requestID, serviceBody)
+}
+
 // The full connection sequence of OPC 10000-6 7.1.3 over a real socket.
 func TestListenerCompletesTheConnectionSequence(t *testing.T) {
-	_, address := startTestListener(t, DefaultListenerConfig())
+	_, address := startTestListener(t, testListenerConfig())
 	client := dialTestClient(t, address)
 
 	ack := client.hello()
@@ -244,7 +332,7 @@ func TestListenerCompletesTheConnectionSequence(t *testing.T) {
 
 // 7.1.3: Hello is sent once; a second one is an error and closes the socket.
 func TestListenerRejectsASecondHello(t *testing.T) {
-	_, address := startTestListener(t, DefaultListenerConfig())
+	_, address := startTestListener(t, testListenerConfig())
 	client := dialTestClient(t, address)
 	client.hello()
 
@@ -277,7 +365,7 @@ func TestListenerRejectsASecondHello(t *testing.T) {
 }
 
 func TestListenerRejectsAnOpenChannelBeforeTheHello(t *testing.T) {
-	_, address := startTestListener(t, DefaultListenerConfig())
+	_, address := startTestListener(t, testListenerConfig())
 	client := dialTestClient(t, address)
 	client.send(MessageTypeOpenChannel, ChunkFinal, make([]byte, 32))
 
@@ -300,7 +388,7 @@ func TestListenerRejectsAnOpenChannelBeforeTheHello(t *testing.T) {
 // A protocol version the server cannot serve is refused with the status the
 // clause names.
 func TestListenerRejectsAnUnsupportedProtocolVersion(t *testing.T) {
-	_, address := startTestListener(t, DefaultListenerConfig())
+	_, address := startTestListener(t, testListenerConfig())
 	client := dialTestClient(t, address)
 
 	body, err := EncodeHello(Hello{
@@ -327,33 +415,157 @@ func TestListenerRejectsAnUnsupportedProtocolVersion(t *testing.T) {
 	}
 }
 
-// A MSG is answered with an explicit fault rather than ignored, because no
-// session service is implemented yet.
-func TestListenerReportsThatNoSessionServiceExists(t *testing.T) {
-	_, address := startTestListener(t, DefaultListenerConfig())
+// A MSG on a channel the server does not know is refused at the transport, not
+// answered as a service.
+func TestListenerRefusesASecureMessageOnAnUnknownChannel(t *testing.T) {
+	_, address := startTestListener(t, testListenerConfig())
 	client := dialTestClient(t, address)
 	client.hello()
-	client.send(MessageTypeSecure, ChunkFinal, make([]byte, 32))
 
-	header, response, err := client.receive()
-	if err != nil {
-		t.Fatalf("receive: %v", err)
+	_, _, err := client.getEndpoints(ChannelSecurityToken{}, 1, nil)
+	if err == nil {
+		t.Fatal("a message on an unknown channel was served")
 	}
-	if header.Type != MessageTypeError {
-		t.Fatalf("answered with %s", header.Type)
+	var codecErr *CodecError
+	if !errors.As(err, &codecErr) || codecErr.Status != StatusBadTcpSecureChannelUnknown {
+		t.Fatalf("error = %v", err)
 	}
-	protocolError, err := DecodeProtocolError(response, client.limits)
+}
+
+// GetEndpoints needs no session, so it is answered on an open channel.
+func TestListenerAnswersGetEndpoints(t *testing.T) {
+	_, address := startTestListener(t, testListenerConfig())
+	client := dialTestClient(t, address)
+	client.hello()
+	opened, err := client.openChannel(0, TokenRequestIssue, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if protocolError.Error != StatusBadServiceUnsupported {
-		t.Fatalf("error = %s", protocolError.Error.Hex())
+
+	identifier, decoder, err := client.getEndpoints(opened.SecurityToken, 2, nil)
+	if err != nil {
+		t.Fatalf("GetEndpoints: %v", err)
+	}
+	if identifier != GetEndpointsResponseEncodingID {
+		t.Fatalf("service = %d", identifier)
+	}
+	response, err := decoder.ReadGetEndpointsResponse()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if response.Header.ServiceResult != StatusGood || response.Header.RequestHandle != 2 {
+		t.Fatalf("response header = %+v", response.Header)
+	}
+	if len(response.Endpoints) != 1 {
+		t.Fatalf("endpoints = %d, want 1", len(response.Endpoints))
+	}
+	endpoint := response.Endpoints[0]
+	expected := testEndpointConfig()
+	if endpoint.EndpointURL != expected.EndpointURL ||
+		endpoint.SecurityPolicyURI != expected.SecurityPolicyURI ||
+		endpoint.TransportProfileURI != expected.TransportProfileURI {
+		t.Fatalf("endpoint = %+v", endpoint)
+	}
+	if endpoint.SecurityMode != SecurityModeNone {
+		t.Fatalf("security mode = %s", endpoint.SecurityMode)
+	}
+	// An unsecured endpoint carries no certificate and is not recommended.
+	if endpoint.ServerCertificate != nil {
+		t.Fatalf("server certificate = %v, want null", endpoint.ServerCertificate)
+	}
+	if endpoint.SecurityLevel != 0 {
+		t.Fatalf("security level = %d, want 0", endpoint.SecurityLevel)
+	}
+	if len(endpoint.UserIdentityTokens) != 1 ||
+		endpoint.UserIdentityTokens[0].TokenType != UserTokenTypeAnonymous {
+		t.Fatalf("user identity tokens = %+v", endpoint.UserIdentityTokens)
+	}
+	if endpoint.Server.ApplicationType != ApplicationTypeServer {
+		t.Fatalf("application type = %d", endpoint.Server.ApplicationType)
+	}
+}
+
+// Table 5: a non-empty profile list that does not name this endpoint's
+// transport profile returns nothing rather than everything.
+func TestGetEndpointsHonoursTheProfileFilter(t *testing.T) {
+	_, address := startTestListener(t, testListenerConfig())
+	client := dialTestClient(t, address)
+	client.hello()
+	opened, err := client.openChannel(0, TokenRequestIssue, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, decoder, err := client.getEndpoints(opened.SecurityToken, 2, []string{"urn:test:transport:other"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	response, err := decoder.ReadGetEndpointsResponse()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(response.Endpoints) != 0 {
+		t.Fatalf("a filtered request returned %d endpoints", len(response.Endpoints))
+	}
+
+	_, decoder, err = client.getEndpoints(opened.SecurityToken, 3, []string{testEndpointConfig().TransportProfileURI})
+	if err != nil {
+		t.Fatal(err)
+	}
+	response, err = decoder.ReadGetEndpointsResponse()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(response.Endpoints) != 1 {
+		t.Fatalf("a matching filter returned %d endpoints", len(response.Endpoints))
+	}
+}
+
+// A service that is not implemented is reported as a ServiceFault, keeping the
+// channel open, rather than closing the connection.
+func TestListenerFaultsOnAnUnimplementedService(t *testing.T) {
+	_, address := startTestListener(t, testListenerConfig())
+	client := dialTestClient(t, address)
+	client.hello()
+	opened, err := client.openChannel(0, TokenRequestIssue, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// CreateSession is not implemented yet.
+	encoder, err := NewEncoder(client.limits)
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoder.WriteServiceTypeID(461)
+	serviceBody, err := encoder.Bytes()
+	if err != nil {
+		t.Fatal(err)
+	}
+	identifier, decoder, err := client.callService(opened.SecurityToken, 2, serviceBody)
+	if err != nil {
+		t.Fatalf("the channel was closed instead of faulting: %v", err)
+	}
+	if identifier != ServiceFaultEncodingID {
+		t.Fatalf("service = %d, want a ServiceFault", identifier)
+	}
+	header, err := decoder.ReadResponseHeader()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if header.ServiceResult != StatusBadServiceUnsupported {
+		t.Fatalf("service result = %s", header.ServiceResult.Hex())
+	}
+
+	// The channel survives, so a following request is still served.
+	if _, _, err := client.getEndpoints(opened.SecurityToken, 3, nil); err != nil {
+		t.Fatalf("the channel did not survive the fault: %v", err)
 	}
 }
 
 // A connection that never sends a Hello is closed rather than held.
 func TestListenerClosesAConnectionThatNeverSaysHello(t *testing.T) {
-	config := DefaultListenerConfig()
+	config := testListenerConfig()
 	config.HelloTimeout = 150 * time.Millisecond
 	_, address := startTestListener(t, config)
 
@@ -376,7 +588,7 @@ func TestListenerClosesAConnectionThatNeverSaysHello(t *testing.T) {
 // The connection limit closes an excess connection immediately rather than
 // queueing sockets the server will not serve.
 func TestListenerBoundsConcurrentConnections(t *testing.T) {
-	config := DefaultListenerConfig()
+	config := testListenerConfig()
 	config.MaxConnections = 1
 	_, address := startTestListener(t, config)
 
@@ -398,8 +610,12 @@ func TestListenerBoundsConcurrentConnections(t *testing.T) {
 }
 
 func TestListenerConfigValidation(t *testing.T) {
-	if err := DefaultListenerConfig().ValidateForConfiguration(); err != nil {
-		t.Fatalf("default config rejected: %v", err)
+	if err := testListenerConfig().ValidateForConfiguration(); err != nil {
+		t.Fatalf("test config rejected: %v", err)
+	}
+	// The endpoint is not defaulted: a listener cannot be built without one.
+	if err := DefaultListenerConfig().ValidateForConfiguration(); err == nil {
+		t.Fatal("a config with no endpoint was accepted")
 	}
 	for name, mutate := range map[string]func(*ListenerConfig){
 		"receive buffer below the floor": func(c *ListenerConfig) { c.ReceiveBufferSize = MinimumBufferSize - 1 },
@@ -412,7 +628,7 @@ func TestListenerConfigValidation(t *testing.T) {
 		"buffer beyond the codec bound": func(c *ListenerConfig) { c.ReceiveBufferSize = uint32(c.Binary.MaxMessageBytes) + 1 },
 	} {
 		t.Run(name, func(t *testing.T) {
-			config := DefaultListenerConfig()
+			config := testListenerConfig()
 			mutate(&config)
 			if err := config.ValidateForConfiguration(); err == nil {
 				t.Fatalf("config %+v was accepted", config)
@@ -425,7 +641,7 @@ func TestListenerConfigValidation(t *testing.T) {
 }
 
 func TestListenerCloseIsIdempotent(t *testing.T) {
-	listener, _ := startTestListener(t, DefaultListenerConfig())
+	listener, _ := startTestListener(t, testListenerConfig())
 	if err := listener.Close(); err != nil {
 		t.Fatal(err)
 	}
