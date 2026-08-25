@@ -1,6 +1,7 @@
 package opcua
 
 import (
+	"bytes"
 	"testing"
 	"time"
 )
@@ -209,6 +210,63 @@ func FuzzDecodeUASC(f *testing.F) {
 			return
 		}
 		_, _ = DecodeSequenceHeader(body, limits)
+	})
+}
+
+// FuzzDecodeStructuredTypes drives NodeId, ExtensionObject, DiagnosticInfo and
+// the service headers with arbitrary bytes. Recursion and every declared length
+// must stay bounded no matter what a peer sends.
+func FuzzDecodeStructuredTypes(f *testing.F) {
+	limits := DefaultBinaryLimits()
+
+	seed, err := NewEncoder(limits)
+	if err != nil {
+		f.Fatal(err)
+	}
+	seed.WriteNodeID(StringNodeID(2, "Test/Float"))
+	seed.WriteExtensionObject(NullExtensionObject())
+	seed.WriteDiagnosticInfo(DiagnosticInfo{SymbolicID: -1, HasSymbolicID: true})
+	seed.WriteRequestHeader(RequestHeader{
+		AuthenticationToken: NumericNodeID(0, 1), AdditionalHeader: NullExtensionObject(),
+	})
+	encoded, err := seed.Bytes()
+	if err != nil {
+		f.Fatal(err)
+	}
+
+	f.Add(encoded)
+	f.Add([]byte{})
+	f.Add([]byte{0x00, 0x00})
+	f.Add([]byte{0x03, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF})
+	// A chain of DiagnosticInfo masks that ask for unbounded recursion.
+	f.Add(bytes.Repeat([]byte{0x40}, 64))
+	f.Add([]byte{0x05, 0, 0, 0xFF, 0xFF, 0xFF, 0x7F})
+
+	f.Fuzz(func(t *testing.T, data []byte) {
+		for _, read := range []func(*Decoder) error{
+			func(d *Decoder) error { _, err := d.ReadNodeID(); return err },
+			func(d *Decoder) error { _, err := d.ReadExpandedNodeID(); return err },
+			func(d *Decoder) error { _, err := d.ReadQualifiedName(); return err },
+			func(d *Decoder) error { _, err := d.ReadLocalizedText(); return err },
+			func(d *Decoder) error { _, err := d.ReadExtensionObject(); return err },
+			func(d *Decoder) error { _, err := d.ReadDiagnosticInfo(); return err },
+			func(d *Decoder) error { _, err := d.ReadRequestHeader(); return err },
+			func(d *Decoder) error { _, err := d.ReadResponseHeader(); return err },
+		} {
+			decoder, err := NewDecoder(data, limits)
+			if err != nil {
+				return
+			}
+			if err := read(decoder); err != nil {
+				if _, ok := err.(*CodecError); !ok {
+					t.Fatalf("decode error %v is not a CodecError", err)
+				}
+				continue
+			}
+			if decoder.Remaining() < 0 {
+				t.Fatal("a reader consumed past the end of the buffer")
+			}
+		}
 	})
 }
 

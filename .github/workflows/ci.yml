@@ -34,6 +34,7 @@ jobs:
           go test ./internal/opcua -run=^$ -fuzz=^FuzzDecodeDateTime$ -fuzztime=10000x
           go test ./internal/opcua -run=^$ -fuzz=^FuzzDecodeUACP$ -fuzztime=10000x
           go test ./internal/opcua -run=^$ -fuzz=^FuzzDecodeUASC$ -fuzztime=10000x
+          go test ./internal/opcua -run=^$ -fuzz=^FuzzDecodeStructuredTypes$ -fuzztime=10000x
       - name: Vet
         run: go vet ./...
 
