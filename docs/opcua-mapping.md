@@ -151,9 +151,44 @@ are:
   such as `ns=2` as persistent identity;
 - names are never tidied — no case changes, no replacing `.` or spaces with `_`.
 
+## Wire encoding
+
+`internal/opcua/binary.go` implements the UA Binary encoding of the built-in
+types from **OPC 10000-6 clause 5.2**: little-endian integers and
+floating-point values, `Int32` length prefixes where `-1` means null and `0`
+means empty, `Guid` as `UInt32`/`UInt16`/`UInt16`/`Byte[8]`, one-dimensional
+arrays preceded by an `Int32` element count, and `DateTime` as 100 nanosecond
+intervals since 1601-01-01 UTC with the clause's saturation rules at both ends.
+
+Booleans are written as `1` for true and any non-zero byte decodes as true, and
+NaN is normalised to an IEEE quiet NaN, both as the clause requires.
+
+### Bounds
+
+Design §35.5 requires the hand-written parser to bound what a peer can make it
+do. `BinaryLimits` carries the message, String, ByteString, array, and nesting
+bounds. The decoder validates every declared length against **both** its
+configured bound and the bytes actually remaining before it allocates or
+advances, so a hostile length prefix cannot drive an allocation from a small
+message. Any negative length other than `-1` is malformed, including
+`math.MinInt32`.
+
+OPC 10000-6 5.1.8 requires decoders to support at least 100 nesting levels and
+to report an error beyond what they support; the nesting bound is therefore
+floored at 100 and cannot be configured below it.
+
+Failures carry a UA status code a peer can be told: `Bad_DecodingError` for
+malformed input, `Bad_EncodingLimitsExceeded` when a declared length or nesting
+level exceeds a bound, and `Bad_EncodingError` for a caller's own encoding
+mistake.
+
+`FuzzDecodeUABinary` and `FuzzDecodeDateTime` run in CI with the same
+deterministic execution budget as the existing fuzz targets.
+
 ## What is not decided here
 
-The UA wire protocol, address space construction, session and secure channel
-handling, subscription and MonitoredItem behavior, certificates, and security
-policies are out of scope for this document. See ADR-0016 for the phase order
+Chunking and the UA-TCP message framing that sits above these built-in types,
+address space construction, session and secure channel handling, subscription
+and MonitoredItem behavior, certificates, and security policies are out of
+scope for this document. See ADR-0016 for the phase order
 and the conformance language rules.
