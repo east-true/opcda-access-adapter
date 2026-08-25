@@ -384,6 +384,40 @@ random value; 6.7.4 states the nonces are ignored and should be null.
 
 `FuzzDecodeSecureChannelService` drives the bodies with arbitrary bytes in CI.
 
+## The UA-TCP listener
+
+`internal/opcua/listener.go` is the first part of Phase 8 that moves bytes. It
+serves the connection sequence of **OPC 10000-6 7.1.3** — Hello, Acknowledge,
+`OpenSecureChannel`, `CloseSecureChannel` — for the `None` security path only.
+Per ADR-0016 it exists for local interoperability work and is never described as
+production ready.
+
+Everything a peer can consume before it has proved anything is bounded: the
+concurrent connection count, the pre-negotiation header size, the wait for a
+Hello (configurable, capped at the two minutes 7.1.3 allows), and per-message
+read and write deadlines. A connection beyond the limit is closed immediately
+rather than queued, so a peer cannot make the server hold sockets it will not
+serve. A second Hello is an error that closes the connection, as 7.1.3 requires.
+
+Failures that carry a UA status are reported as an `Error` message before the
+socket closes; a plain transport failure carries nothing useful to the peer and
+is not answered. A `MSG` is answered with `Bad_ServiceUnsupported` rather than
+ignored, because no session service exists yet.
+
+An `OpenSecureChannel` that presents a certificate or thumbprint is refused with
+`Bad_SecurityPolicyRejected` rather than being silently treated as unsecured.
+
+Sequence numbers are tracked **per direction**: each side of a channel assigns
+its own series, so the received and sent numbers are separate counters.
+
+### What writing it caught
+
+The server was writing the `SecureChannelId` twice — once in the 12 byte header
+of Table 57, where it belongs, and again at the start of the body. Every unit
+test of the framing passed, because the encoder and decoder agreed with each
+other. It only surfaced when a client parsed a real frame off a socket, which is
+why this slice came before more service logic.
+
 ## What is not decided here
 
 Certificate handling and the signed and encrypted security policies, address
