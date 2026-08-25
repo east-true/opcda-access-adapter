@@ -114,18 +114,16 @@ release-promotion gate.
 
 ## In progress
 
-- Phase 8 OPC UA continues on `feat/opcua-get-endpoints` with
-  `EndpointDescription`, `ApplicationDescription`, `UserTokenPolicy`, and the
-  `GetEndpoints` service, answered by the listener on an open channel. Merged so
-  far: the DA-to-UA mapping (PR #37), the UA Binary codec (PR #38), the
-  connection protocol framing (PR #39), the secure conversation framing
-  (PR #40), the SecureChannel token lifecycle (PR #41), the structured types and
-  service headers (PR #42), the SecureChannel service bodies (PR #43), and the
-  UA-TCP listener (PR #44). No session service, no address space, and no UA
-  dependency yet. The listener is still not wired into the application, and the
-  SecurityPolicy and transport profile URIs are required configuration because
-  OPC 10000-7 was not obtainable. No conformance or interoperability claim is
-  made.
+- Phase 8 OPC UA continues on `feat/opcua-session-services` with
+  `CreateSession`, `ActivateSession`, and `CloseSession`, served by the listener
+  over a real socket. Merged so far: the DA-to-UA mapping (PR #37), the UA
+  Binary codec (PR #38), the connection protocol framing (PR #39), the secure
+  conversation framing (PR #40), the SecureChannel token lifecycle (PR #41), the
+  structured types and service headers (PR #42), the SecureChannel service
+  bodies (PR #43), the UA-TCP listener (PR #44), and GetEndpoints (PR #45). No
+  address space and no UA dependency yet. The listener is still not wired into
+  the application, and only the anonymous user identity is accepted. No
+  conformance or interoperability claim is made.
 
 - The local KVM/libvirt destructive-validation gate is paused. The dedicated
   `opcda-destructive-review` VM and all of its dedicated host resources were
