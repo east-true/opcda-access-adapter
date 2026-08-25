@@ -32,6 +32,9 @@ Browse, Read, and typed value Write without changing source semantics.
   overflow, no adapter-invented drop counter, and no subscription termination
   for a slow consumer. A callback must never block. Disconnect invalidates a
   subscription and discards its pending values; resubscribe is always explicit.
+- A Subscribe stream holds no frontend buffer. Backpressure is the transport
+  window, ending a stream releases the DA group, and an invalidated stream ends
+  with an explicit error rather than looking transparently retryable.
 - Write is disabled by default, value-only, strictly typed, and never retried
   or replayed automatically.
 - Process values, including Write values, must not be logged by default.
@@ -58,10 +61,11 @@ real server result in `docs/compatibility.md`.
 The completed v0 is HTTP-only and targets OPC DA 2.05a. Phase 6 adds an
 explicitly selected typed unary gRPC frontend for Status, Browse, device Read,
 and strict typed value Write. It does not add simultaneous frontend listeners.
-Phase 7 adds a DA-native Subscribe core in the runtime only: one subscription
-is one DA group advised through `IOPCDataCallback`. It is validated against the
-OPC Foundation DA 2.05a fixture on both architectures; no frontend exposes
-Subscribe. OPC UA,
+Phase 7 adds a DA-native Subscribe core plus its gRPC frontend: one
+subscription is one DA group advised through `IOPCDataCallback`, exposed as a
+server-streaming `Subscribe` RPC. The core is validated against the OPC
+Foundation DA 2.05a fixture on both architectures. HTTP exposes no Subscribe,
+and HTTP streaming, SSE, and WebSocket remain out of scope. OPC UA,
 UI, storage, and all non-DA sources remain out of scope. Local CLI detection is
 registration inventory only and does not alter the single explicitly configured
 runtime source.

@@ -7,7 +7,7 @@ import (
 	"google.golang.org/protobuf/reflect/protoreflect"
 )
 
-func TestProtocolUsesDANativeVocabularyAndUnaryPhaseSixSurface(t *testing.T) {
+func TestProtocolUsesDANativeVocabularyAndPhaseSevenSurface(t *testing.T) {
 	services := File_api_opcda_v1_opcda_access_proto.Services()
 	if services.Len() != 1 {
 		t.Fatalf("services = %d", services.Len())
@@ -16,14 +16,31 @@ func TestProtocolUsesDANativeVocabularyAndUnaryPhaseSixSurface(t *testing.T) {
 	if string(service.Name()) != "OPCDAAccess" {
 		t.Fatalf("service = %s", service.Name())
 	}
-	wantMethods := []string{"Status", "Browse", "Read", "Write"}
+	// Subscribe is the only stream, and it is server-streaming only: the client
+	// never pushes into an open subscription.
+	wantMethods := []struct {
+		name            string
+		streamingServer bool
+	}{
+		{"Status", false},
+		{"Browse", false},
+		{"Read", false},
+		{"Write", false},
+		{"Subscribe", true},
+	}
 	if service.Methods().Len() != len(wantMethods) {
 		t.Fatalf("methods = %d", service.Methods().Len())
 	}
 	for index, want := range wantMethods {
 		method := service.Methods().Get(index)
-		if string(method.Name()) != want || method.IsStreamingClient() || method.IsStreamingServer() {
-			t.Fatalf("method %d = %s streaming=%t/%t", index, method.Name(), method.IsStreamingClient(), method.IsStreamingServer())
+		if string(method.Name()) != want.name {
+			t.Fatalf("method %d = %s, want %s", index, method.Name(), want.name)
+		}
+		if method.IsStreamingClient() {
+			t.Fatalf("method %s is client-streaming", method.Name())
+		}
+		if method.IsStreamingServer() != want.streamingServer {
+			t.Fatalf("method %s server-streaming = %t, want %t", method.Name(), method.IsStreamingServer(), want.streamingServer)
 		}
 	}
 
@@ -51,6 +68,26 @@ func TestProtocolCarriesRawDAIdentityAndSemantics(t *testing.T) {
 		if hresult.ByName(protoreflectName(name)) == nil {
 			t.Fatalf("DAHRESULT missing %s", name)
 		}
+	}
+
+	// A subscription reports the server's revised rate, not just the request.
+	created := (&DASubscriptionCreated{}).ProtoReflect().Descriptor().Fields()
+	for _, name := range []string{"subscription_id", "connection_generation", "requested_update_rate_ms", "revised_update_rate_ms", "percent_deadband", "active_item_count"} {
+		if created.ByName(protoreflectName(name)) == nil {
+			t.Fatalf("DASubscriptionCreated missing %s", name)
+		}
+	}
+	item := (&DASubscriptionItemStatus{}).ProtoReflect().Descriptor().Fields()
+	for _, name := range []string{"item_id", "active", "canonical_data_type", "access_rights", "hresult", "error_code"} {
+		if item.ByName(protoreflectName(name)) == nil {
+			t.Fatalf("DASubscriptionItemStatus missing %s", name)
+		}
+	}
+	// Notification values reuse DAReadResult so a subscribed value and a device
+	// Read value cannot drift apart.
+	values := (&DASubscriptionUpdate{}).ProtoReflect().Descriptor().Fields().ByName(protoreflectName("values"))
+	if values == nil || values.Message() == nil || values.Message().FullName() != (&DAReadResult{}).ProtoReflect().Descriptor().FullName() {
+		t.Fatal("DASubscriptionUpdate values do not reuse DAReadResult")
 	}
 }
 

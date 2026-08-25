@@ -189,6 +189,8 @@ func LoadConfig() (Config, error) {
 		{key: "OPCDA_MAX_REGISTERED_ITEMS", target: &config.Runtime.Limits.MaxRegisteredItems},
 		{key: "OPCDA_MAX_ITEM_ID_BYTES", target: &config.Runtime.Limits.MaxItemIDBytes},
 		{key: "OPCDA_MAX_BSTR_CODE_UNITS", target: &config.Runtime.Limits.MaxBSTRCodeUnits},
+		{key: "OPCDA_MAX_SUBSCRIPTIONS", target: &config.Runtime.Limits.MaxSubscriptions},
+		{key: "OPCDA_MAX_SUBSCRIPTION_ITEMS", target: &config.Runtime.Limits.MaxSubscriptionItems},
 	}
 	for _, setting := range limitSettings {
 		if *setting.target, err = intEnv(setting.key, *setting.target); err != nil {

@@ -18,8 +18,15 @@ vendor-compatibility claim.
 delivered real `OnDataChange` notifications from the source-built OPC
 Foundation fixture on both supported architectures, including change-driven
 delivery, group and advise cleanup, and invalidation across an induced
-disconnect. This is not a broad vendor-compatibility claim. No frontend
-exposes Subscribe.
+disconnect. This is not a broad vendor-compatibility claim.
+
+**PHASE 7 gRPC SUBSCRIBE STREAMING IMPLEMENTED AND FIXTURE-VALIDATED** — the
+DA core is exposed as a server-streaming `Subscribe` RPC and passed all eight
+PR checks, including a real-DA stream run on both architectures. Backpressure
+is the HTTP/2 flow-control window with no adapter-side buffer, ending a stream
+releases the DA group, and an invalidated subscription ends the stream with
+`Aborted` and requires an explicit resubscribe. HTTP still exposes no
+Subscribe.
 
 ## Current main SHA
 
@@ -94,6 +101,9 @@ release-promotion gate.
 
 ## In progress
 
+- Phase 7 gRPC Subscribe streaming is on `feat/grpc-subscribe-stream` with all
+  eight checks green, including its real-DA stream run. It awaits merge.
+
 - The local KVM/libvirt destructive-validation gate is paused. The dedicated
   `opcda-destructive-review` VM and all of its dedicated host resources were
   removed on 2026-08-24 because this host could not run it alongside another
@@ -118,6 +128,25 @@ release-promotion gate.
   bounded helper with a sixty-second deadline, so a pass means the record was
   written rather than that the runner happened to be fast. No product behavior
   and no assertion were weakened.
+- PR #34 CI run
+  [`32809889776`](https://github.com/east-true/opcda-access-adapter/actions/runs/32809889776)
+  passed quality, race/fuzz checks, release packaging, both Windows builds, and
+  both native Windows test jobs at head
+  `a24c0eca5ab598028d413ef04276c1567257431e`. The protobuf bindings were
+  regenerated with the pinned `libprotoc 36.0`, `protoc-gen-go v1.36.12`, and
+  `protoc-gen-go-grpc 1.6.2`, after first confirming that toolchain reproduced
+  the committed files byte-for-byte.
+- PR #34 real-DA run
+  [`32809889799`](https://github.com/east-true/opcda-access-adapter/actions/runs/32809889799)
+  passed on both x86/386 and x64/amd64. The write-enabled gRPC scenario opened
+  the Subscribe stream, received a `created` message reporting the source
+  revised rate of `300ms` for a requested `250ms` with all three items active,
+  received the initial snapshot and two change-driven notifications induced
+  through typed Write, held the coalescing bound, and saw `subscription_count`
+  return to zero after the client closed the stream. The DA Subscribe core
+  probe and the existing HTTP, gRPC unary, reconnect, failure-cycle, load, and
+  200-Read soak regression also passed. Exact figures are in
+  `docs/compatibility.md`.
 - Post-merge CI run
   [`32806556135`](https://github.com/east-true/opcda-access-adapter/actions/runs/32806556135)
   passed quality, release packaging, both Windows builds, and both native
@@ -454,3 +483,4 @@ release-promotion gate.
 - [ADR-0011: guided setup and Windows Service lifecycle](adr/0011-guided-setup-and-windows-service.md)
 - [ADR-0012: DA-native gRPC frontend](adr/0012-grpc-da-native-frontend.md)
 - [ADR-0013: DA-native Subscribe core](adr/0013-da-native-subscribe-core.md)
+- [ADR-0014: gRPC Subscribe server streaming](adr/0014-grpc-subscribe-streaming.md)

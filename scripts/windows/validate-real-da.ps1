@@ -807,13 +807,15 @@ function Test-GRPCWriteEnabledForeground {
             '-address', "127.0.0.1:$grpcPort",
             '-expected-clsid', $expectedCLSID,
             '-write-enabled',
-            '-timeout', '60s'
-        ) -TimeoutSeconds 90
+            # The write-enabled scenario also drives the Subscribe stream, which
+            # waits on real source notifications, so it needs a longer bound.
+            '-timeout', '120s'
+        ) -TimeoutSeconds 150
         $listeners = @(Get-NetTCPConnection -State Listen -OwningProcess $grpcAdapter.Id -ErrorAction SilentlyContinue)
         Assert-True ($listeners.Count -eq 1) 'gRPC adapter did not expose exactly one TCP listener'
         Assert-True ($listeners[0].LocalAddress -eq '127.0.0.1' -and [int]$listeners[0].LocalPort -eq $grpcPort) `
             'gRPC adapter listener was reachable beyond IPv4 loopback'
-        Write-Host "GRPC_WRITE_ENABLED_FOREGROUND_PASS arch=$AdapterArch frontend=grpc typedWrite=true sourceDeniedWrite=true valuesLogged=false"
+        Write-Host "GRPC_WRITE_ENABLED_FOREGROUND_PASS arch=$AdapterArch frontend=grpc typedWrite=true sourceDeniedWrite=true subscribeStream=true valuesLogged=false"
     }
     finally {
         Stop-Adapter $grpcAdapter

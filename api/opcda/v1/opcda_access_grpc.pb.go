@@ -19,10 +19,11 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	OPCDAAccess_Status_FullMethodName = "/opcda.access.v1.OPCDAAccess/Status"
-	OPCDAAccess_Browse_FullMethodName = "/opcda.access.v1.OPCDAAccess/Browse"
-	OPCDAAccess_Read_FullMethodName   = "/opcda.access.v1.OPCDAAccess/Read"
-	OPCDAAccess_Write_FullMethodName  = "/opcda.access.v1.OPCDAAccess/Write"
+	OPCDAAccess_Status_FullMethodName    = "/opcda.access.v1.OPCDAAccess/Status"
+	OPCDAAccess_Browse_FullMethodName    = "/opcda.access.v1.OPCDAAccess/Browse"
+	OPCDAAccess_Read_FullMethodName      = "/opcda.access.v1.OPCDAAccess/Read"
+	OPCDAAccess_Write_FullMethodName     = "/opcda.access.v1.OPCDAAccess/Write"
+	OPCDAAccess_Subscribe_FullMethodName = "/opcda.access.v1.OPCDAAccess/Subscribe"
 )
 
 // OPCDAAccessClient is the client API for OPCDAAccess service.
@@ -35,6 +36,10 @@ type OPCDAAccessClient interface {
 	Browse(ctx context.Context, in *DABrowseRequest, opts ...grpc.CallOption) (*DABrowseResponse, error)
 	Read(ctx context.Context, in *DAReadRequest, opts ...grpc.CallOption) (*DAReadResponse, error)
 	Write(ctx context.Context, in *DAWriteRequest, opts ...grpc.CallOption) (*DAWriteResponse, error)
+	// Subscribe opens one DA group and streams its notifications until the
+	// client cancels, the source is lost, or the adapter stops. The stream
+	// never replays a missed value and never resubscribes on its own.
+	Subscribe(ctx context.Context, in *DASubscribeRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[DASubscribeResponse], error)
 }
 
 type oPCDAAccessClient struct {
@@ -85,6 +90,25 @@ func (c *oPCDAAccessClient) Write(ctx context.Context, in *DAWriteRequest, opts 
 	return out, nil
 }
 
+func (c *oPCDAAccessClient) Subscribe(ctx context.Context, in *DASubscribeRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[DASubscribeResponse], error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	stream, err := c.cc.NewStream(ctx, &OPCDAAccess_ServiceDesc.Streams[0], OPCDAAccess_Subscribe_FullMethodName, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &grpc.GenericClientStream[DASubscribeRequest, DASubscribeResponse]{ClientStream: stream}
+	if err := x.ClientStream.SendMsg(in); err != nil {
+		return nil, err
+	}
+	if err := x.ClientStream.CloseSend(); err != nil {
+		return nil, err
+	}
+	return x, nil
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type OPCDAAccess_SubscribeClient = grpc.ServerStreamingClient[DASubscribeResponse]
+
 // OPCDAAccessServer is the server API for OPCDAAccess service.
 // All implementations must embed UnimplementedOPCDAAccessServer
 // for forward compatibility.
@@ -95,6 +119,10 @@ type OPCDAAccessServer interface {
 	Browse(context.Context, *DABrowseRequest) (*DABrowseResponse, error)
 	Read(context.Context, *DAReadRequest) (*DAReadResponse, error)
 	Write(context.Context, *DAWriteRequest) (*DAWriteResponse, error)
+	// Subscribe opens one DA group and streams its notifications until the
+	// client cancels, the source is lost, or the adapter stops. The stream
+	// never replays a missed value and never resubscribes on its own.
+	Subscribe(*DASubscribeRequest, grpc.ServerStreamingServer[DASubscribeResponse]) error
 	mustEmbedUnimplementedOPCDAAccessServer()
 }
 
@@ -116,6 +144,9 @@ func (UnimplementedOPCDAAccessServer) Read(context.Context, *DAReadRequest) (*DA
 }
 func (UnimplementedOPCDAAccessServer) Write(context.Context, *DAWriteRequest) (*DAWriteResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method Write not implemented")
+}
+func (UnimplementedOPCDAAccessServer) Subscribe(*DASubscribeRequest, grpc.ServerStreamingServer[DASubscribeResponse]) error {
+	return status.Error(codes.Unimplemented, "method Subscribe not implemented")
 }
 func (UnimplementedOPCDAAccessServer) mustEmbedUnimplementedOPCDAAccessServer() {}
 func (UnimplementedOPCDAAccessServer) testEmbeddedByValue()                     {}
@@ -210,6 +241,17 @@ func _OPCDAAccess_Write_Handler(srv interface{}, ctx context.Context, dec func(i
 	return interceptor(ctx, in, info, handler)
 }
 
+func _OPCDAAccess_Subscribe_Handler(srv interface{}, stream grpc.ServerStream) error {
+	m := new(DASubscribeRequest)
+	if err := stream.RecvMsg(m); err != nil {
+		return err
+	}
+	return srv.(OPCDAAccessServer).Subscribe(m, &grpc.GenericServerStream[DASubscribeRequest, DASubscribeResponse]{ServerStream: stream})
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type OPCDAAccess_SubscribeServer = grpc.ServerStreamingServer[DASubscribeResponse]
+
 // OPCDAAccess_ServiceDesc is the grpc.ServiceDesc for OPCDAAccess service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -234,6 +276,12 @@ var OPCDAAccess_ServiceDesc = grpc.ServiceDesc{
 			Handler:    _OPCDAAccess_Write_Handler,
 		},
 	},
-	Streams:  []grpc.StreamDesc{},
+	Streams: []grpc.StreamDesc{
+		{
+			StreamName:    "Subscribe",
+			Handler:       _OPCDAAccess_Subscribe_Handler,
+			ServerStreams: true,
+		},
+	},
 	Metadata: "api/opcda/v1/opcda_access.proto",
 }

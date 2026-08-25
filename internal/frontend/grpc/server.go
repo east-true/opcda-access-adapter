@@ -36,16 +36,22 @@ type Config struct {
 	MaxBrowseEntries    int
 	MaxBrowseDepth      int
 	MaxItemIDBytes      int
+	// MaxSubscribeItems bounds one Subscribe request. MaxSubscriptionStreams
+	// bounds concurrent Subscribe streams; the DA core enforces its own
+	// subscription ceiling independently.
+	MaxSubscribeItems      int
+	MaxSubscriptionStreams int
 }
 
 type Server struct {
 	opcdav1.UnimplementedOPCDAAccessServer
 
-	runtime   opcda.Runtime
-	config    Config
-	server    *grpcgo.Server
-	requests  chan struct{}
-	listening atomic.Bool
+	runtime       opcda.Runtime
+	config        Config
+	server        *grpcgo.Server
+	requests      chan struct{}
+	subscriptions chan struct{}
+	listening     atomic.Bool
 }
 
 func New(runtime opcda.Runtime, config Config) *Server {
@@ -98,11 +104,18 @@ func New(runtime opcda.Runtime, config Config) *Server {
 	if config.MaxItemIDBytes <= 0 {
 		config.MaxItemIDBytes = defaults.MaxItemIDBytes
 	}
+	if config.MaxSubscribeItems <= 0 {
+		config.MaxSubscribeItems = defaults.MaxSubscriptionItems
+	}
+	if config.MaxSubscriptionStreams <= 0 {
+		config.MaxSubscriptionStreams = defaults.MaxSubscriptions
+	}
 
 	s := &Server{
-		runtime:  runtime,
-		config:   config,
-		requests: make(chan struct{}, config.MaxConcurrent),
+		runtime:       runtime,
+		config:        config,
+		requests:      make(chan struct{}, config.MaxConcurrent),
+		subscriptions: make(chan struct{}, config.MaxSubscriptionStreams),
 	}
 	s.server = grpcgo.NewServer(
 		grpcgo.MaxRecvMsgSize(config.MaxReceiveBytes),
@@ -188,9 +201,10 @@ func (s *Server) Status(ctx context.Context, _ *opcdav1.DAStatusRequest) (*opcda
 		},
 		WriteEnabled: runtimeStatus.WriteEnabled,
 		Runtime: &opcdav1.DARuntimeStatus{
-			QueueDepth:     uint32(max(runtimeStatus.QueueDepth, 0)),
-			ReconnectCount: runtimeStatus.ReconnectCount,
-			DegradedReason: runtimeStatus.DegradedReason,
+			QueueDepth:        uint32(max(runtimeStatus.QueueDepth, 0)),
+			ReconnectCount:    runtimeStatus.ReconnectCount,
+			DegradedReason:    runtimeStatus.DegradedReason,
+			SubscriptionCount: uint32(max(runtimeStatus.SubscriptionCount, 0)),
 		},
 		Frontend: &opcdav1.DAGRPCFrontendStatus{Listening: s.listening.Load()},
 	}
@@ -716,6 +730,16 @@ func mapOperationError(err error) error {
 			code = codes.Unimplemented
 		case opcda.CodeInternalResultMismatch:
 			code = codes.Internal
+		case opcda.CodeSubscriptionLimit:
+			code = codes.ResourceExhausted
+		case opcda.CodeSubscriptionNotFound:
+			code = codes.NotFound
+		case opcda.CodeSubscribeUnsupported:
+			code = codes.Unimplemented
+		case opcda.CodeSubscriptionInvalidated:
+			// Aborted rather than Unavailable: the client must resubscribe
+			// explicitly, and the adapter must not look transparently retryable.
+			code = codes.Aborted
 		}
 		return grpcAdapterError(code, adapterError.Code, adapterError.Message)
 	}
