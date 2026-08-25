@@ -474,7 +474,11 @@ func addActiveItems(items *iopcItemMgt, itemIDs []DAItemID, generation uint64) (
 	return clientHandles, attempts, nil
 }
 
-func adviseDataCallback(items *iopcItemMgt, callback *dataCallbackObject) (*iconnectionPoint, uint32, error) {
+// findDataCallbackConnectionPoint locates the group's IOPCDataCallback
+// connection point. A source that does not implement connection points, or
+// implements them without this sink interface, reports (nil, false, nil) rather
+// than an error: that is a capability answer, not a failure.
+func findDataCallbackConnectionPoint(items *iopcItemMgt) (*iconnectionPoint, bool, error) {
 	var container *iconnectionPointContainer
 	result, _, _ := syscall.SyscallN(
 		items.VTable.QueryInterface,
@@ -483,11 +487,15 @@ func adviseDataCallback(items *iopcItemMgt, callback *dataCallbackObject) (*icon
 		uintptr(unsafe.Pointer(&container)),
 	)
 	runtime.KeepAlive(items)
-	if hr := hresultFromCall(result); hr.Failed() {
-		return nil, 0, &SourceError{Operation: "IOPCItemMgt::QueryInterface(IConnectionPointContainer)", HRESULT: hr}
+	hr := hresultFromCall(result)
+	if hr == ENoInterface {
+		return nil, false, nil
+	}
+	if hr.Failed() {
+		return nil, false, &SourceError{Operation: "IOPCItemMgt::QueryInterface(IConnectionPointContainer)", HRESULT: hr}
 	}
 	if container == nil {
-		return nil, 0, fmt.Errorf("QueryInterface(IConnectionPointContainer) returned a nil interface")
+		return nil, false, fmt.Errorf("QueryInterface(IConnectionPointContainer) returned a nil interface")
 	}
 	defer container.release()
 
@@ -499,15 +507,44 @@ func adviseDataCallback(items *iopcItemMgt, callback *dataCallbackObject) (*icon
 		uintptr(unsafe.Pointer(&point)),
 	)
 	runtime.KeepAlive(container)
-	if hr := hresultFromCall(result); hr.Failed() {
-		return nil, 0, &SourceError{Operation: "IConnectionPointContainer::FindConnectionPoint(IOPCDataCallback)", HRESULT: hr}
+	hr = hresultFromCall(result)
+	if hr == ConnectENoConnection || hr == ENoInterface {
+		return nil, false, nil
+	}
+	if hr.Failed() {
+		return nil, false, &SourceError{Operation: "IConnectionPointContainer::FindConnectionPoint(IOPCDataCallback)", HRESULT: hr}
 	}
 	if point == nil {
-		return nil, 0, fmt.Errorf("FindConnectionPoint(IOPCDataCallback) returned a nil connection point")
+		return nil, false, fmt.Errorf("FindConnectionPoint(IOPCDataCallback) returned a nil connection point")
+	}
+	return point, true, nil
+}
+
+// probeDataCallbackSupport answers whether the source exposes the callback
+// connection point, without advising. It is the Subscribe counterpart of the
+// Browse interface probe and never activates a subscription.
+func probeDataCallbackSupport(items *iopcItemMgt) (bool, error) {
+	point, supported, err := findDataCallbackConnectionPoint(items)
+	if err != nil {
+		return false, err
+	}
+	if point != nil {
+		point.release()
+	}
+	return supported, nil
+}
+
+func adviseDataCallback(items *iopcItemMgt, callback *dataCallbackObject) (*iconnectionPoint, uint32, error) {
+	point, supported, err := findDataCallbackConnectionPoint(items)
+	if err != nil {
+		return nil, 0, err
+	}
+	if !supported {
+		return nil, 0, NewAdapterError(CodeSubscribeUnsupported, "OPC DA server does not expose an IOPCDataCallback connection point")
 	}
 
 	var cookie uint32
-	result, _, _ = syscall.SyscallN(
+	result, _, _ := syscall.SyscallN(
 		point.VTable.Advise,
 		uintptr(unsafe.Pointer(point)),
 		uintptr(unsafe.Pointer(callback)),

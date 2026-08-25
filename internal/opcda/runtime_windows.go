@@ -22,16 +22,17 @@ type daThreadCommand struct {
 }
 
 type daThreadSession struct {
-	server            *iopcServer
-	serverGroupHandle uint32
-	hasServerGroup    bool
-	itemMgt           *iopcItemMgt
-	syncIO            *iopcSyncIO
-	browse            *iopcBrowseServerAddressSpace
-	browseCapability  string
-	generation        uint64
-	registrations     *registrationCache
-	nextClientHandle  uint32
+	server              *iopcServer
+	serverGroupHandle   uint32
+	hasServerGroup      bool
+	itemMgt             *iopcItemMgt
+	syncIO              *iopcSyncIO
+	browse              *iopcBrowseServerAddressSpace
+	browseCapability    string
+	subscribeCapability string
+	generation          uint64
+	registrations       *registrationCache
+	nextClientHandle    uint32
 
 	subscriptions            map[SubscriptionID]*daSubscription
 	nextGroupClientHandle    uint32
@@ -178,6 +179,18 @@ func (r *windowsRuntime) connect(session *daThreadSession) error {
 		return err
 	}
 	session.syncIO = syncIO
+	subscribeSupported, subscribeErr := probeDataCallbackSupport(itemMgt)
+	switch {
+	case isConnectionLoss(subscribeErr):
+		session.disconnect()
+		return subscribeErr
+	case subscribeErr != nil:
+		session.subscribeCapability = "unavailable"
+	case !subscribeSupported:
+		session.subscribeCapability = "unsupported"
+	default:
+		session.subscribeCapability = "supported"
+	}
 	browse, supported, browseErr := queryBrowseInterface(server)
 	switch {
 	case isConnectionLoss(browseErr):
@@ -235,7 +248,12 @@ func (r *windowsRuntime) tryConnect(session *daThreadSession, reconnect bool) {
 	r.updateStatus(func(status *RuntimeStatus) {
 		status.State = RuntimeStateConnected
 		status.ConnectionGeneration = session.generation
-		status.Capabilities = Capabilities{Browse: session.browseCapability, Read: true, Write: true, Subscribe: true}
+		status.Capabilities = Capabilities{
+			Browse:    session.browseCapability,
+			Read:      true,
+			Write:     true,
+			Subscribe: session.subscribeCapability == "supported",
+		}
 		status.DegradedReason = ""
 		status.LastSourceError = SourceDiagnostic{}
 		status.LastSourceErrorSet = false
@@ -283,6 +301,7 @@ func (session *daThreadSession) disconnect() {
 		session.browse = nil
 	}
 	session.browseCapability = "unavailable"
+	session.subscribeCapability = "unavailable"
 	if session.syncIO != nil {
 		session.syncIO.release()
 		session.syncIO = nil
@@ -543,6 +562,14 @@ func (r *windowsRuntime) Subscribe(ctx context.Context, request SubscribeRequest
 		run: func(session *daThreadSession) {
 			if session.server == nil || session.subscriptions == nil {
 				responses <- response{err: NewAdapterError(CodeRuntimeUnavailable, "OPC DA runtime is not connected")}
+				return
+			}
+			if session.subscribeCapability != "supported" {
+				if session.subscribeCapability == "unsupported" {
+					responses <- response{err: NewAdapterError(CodeSubscribeUnsupported, "OPC DA server does not support callback subscriptions")}
+					return
+				}
+				responses <- response{err: NewAdapterError(CodeRuntimeUnavailable, "OPC DA Subscribe is unavailable")}
 				return
 			}
 			if len(session.subscriptions) >= r.config.Limits.MaxSubscriptions {

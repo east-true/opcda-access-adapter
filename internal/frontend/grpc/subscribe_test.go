@@ -506,6 +506,45 @@ func TestSubscribeSendsOneDrainPerMessage(t *testing.T) {
 	}
 }
 
+// A DA server without an IOPCDataCallback connection point must be reported as
+// unsupported rather than failing late with a generic source error.
+func TestSubscribeReportsSourcesWithoutCallbackSupport(t *testing.T) {
+	runtime := &testRuntime{
+		status: opcda.RuntimeStatus{Capabilities: opcda.Capabilities{Browse: "supported", Read: true, Write: true}},
+		subscribe: func(context.Context, opcda.SubscribeRequest) (opcda.Subscription, error) {
+			return nil, opcda.NewAdapterError(opcda.CodeSubscribeUnsupported, "OPC DA server does not support callback subscriptions")
+		},
+	}
+	harness := newSubscribeHarness(t, runtime, Config{})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	statusResponse, err := harness.client.Status(ctx, &opcdav1.DAStatusRequest{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if statusResponse.Capabilities == nil || statusResponse.Capabilities.Subscribe {
+		t.Fatal("a source without callback support advertised the Subscribe capability")
+	}
+
+	stream, err := harness.client.Subscribe(ctx, subscribeRequest("Exact.I4"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = stream.Recv()
+	if status.Code(err) != codes.Unimplemented {
+		t.Fatalf("code = %s, err = %v", status.Code(err), err)
+	}
+	if detail := operationErrorDetail(t, err); detail.Code != string(opcda.CodeSubscribeUnsupported) {
+		t.Fatalf("detail code = %s", detail.Code)
+	}
+	// A refused subscription must not leave a release attempt behind.
+	if released := runtime.unsubscribed(); len(released) != 0 {
+		t.Fatalf("an unsupported Subscribe released %v", released)
+	}
+}
+
 func operationErrorDetail(t *testing.T, err error) *opcdav1.DAOperationError {
 	t.Helper()
 	for _, detail := range status.Convert(err).Details() {

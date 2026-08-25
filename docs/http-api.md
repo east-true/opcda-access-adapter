@@ -234,4 +234,8 @@ The adapter makes one source Write call per admitted batch and never retries,
 replays, or promises rollback. If the frontend deadline expires after COM has
 started, the source outcome is unknown.
 
-There is no Subscribe endpoint in v0.
+The HTTP frontend exposes no Subscribe endpoint, and HTTP streaming, SSE, and
+WebSocket are out of scope. `capabilities.subscribe` describes the **source**,
+not this frontend: it is true when the configured DA server exposes an
+`IOPCDataCallback` connection point. Subscribing to it requires the gRPC
+frontend; see [`grpc-api.md`](grpc-api.md).

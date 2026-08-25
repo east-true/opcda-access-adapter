@@ -101,6 +101,11 @@ release-promotion gate.
 
 ## In progress
 
+- A Subscribe capability probe is on `fix/subscribe-capability-probe` and awaits
+  PR CI. It fixes the runtime advertising `capabilities.subscribe` without
+  evidence, which would misreport a synchronous-only vendor DA server. This is a
+  correctness fix for an unobserved vendor shape, not a compatibility claim.
+
 - Phase 7 gRPC Subscribe streaming is on `feat/grpc-subscribe-stream` with all
   eight checks green, including its real-DA stream run. It awaits merge.
 
@@ -460,7 +465,9 @@ release-promotion gate.
    do not infer vendor-wide compatibility from the official fixture.
 5. When an authorized server exposes non-Good Quality, an absent timestamp, or
    additional supported scalar types, add exact observations without changing
-   source semantics.
+   source semantics. `docs/compatibility.md` lists the vendor variations to
+   record, including a source without an `IOPCDataCallback` connection point and
+   an unrecognized vendor disconnect HRESULT.
 6. Phase 7 is the DA callback/Subscribe core before any gRPC stream. Do not
    start OPC UA first or infer a streaming contract from the unary frontend.
 7. The Subscribe core is validated against the OPC Foundation fixture only.
@@ -484,3 +491,4 @@ release-promotion gate.
 - [ADR-0012: DA-native gRPC frontend](adr/0012-grpc-da-native-frontend.md)
 - [ADR-0013: DA-native Subscribe core](adr/0013-da-native-subscribe-core.md)
 - [ADR-0014: gRPC Subscribe server streaming](adr/0014-grpc-subscribe-streaming.md)
+- [ADR-0015: probe the Subscribe capability](adr/0015-subscribe-capability-probe.md)
