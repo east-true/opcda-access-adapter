@@ -275,6 +275,46 @@ production ready.
 
 `FuzzDecodeUASC` drives this framing with arbitrary bytes in CI.
 
+## SecureChannel token lifecycle
+
+`internal/opcua/channel.go` implements the token lifecycle of **OPC 10000-6
+6.7.4** and **OPC 10000-4 7.36**. The clause is explicit that these rules hold
+even with `SecurityMode` `None`: the `SecureChannelId` and `TokenId` are still
+assigned, the token shall still be renewed before its `RevisedLifetime` expires,
+and **receivers shall still ignore invalid or expired TokenIds**. Choosing no
+security does not turn the channel lifecycle off.
+
+A renewal does not invalidate the previous token at once. The server keeps
+accepting the old token until it expires or until a chunk secured with the new
+token arrives, so a client still finishing a renewal is not cut off. Accepting
+the new token retires the old one.
+
+`MessageSecurityMode` carries the wire values of **OPC 10000-4 Table 139**:
+`Invalid` is 0 precisely so an unset field can never be read as a deliberate
+choice of no security, and Table 139 states it "will always be rejected".
+
+### Bounds
+
+`ChannelLimits` bounds the revised token lifetime and the number of concurrent
+channels. A requested lifetime is clamped into the configured range and is
+always greater than zero, as OPC 10000-4 requires of a server. `ExpireStale`
+reclaims channels whose tokens have all expired, so a peer cannot hold slots by
+going silent, and a channel is only stale once **every** token it holds has
+expired.
+
+Zero is not a valid channel or token identifier, so the counters skip it on
+wrap-around. The identifier seeds are supplied by the caller because Table 57
+advises that the first `SecureChannelId` after a restart should be unlikely to
+collide with one a previously connected client still holds.
+
+### What is deliberately not bound yet
+
+`SecurityTokenRequestType`'s wire values are not bound. Its value table was not
+obtainable in a transcribable form, and the encoding is only needed once the
+`OpenSecureChannel` service **body** is decoded — which additionally depends on
+`NodeId` and `ExtensionObject`, neither of which the codec implements yet. The
+lifecycle above is complete and testable without them.
+
 ## What is not decided here
 
 Certificate handling and the signed and encrypted security policies, address

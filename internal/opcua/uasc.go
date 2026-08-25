@@ -377,19 +377,26 @@ func (v *SequenceValidator) Next() uint32 {
 	return v.last
 }
 
-// SecurityMode is the protection applied to a channel. Only None is
-// implemented, and it is for local interoperability testing: ADR-0016 forbids
-// describing it as production ready.
-type SecurityMode int
+// SecurityMode is MessageSecurityMode. The values are the wire values of
+// OPC 10000-4 Table 139, not an arbitrary ordering: Invalid is deliberately 0
+// so that an unset field can never be mistaken for a deliberate choice of no
+// security.
+//
+// Only None is implemented, and it is for local interoperability testing:
+// ADR-0016 forbids describing it as production ready.
+type SecurityMode uint32
 
 const (
-	SecurityModeNone SecurityMode = iota
-	SecurityModeSign
-	SecurityModeSignAndEncrypt
+	SecurityModeInvalid        SecurityMode = 0
+	SecurityModeNone           SecurityMode = 1
+	SecurityModeSign           SecurityMode = 2
+	SecurityModeSignAndEncrypt SecurityMode = 3
 )
 
 func (m SecurityMode) String() string {
 	switch m {
+	case SecurityModeInvalid:
+		return "Invalid"
 	case SecurityModeNone:
 		return "None"
 	case SecurityModeSign:
@@ -397,12 +404,13 @@ func (m SecurityMode) String() string {
 	case SecurityModeSignAndEncrypt:
 		return "SignAndEncrypt"
 	default:
-		return fmt.Sprintf("Unknown(%d)", int(m))
+		return fmt.Sprintf("Unknown(%d)", uint32(m))
 	}
 }
 
 // RequireSupportedSecurityMode refuses any mode this adapter cannot actually
 // provide, rather than accepting a channel it would then fail to protect.
+// Table 139 states that Invalid "will always be rejected".
 func RequireSupportedSecurityMode(mode SecurityMode) error {
 	if mode == SecurityModeNone {
 		return nil
