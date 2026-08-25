@@ -132,9 +132,10 @@ release-promotion gate.
   [`32809889776`](https://github.com/east-true/opcda-access-adapter/actions/runs/32809889776)
   passed quality, race/fuzz checks, release packaging, both Windows builds, and
   both native Windows test jobs at head
-  `a24c0eca5ab598028d413ef04276c1567257431e`. The protobuf bindings were regenerated with the pinned `libprotoc 36.0`,
-  `protoc-gen-go v1.36.12`, and `protoc-gen-go-grpc 1.6.2`, after first
-  confirming that toolchain reproduced the committed files byte-for-byte.
+  `a24c0eca5ab598028d413ef04276c1567257431e`. The protobuf bindings were
+  regenerated with the pinned `libprotoc 36.0`, `protoc-gen-go v1.36.12`, and
+  `protoc-gen-go-grpc 1.6.2`, after first confirming that toolchain reproduced
+  the committed files byte-for-byte.
 - PR #34 real-DA run
   [`32809889799`](https://github.com/east-true/opcda-access-adapter/actions/runs/32809889799)
   passed on both x86/386 and x64/amd64. The write-enabled gRPC scenario opened
