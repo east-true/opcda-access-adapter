@@ -23,9 +23,10 @@ exposes Subscribe.
 
 ## Current main SHA
 
-`21345739af98de981d12de36c6805f64e5b502ff` — protected `main` after the
-DA-native gRPC frontend (PR #29). No public tag or GitHub Release has been
-created. The local destructive review below remains a release-promotion gate.
+`717b04dadadc165cef78efdd70bda21f0af836a2` — protected `main` after the
+DA-native Subscribe core (PR #31, squash-merged). No public tag or GitHub
+Release has been created. The local destructive review below remains a
+release-promotion gate.
 
 ## Completed
 
@@ -76,6 +77,15 @@ created. The local destructive review below remains a release-promotion gate.
   `NT AUTHORITY\LocalService` lifecycle were merged in PR #26 after all eight
   checks passed. Setup stores the exact selected CLSID, never auto-selects even
   one candidate, and does not edit COM/DCOM or firewall permissions.
+- The DA-native Subscribe core was merged in PR #31 after all eight checks
+  passed: one DA group per subscription advised through `IOPCDataCallback`,
+  update-rate sampling with per-item coalescing and therefore no notification
+  queue to overflow, non-blocking callbacks safe against a foreign calling
+  thread, explicit invalidation on disconnect/unsubscribe/shutdown with pending
+  values discarded, explicit resubscribe with generation-scoped identifiers, and
+  preserved per-item AddItems HRESULTs. A `subscribeprobe` real-DA harness and
+  ADR-0013 were merged with it. No frontend exposes Subscribe.
+
 - DA-native unary gRPC Status/Browse/Read/Write, exact scalar widths, typed
   error layers, explicit frontend selection, aggregate HTTP/2 bounds,
   dependency/provenance review, packaging, and x86/x64 real-DA probes were
@@ -83,19 +93,6 @@ created. The local destructive review below remains a release-promotion gate.
   and simultaneous listeners were not added.
 
 ## In progress
-
-- Phase 7 DA Subscribe core is on `feat/da-subscribe-core` and awaits the
-  real-DA callback run. A `subscribeprobe` harness was added to supply exactly
-  the missing evidence: real `OnDataChange` delivery from the source-built OPC
-  Foundation fixture with exact ItemID, VARTYPE, raw Quality, timestamp
-  presence and HRESULT; change-driven notifications induced through the typed
-  Write path, because the fixture's `Test` items are otherwise static and
-  produce only the server's initial snapshot; the per-item coalescing bound; group and advise cleanup
-  across more subscribe/unsubscribe cycles than `MaxSubscriptions`;
-  subscription invalidation across an induced fixture termination; and
-  confirmation that reconnect restores nothing and that an explicit resubscribe
-  receives a new generation-scoped identifier. Until that job passes, Subscribe
-  remains implemented but unproven.
 
 - The local KVM/libvirt destructive-validation gate is paused. The dedicated
   `opcda-destructive-review` VM and all of its dedicated host resources were
@@ -112,6 +109,10 @@ created. The local destructive review below remains a release-promotion gate.
   under `GOOS=windows` for both `386` and `amd64`, which is what covers the
   Windows-only callback file. All seven package test executables cross-compiled
   for both `windows/386` and `windows/amd64`.
+- Post-merge CI run
+  [`32806556135`](https://github.com/east-true/opcda-access-adapter/actions/runs/32806556135)
+  passed quality, release packaging, both Windows builds, and both native
+  Windows test jobs at main SHA `717b04dadadc165cef78efdd70bda21f0af836a2`.
 - PR #31 CI run
   [`32803232566`](https://github.com/east-true/opcda-access-adapter/actions/runs/32803232566)
   passed quality, race/fuzz checks, release packaging, both Windows builds, and
