@@ -114,6 +114,12 @@ release-promotion gate.
 
 ## In progress
 
+- Phase 8 OPC UA begins on `feat/opcua-da-mapping` with the DA-to-UA mapping
+  only: `internal/opcua` plus `docs/opcua-mapping.md`, transcribed from OPC
+  10000-8 Annex A, OPC 10000-4 Tables 176/177, and the OPC Foundation
+  `StatusCode.csv`. There is no UA listener, no wire encoding, and no UA
+  dependency. No conformance or interoperability claim is made.
+
 - The local KVM/libvirt destructive-validation gate is paused. The dedicated
   `opcda-destructive-review` VM and all of its dedicated host resources were
   removed on 2026-08-24 because this host could not run it alongside another
@@ -497,3 +503,4 @@ release-promotion gate.
 - [ADR-0013: DA-native Subscribe core](adr/0013-da-native-subscribe-core.md)
 - [ADR-0014: gRPC Subscribe server streaming](adr/0014-grpc-subscribe-streaming.md)
 - [ADR-0015: probe the Subscribe capability](adr/0015-subscribe-capability-probe.md)
+- [ADR-0016: OPC UA frontend scope and the DA mapping foundation](adr/0016-opcua-frontend-scope-and-mapping.md)
