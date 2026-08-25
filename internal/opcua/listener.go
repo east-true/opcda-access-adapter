@@ -41,6 +41,9 @@ type ListenerConfig struct {
 	MaxConnections int
 	Binary         BinaryLimits
 	Channels       ChannelLimits
+	// Endpoint is the single endpoint this listener publishes through
+	// GetEndpoints.
+	Endpoint EndpointConfig
 }
 
 func DefaultListenerConfig() ListenerConfig {
@@ -55,6 +58,9 @@ func DefaultListenerConfig() ListenerConfig {
 		MaxConnections:    16,
 		Binary:            DefaultBinaryLimits(),
 		Channels:          DefaultChannelLimits(),
+		// The endpoint has no default: its URLs identify a deployment and its
+		// security policy URI is defined by OPC 10000-7, so both are supplied
+		// rather than assumed.
 	}
 }
 
@@ -82,7 +88,10 @@ func (config ListenerConfig) validate() error {
 	if err := config.Binary.validate(); err != nil {
 		return err
 	}
-	return config.Channels.validate()
+	if err := config.Channels.validate(); err != nil {
+		return err
+	}
+	return config.Endpoint.validate()
 }
 
 func (config ListenerConfig) ValidateForConfiguration() error { return config.validate() }
@@ -90,8 +99,9 @@ func (config ListenerConfig) ValidateForConfiguration() error { return config.va
 // Listener serves UA-TCP connections. It owns one channel registry, so the
 // SecureChannels it issues are scoped to this listener.
 type Listener struct {
-	config   ListenerConfig
-	registry *ChannelRegistry
+	config    ListenerConfig
+	registry  *ChannelRegistry
+	endpoints *EndpointService
 
 	listening atomic.Bool
 	slots     chan struct{}
@@ -110,11 +120,16 @@ func NewListener(config ListenerConfig, channelIDSeed, tokenIDSeed uint32) (*Lis
 	if err != nil {
 		return nil, err
 	}
+	endpoints, err := NewEndpointService(config.Endpoint)
+	if err != nil {
+		return nil, err
+	}
 	return &Listener{
-		config:   config,
-		registry: registry,
-		slots:    make(chan struct{}, config.MaxConnections),
-		conns:    make(map[net.Conn]struct{}),
+		config:    config,
+		registry:  registry,
+		endpoints: endpoints,
+		slots:     make(chan struct{}, config.MaxConnections),
+		conns:     make(map[net.Conn]struct{}),
 	}, nil
 }
 
@@ -277,9 +292,7 @@ func (l *Listener) handleMessage(conn net.Conn, state *connectionState, header M
 	case MessageTypeCloseChannel:
 		return l.handleCloseChannel(conn, state, body)
 	case MessageTypeSecure:
-		// Session and the address space services are not implemented yet, so a
-		// MSG is answered with an explicit fault rather than ignored.
-		return uacpError(StatusBadServiceUnsupported, "no session service is implemented")
+		return l.handleSecureMessage(conn, state, body)
 	default:
 		return uacpError(StatusBadTcpMessageTypeInvalid, "message type %s is not accepted here", header.Type)
 	}
@@ -324,7 +337,7 @@ func (l *Listener) handleOpenChannel(conn net.Conn, state *connectionState, body
 	if !state.negotiated {
 		return uacpError(StatusBadTcpMessageTypeInvalid, "OpenSecureChannel arrived before the Hello")
 	}
-	channelID, sequence, payload, err := l.splitSecureMessage(state, body, true)
+	channelID, _, sequence, payload, err := l.splitSecureMessage(state, body, true)
 	if err != nil {
 		return err
 	}
@@ -366,7 +379,7 @@ func (l *Listener) handleCloseChannel(conn net.Conn, state *connectionState, bod
 	if !state.negotiated {
 		return uacpError(StatusBadTcpMessageTypeInvalid, "CloseSecureChannel arrived before the Hello")
 	}
-	channelID, _, payload, err := l.splitSecureMessage(state, body, false)
+	channelID, _, _, payload, err := l.splitSecureMessage(state, body, false)
 	if err != nil {
 		return err
 	}
@@ -399,50 +412,97 @@ var errConnectionFinished = errors.New("secure channel closed by the client")
 // header, and the sequence header, and returns the remaining service payload.
 // The message header itself has already been consumed by readMessage, so the
 // body here starts at the SecureChannelId.
-func (l *Listener) splitSecureMessage(state *connectionState, body []byte, asymmetric bool) (uint32, SequenceHeader, []byte, error) {
+func (l *Listener) splitSecureMessage(state *connectionState, body []byte, asymmetric bool) (uint32, ChannelSecurityToken, SequenceHeader, []byte, error) {
+	var token ChannelSecurityToken
 	decoder, err := NewDecoder(body, l.config.Binary)
 	if err != nil {
-		return 0, SequenceHeader{}, nil, err
+		return 0, token, SequenceHeader{}, nil, err
 	}
 	channelID, err := decoder.ReadUInt32()
 	if err != nil {
-		return 0, SequenceHeader{}, nil, err
+		return 0, token, SequenceHeader{}, nil, err
 	}
 	consumed := 4
 	if asymmetric {
 		maxCertificate := MaxSenderCertificateSize(int(state.receiveSize), MaxSecurityPolicyURIBytes, 0, 0)
 		security, used, securityErr := DecodeAsymmetricSecurityHeader(body[consumed:], maxCertificate, l.config.Binary)
 		if securityErr != nil {
-			return 0, SequenceHeader{}, nil, securityErr
+			return 0, token, SequenceHeader{}, nil, securityErr
 		}
 		// Only the None policy is served, so a request that presents a
 		// certificate is refused rather than silently treated as unsecured.
 		if len(security.SenderCertificate) != 0 || len(security.ReceiverCertificateThumbprint) != 0 {
-			return 0, SequenceHeader{}, nil, uacpError(StatusBadSecurityPolicyRejected,
+			return 0, token, SequenceHeader{}, nil, uacpError(StatusBadSecurityPolicyRejected,
 				"only an unsecured channel is served by this listener")
 		}
 		consumed += used
 	} else {
 		tokenID, tokenErr := decoder.ReadUInt32()
 		if tokenErr != nil {
-			return 0, SequenceHeader{}, nil, tokenErr
+			return 0, token, SequenceHeader{}, nil, tokenErr
 		}
-		if _, acceptErr := l.registry.Accept(channelID, tokenID, time.Now().UTC()); acceptErr != nil {
-			return 0, SequenceHeader{}, nil, acceptErr
+		channel, acceptErr := l.registry.Accept(channelID, tokenID, time.Now().UTC())
+		if acceptErr != nil {
+			return 0, token, SequenceHeader{}, nil, acceptErr
 		}
+		token = channel.Token()
 		consumed += 4
 	}
 	if len(body) < consumed+SequenceHeaderSize {
-		return 0, SequenceHeader{}, nil, decodingError("message is too short for a sequence header")
+		return 0, token, SequenceHeader{}, nil, decodingError("message is too short for a sequence header")
 	}
 	sequence, err := DecodeSequenceHeader(body[consumed:consumed+SequenceHeaderSize], l.config.Binary)
 	if err != nil {
-		return 0, SequenceHeader{}, nil, err
+		return 0, token, SequenceHeader{}, nil, err
 	}
 	if err := state.receiveSequence.Accept(sequence.SequenceNumber); err != nil {
-		return 0, SequenceHeader{}, nil, err
+		return 0, token, SequenceHeader{}, nil, err
 	}
-	return channelID, sequence, body[consumed+SequenceHeaderSize:], nil
+	return channelID, token, sequence, body[consumed+SequenceHeaderSize:], nil
+}
+
+// handleSecureMessage dispatches a MSG. GetEndpoints needs no session, which
+// OPC 10000-4 Table 5 states explicitly, so it can be answered here; every
+// other service is reported as unsupported through a ServiceFault rather than
+// closing the connection, because the channel itself is still healthy.
+func (l *Listener) handleSecureMessage(conn net.Conn, state *connectionState, body []byte) error {
+	if !state.negotiated {
+		return uacpError(StatusBadTcpMessageTypeInvalid, "a secure message arrived before the Hello")
+	}
+	_, token, sequence, payload, err := l.splitSecureMessage(state, body, false)
+	if err != nil {
+		return err
+	}
+	decoder, err := NewDecoder(payload, l.config.Binary)
+	if err != nil {
+		return err
+	}
+	identifier, err := decoder.ReadServiceTypeID()
+	if err != nil {
+		return err
+	}
+
+	encoder, err := NewEncoder(l.config.Binary)
+	if err != nil {
+		return err
+	}
+	switch identifier {
+	case GetEndpointsRequestEncodingID:
+		request, requestErr := decoder.ReadGetEndpointsRequest()
+		if requestErr != nil {
+			return requestErr
+		}
+		encoder.WriteGetEndpointsResponse(l.endpoints.GetEndpoints(request, time.Now().UTC()))
+	default:
+		// The request handle cannot be trusted from an unparsed body, so the
+		// fault echoes zero rather than a guessed value.
+		encoder.WriteServiceFault(NewServiceFault(0, StatusBadServiceUnsupported, time.Now().UTC()))
+	}
+	serviceBody, err := encoder.Bytes()
+	if err != nil {
+		return err
+	}
+	return l.writeSecureMessage(conn, state, MessageTypeSecure, token, sequence.RequestID, serviceBody, false)
 }
 
 // writeSecureMessage frames a single-chunk response. Multi-chunk responses are
