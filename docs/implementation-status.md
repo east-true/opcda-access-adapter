@@ -13,12 +13,13 @@ unary Status/Browse/Read/Write frontend passed PR CI and the source-built OPC
 Foundation fixture on both supported architectures. This is not a broad
 vendor-compatibility claim.
 
-**PHASE 7 DA SUBSCRIBE CORE IMPLEMENTED, NOT YET SERVER-VALIDATED** — the
-`IOPCDataCallback` connection-point core exists in the DA runtime and passed
-all eight PR checks, including native Windows execution of the callback tests
-on both architectures. It has **not** been exercised against a real DA server:
-no `OnDataChange` from a vendor or fixture server has been observed. No
-frontend exposes Subscribe.
+**PHASE 7 DA SUBSCRIBE CORE IMPLEMENTED AND FIXTURE-VALIDATED** — the
+`IOPCDataCallback` connection-point core passed all eight PR checks and
+delivered real `OnDataChange` notifications from the source-built OPC
+Foundation fixture on both supported architectures, including change-driven
+delivery, group and advise cleanup, and invalidation across an induced
+disconnect. This is not a broad vendor-compatibility claim. No frontend
+exposes Subscribe.
 
 ## Current main SHA
 
@@ -112,9 +113,10 @@ created. The local destructive review below remains a release-promotion gate.
   Windows-only callback file. All seven package test executables cross-compiled
   for both `windows/386` and `windows/amd64`.
 - PR #31 CI run
-  [`32801171651`](https://github.com/east-true/opcda-access-adapter/actions/runs/32801171651)
+  [`32803232566`](https://github.com/east-true/opcda-access-adapter/actions/runs/32803232566)
   passed quality, race/fuzz checks, release packaging, both Windows builds, and
-  both native Windows test jobs at head `a35a46a`. The Windows jobs run
+  both native Windows test jobs at head
+  `a287b215960a251ececa5003480d027cff9f6210`. The Windows jobs run
   `go test ./...` under `GOARCH=386` and `GOARCH=amd64`, so the Windows-only
   `IOPCDataCallback` tests executed there for the first time and passed on both
   architectures: vtable population, COM ABI offsets,
@@ -123,11 +125,28 @@ created. The local destructive review below remains a release-promotion gate.
   populated vtable also confirms `syscall.NewCallback` accepts every
   IOPCDataCallback signature, including the eleven-argument `OnDataChange`.
 - PR #31 real-DA run
-  [`32801171659`](https://github.com/east-true/opcda-access-adapter/actions/runs/32801171659)
-  passed on both x86/386 and x64/amd64, but it covers only the existing
-  Browse/Read/Write, reconnect, load, and soak regression. **The harness does
-  not subscribe**, so no real server has delivered `OnDataChange` and this run
-  is not Subscribe evidence.
+  [`32803232555`](https://github.com/east-true/opcda-access-adapter/actions/runs/32803232555)
+  passed on Windows Server 2025 for both x86/386 and x64/amd64. A new
+  `subscribeprobe` drove the DA runtime directly, since no frontend exposes
+  Subscribe. Both architectures created a DA group per subscription with all
+  three fixture items active, had the requested `250ms` rate revised to `300ms`
+  and reported unchanged, received real `OnDataChange` batches into the Go
+  callback vtable with exact ItemID, VARTYPE, canonical type, access rights,
+  raw Quality, timestamp presence and HRESULT, observed three change-driven
+  notifications induced through the typed Write path, held the coalescing
+  bound, completed 24 subscribe/unsubscribe cycles against a limit of 16 with
+  no leaked group or advise cookie and no reused identifier, and invalidated
+  the subscription across an induced fixture termination without delivering
+  pending values, restoring anything implicitly, or reusing the identifier
+  after reconnect. The existing HTTP, gRPC, reconnect, failure-cycle, load, and
+  200-Read soak regression also passed. Exact figures are in
+  `docs/compatibility.md`.
+- The first attempt of that run failed and is kept as evidence of what the
+  probe actually proves: the fixture created the group and delivered one
+  `OnDataChange`, then delivered nothing more because its `Test` items are
+  static. The probe was requiring three unsolicited batches; it now requires
+  the initial snapshot plus changes it induces itself. No product behavior was
+  changed to make the check pass.
 
 - On 2026-08-25, the Phase 6 working tree passed uncached `go test ./...`,
   `go test -race ./...`, `go vet ./...`, and 20 consecutive full-suite runs
@@ -405,10 +424,10 @@ created. The local destructive review below remains a release-promotion gate.
    source semantics.
 6. Phase 7 is the DA callback/Subscribe core before any gRPC stream. Do not
    start OPC UA first or infer a streaming contract from the unary frontend.
-7. The Subscribe core is implemented but unproven. Do not build the streaming
-   frontend on it, and do not claim callback support, until a real DA server
-   has delivered `OnDataChange` and the cleanup and reconnect-invalidation
-   evidence in "In progress" has been recorded.
+7. The Subscribe core is validated against the OPC Foundation fixture only.
+   Treat vendor callback behavior as untested: a server may refuse connection
+   points, revise update rates differently, or report Quality and timestamps
+   differently. Record any such observation before changing source semantics.
 
 ## Decisions
 

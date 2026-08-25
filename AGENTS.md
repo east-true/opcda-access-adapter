@@ -59,8 +59,9 @@ The completed v0 is HTTP-only and targets OPC DA 2.05a. Phase 6 adds an
 explicitly selected typed unary gRPC frontend for Status, Browse, device Read,
 and strict typed value Write. It does not add simultaneous frontend listeners.
 Phase 7 adds a DA-native Subscribe core in the runtime only: one subscription
-is one DA group advised through `IOPCDataCallback`. No frontend exposes
-Subscribe, and the core is not yet validated against a real server. OPC UA,
+is one DA group advised through `IOPCDataCallback`. It is validated against the
+OPC Foundation DA 2.05a fixture on both architectures; no frontend exposes
+Subscribe. OPC UA,
 UI, storage, and all non-DA sources remain out of scope. Local CLI detection is
 registration inventory only and does not alter the single explicitly configured
 runtime source.
