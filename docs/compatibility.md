@@ -75,6 +75,31 @@ broad vendor-compatibility claim. A vendor server that rejects connection
 points, revises rates differently, or reports Quality or timestamps
 differently has not been tested.
 
+### Phase 7 gRPC Subscribe streaming result
+
+PR #34 workflow run
+[`32809889799`](https://github.com/east-true/opcda-access-adapter/actions/runs/32809889799)
+tested adapter head `a24c0eca5ab598028d413ef04276c1567257431e` on both native x86/386 and
+x64/amd64. The write-enabled gRPC scenario drove the server-streaming
+`Subscribe` RPC against the fixture. Each architecture passed:
+
+- a `created` message reporting the subscription identity, connection
+  generation, all three items active with canonical type and access rights, and
+  the requested `250ms` rate revised by the server to `300ms`;
+- the server's initial snapshot delivered over the stream with raw Quality,
+  timestamp presence, VARTYPE, canonical type, and HRESULT preserved;
+- two change-driven notifications induced through the ordinary typed Write
+  path, since the fixture's `Test` items are otherwise static;
+- the coalescing bound, with no update carrying more values than the
+  subscription's item count;
+- `subscription_count` returning to zero after the client closed the stream,
+  showing the DA group is released by stream end alone with no explicit
+  unsubscribe RPC;
+- no process value in any probe output.
+
+This is fixture evidence for the OPC Foundation DA 2.05a test server, not a
+broad vendor-compatibility claim.
+
 ### Phase 6 gRPC frontend result
 
 PR #29 workflow run
