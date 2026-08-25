@@ -148,6 +148,70 @@ func FuzzDecodeUACP(f *testing.F) {
 	})
 }
 
+// FuzzDecodeUASC drives the secure conversation framing with arbitrary bytes.
+// A malformed security header must be refused rather than trusted, and no
+// declared length may be honoured beyond the bytes present.
+func FuzzDecodeUASC(f *testing.F) {
+	limits := DefaultBinaryLimits()
+
+	header, err := EncodeSecureConversationHeader(SecureConversationHeader{
+		Type: MessageTypeOpenChannel, Chunk: ChunkFinal, SecureChannelID: 1,
+	}, 12, 65536)
+	if err != nil {
+		f.Fatal(err)
+	}
+	security, err := EncodeAsymmetricSecurityHeader(AsymmetricSecurityHeader{}, 4096, limits)
+	if err != nil {
+		f.Fatal(err)
+	}
+	f.Add(append(header, security...))
+	f.Add([]byte{})
+	f.Add([]byte{'M', 'S', 'G', 'F', 12, 0, 0, 0, 1, 0, 0, 0})
+	f.Add([]byte{'O', 'P', 'N', 'F', 0xFF, 0xFF, 0xFF, 0xFF, 0, 0, 0, 0})
+	f.Add([]byte{'C', 'L', 'O', 'A', 12, 0, 0, 0, 0, 0, 0, 0})
+
+	f.Fuzz(func(t *testing.T, data []byte) {
+		const negotiated = uint32(65536)
+		decoded, err := DecodeSecureConversationHeader(data, negotiated)
+		if err != nil {
+			if _, ok := err.(*CodecError); !ok {
+				t.Fatalf("header error %v is not a CodecError", err)
+			}
+			return
+		}
+		if decoded.Size < SecureConversationHeaderSize || decoded.Size > negotiated {
+			t.Fatalf("an out-of-range message size passed validation: %d", decoded.Size)
+		}
+		if len(data) < int(decoded.Size) {
+			return
+		}
+		body := data[SecureConversationHeaderSize:decoded.Size]
+		if decoded.Type == MessageTypeOpenChannel {
+			security, consumed, securityErr := DecodeAsymmetricSecurityHeader(body, 4096, limits)
+			if securityErr != nil {
+				if _, ok := securityErr.(*CodecError); !ok {
+					t.Fatalf("security header error %v is not a CodecError", securityErr)
+				}
+				return
+			}
+			if consumed < 0 || consumed > len(body) {
+				t.Fatalf("security header consumed %d of %d bytes", consumed, len(body))
+			}
+			if len(security.SecurityPolicyURI) > MaxSecurityPolicyURIBytes {
+				t.Fatalf("a policy URI of %d bytes passed the limit", len(security.SecurityPolicyURI))
+			}
+			if n := len(security.ReceiverCertificateThumbprint); n != 0 && n != CertificateThumbprintBytes {
+				t.Fatalf("a thumbprint of %d bytes passed validation", n)
+			}
+			body = body[consumed:]
+		} else {
+			_, _ = DecodeSequenceHeader(body, limits)
+			return
+		}
+		_, _ = DecodeSequenceHeader(body, limits)
+	})
+}
+
 // FuzzDecodeDateTime checks that no wire value produces a panic or an instant
 // outside the range OPC 10000-6 5.2.2.5 defines.
 func FuzzDecodeDateTime(f *testing.F) {

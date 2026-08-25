@@ -229,9 +229,56 @@ OPC 10000-6 6.7.3 requires. An abort chunk discards the message.
 
 `FuzzDecodeUACP` drives the framing with arbitrary bytes in CI.
 
+## Secure conversation framing
+
+`internal/opcua/uasc.go` implements the secure conversation framing of **OPC
+10000-6 clause 6.7**: the 12 byte header of Table 57 (the connection protocol's
+first eight bytes plus a `UInt32` `SecureChannelId`), the asymmetric security
+header of Table 58 for `OPN`, the `TokenId` header for `MSG` and `CLO`, and the
+sequence header of Table 60.
+
+Table 58's length rules are enforced exactly. A length of `0` or `-1` means the
+field is not specified; **any other negative length is invalid** and, as the
+clause requires, is reported as a security failure rather than tolerated. The
+`SecurityPolicyUri` may not exceed 255 bytes, the `SenderCertificate` may not
+exceed the size the chunk leaves for it, and a `ReceiverCertificateThumbprint`
+is either absent or exactly 20 bytes. No declared length is honoured beyond the
+bytes actually present.
+
+`MaxSenderCertificateSize` implements the formula in 6.7.2.3 with the padding
+and signature terms as parameters rather than assumptions, so a signed policy
+can supply them without the formula being rewritten.
+
+### Sequence numbers
+
+`SequenceValidator` enforces 6.7.2.4: the number is incremented by **exactly
+one** per chunk, and a wrap is accepted only where the selected rule set allows
+it — above `UInt32.MaxValue - 1024` and back below 1024 for the legacy rules, or
+at `UInt32.MaxValue` and back to 0 for the zero-based rules.
+
+Which rule set applies is a property of the SecurityPolicy, assigned by OPC
+10000-7. That specification is **not** transcribed here, so the rule set is a
+parameter the caller supplies rather than a value assumed for any policy.
+
+### What is deliberately not bound yet
+
+For the same reason, the `SecurityPolicy` URI strings are not hardcoded. The
+framing layer treats `SecurityPolicyUri` as a length-validated opaque string,
+which is all Table 58 requires of it. Binding the URI belongs with endpoint
+description and `GetEndpoints`, where it can be checked against OPC 10000-7.
+
+Only `SecurityMode` `None` is implemented, and `RequireSupportedSecurityMode`
+refuses `Sign` and `SignAndEncrypt` with `Bad_SecurityModeRejected` rather than
+accepting a channel the adapter would then fail to protect. Per ADR-0016 the
+`None` path is for local interoperability work and is never described as
+production ready.
+
+`FuzzDecodeUASC` drives this framing with arbitrary bytes in CI.
+
 ## What is not decided here
 
-SecureChannel handling, address space construction, session and secure channel handling, subscription
+Certificate handling and the signed and encrypted security policies, address
+space construction, session and secure channel handling, subscription
 and MonitoredItem behavior, certificates, and security policies are out of
 scope for this document. See ADR-0016 for the phase order
 and the conformance language rules.

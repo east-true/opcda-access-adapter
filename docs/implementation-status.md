@@ -114,12 +114,14 @@ release-promotion gate.
 
 ## In progress
 
-- Phase 8 OPC UA continues on `feat/opcua-uacp-framing` with the connection
-  protocol framing, Hello/Acknowledge/Error bodies, buffer negotiation, and
-  chunk accounting from OPC 10000-6 clause 7.1. The DA-to-UA mapping merged in
-  PR #37 and the UA Binary codec in PR #38. There is still no listener, no
-  SecureChannel, and no UA dependency. No conformance or interoperability claim
-  is made.
+- Phase 8 OPC UA continues on `feat/opcua-securechannel-none` with the secure
+  conversation framing, security and sequence headers, and sequence number rules
+  from OPC 10000-6 clause 6.7. The DA-to-UA mapping merged in PR #37, the UA
+  Binary codec in PR #38, and the connection protocol framing in PR #39. There
+  is still no listener, no certificate handling, and no UA dependency. The
+  SecurityPolicy URI strings and the per-policy `LegacySequenceNumbers` flag are
+  deliberately unbound because OPC 10000-7 has not been transcribed. No
+  conformance or interoperability claim is made.
 
 - The local KVM/libvirt destructive-validation gate is paused. The dedicated
   `opcda-destructive-review` VM and all of its dedicated host resources were
