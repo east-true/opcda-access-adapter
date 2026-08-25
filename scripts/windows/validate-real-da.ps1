@@ -553,11 +553,12 @@ function Wait-ServiceLifecycleEvent {
             StartTime = $Since
         } -ErrorAction SilentlyContinue)
         if ($events.Count -gt 0) {
-            return $events
+            # Comma-wrap so a single record is not unrolled into a bare object.
+            return ,$events
         }
         Start-Sleep -Milliseconds 250
     } while ([DateTime]::UtcNow -lt $deadline)
-    return @()
+    return ,@()
 }
 
 function Stop-ServerProcesses {
@@ -666,7 +667,7 @@ function Test-GuidedSetupWindowsService {
             $script:BaseURL = $savedBaseURL
         }
 
-        $serviceEvents = Wait-ServiceLifecycleEvent -ProviderName $script:GuidedServiceName -Since $serviceTestStarted
+        $serviceEvents = @(Wait-ServiceLifecycleEvent -ProviderName $script:GuidedServiceName -Since $serviceTestStarted)
         Assert-True ($serviceEvents.Count -ge 1) 'guided service did not write a lifecycle Event Log record'
 
         Invoke-NativeProcess -FilePath $script:AdapterExecutable -ArgumentList @(
@@ -745,7 +746,7 @@ function Test-GuidedSetupGRPCWindowsService {
             '-timeout', '60s'
         ) -TimeoutSeconds 90
 
-        $serviceEvents = Wait-ServiceLifecycleEvent -ProviderName $serviceName -Since $serviceTestStarted
+        $serviceEvents = @(Wait-ServiceLifecycleEvent -ProviderName $serviceName -Since $serviceTestStarted)
         Assert-True ($serviceEvents.Count -ge 1) 'gRPC guided service did not write a lifecycle Event Log record'
 
         Invoke-NativeProcess -FilePath $script:AdapterExecutable -ArgumentList @(
