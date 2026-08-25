@@ -92,6 +92,62 @@ func FuzzDecodeUABinary(f *testing.F) {
 	})
 }
 
+// FuzzDecodeUACP drives the connection protocol framing with arbitrary bytes.
+// A header must be validated against the negotiated buffer before any body is
+// read, and no message body may panic or over-read.
+func FuzzDecodeUACP(f *testing.F) {
+	limits := DefaultBinaryLimits()
+
+	hello, err := EncodeHello(Hello{
+		ProtocolVersion:   ProtocolVersion,
+		ReceiveBufferSize: MinimumBufferSize,
+		SendBufferSize:    MinimumBufferSize,
+		EndpointURL:       "opc.tcp://127.0.0.1:4840",
+	}, limits)
+	if err != nil {
+		f.Fatal(err)
+	}
+	header, err := EncodeMessageHeader(MessageTypeHello, ChunkFinal, len(hello), 65536)
+	if err != nil {
+		f.Fatal(err)
+	}
+	f.Add(append(header, hello...))
+	f.Add([]byte{})
+	f.Add([]byte{'H', 'E', 'L', 'F', 8, 0, 0, 0})
+	f.Add([]byte{'M', 'S', 'G', 'C', 0xFF, 0xFF, 0xFF, 0xFF})
+	f.Add([]byte{'E', 'R', 'R', 'F', 8, 0, 0, 0})
+	f.Add([]byte{0, 0, 0, 0, 0, 0, 0, 0})
+
+	f.Fuzz(func(t *testing.T, data []byte) {
+		const negotiated = uint32(65536)
+		decoded, err := DecodeMessageHeader(data, negotiated)
+		if err != nil {
+			if _, ok := err.(*CodecError); !ok {
+				t.Fatalf("header error %v is not a CodecError", err)
+			}
+			return
+		}
+		if decoded.Size > negotiated || decoded.Size < HeaderSize {
+			t.Fatalf("an out-of-range message size passed validation: %d", decoded.Size)
+		}
+		if decoded.BodySize() < 0 {
+			t.Fatalf("negative body size %d", decoded.BodySize())
+		}
+		if len(data) < int(decoded.Size) {
+			return
+		}
+		body := data[HeaderSize:decoded.Size]
+		switch decoded.Type {
+		case MessageTypeHello:
+			_, _ = DecodeHello(body, limits)
+		case MessageTypeAcknowledge:
+			_, _ = DecodeAcknowledge(body, limits)
+		case MessageTypeError:
+			_, _ = DecodeProtocolError(body, limits)
+		}
+	})
+}
+
 // FuzzDecodeDateTime checks that no wire value produces a panic or an instant
 // outside the range OPC 10000-6 5.2.2.5 defines.
 func FuzzDecodeDateTime(f *testing.F) {

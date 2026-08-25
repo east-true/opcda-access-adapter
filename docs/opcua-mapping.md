@@ -185,10 +185,53 @@ mistake.
 `FuzzDecodeUABinary` and `FuzzDecodeDateTime` run in CI with the same
 deterministic execution budget as the existing fuzz targets.
 
+## Connection protocol framing
+
+`internal/opcua/uacp.go` implements the OPC UA Connection Protocol framing from
+**OPC 10000-6 clause 7.1**: the 8 byte header of a three byte ASCII
+`MessageType`, a reserved/`IsFinal` byte, and a `UInt32` `MessageSize` that
+**includes the header itself**, plus the `Hello`, `Acknowledge`, and `Error`
+bodies of Tables 74, 75, and 76.
+
+Clause 7.1.2.2 requires the connection protocol layer to verify the message type
+and that the size fits the negotiated receive buffer **before** anything reaches
+the SecureChannel layer, so the decoder refuses an out-of-range size without
+reading a byte of body. `HEL`, `ACK`, `ERR`, and `RHE` are owned by this layer;
+`MSG`, `OPN`, and `CLO` are framed and passed through, which is why the header
+layout is deliberately identical to the first eight bytes of the secure
+conversation header.
+
+### Negotiation
+
+`NegotiateAcknowledge` implements Table 75: the server's receive buffer may not
+exceed what the client says it will send, its send buffer may not exceed what
+the client can receive, and neither may fall below the 8192 byte floor. The
+1024 byte ECC floor is not offered because no ECC security policy is
+implemented. A zero `MaxMessageSize` or `MaxChunkCount` means the sender
+declared no limit, so the other side's limit is the one that applies.
+
+The protocol version is 0; a Hello asking for a higher version is refused with
+`Bad_ProtocolVersionUnsupported`. An `EndpointUrl` that is not under 4096 bytes
+is refused with `Bad_TcpEndpointUrlInvalid`, on both the encode and decode
+paths, because a peer can send one regardless of what this adapter would emit.
+
+An `Error` message's `Reason` is capped at 4096 bytes. It is **truncated** on
+encode rather than suppressed — failing to report an error would be worse than
+reporting it with a shorter reason — and truncation never splits a rune. On
+decode an over-long reason is dropped, which is what the clause tells a receiver
+to do.
+
+### Chunk accounting
+
+`ChunkAccumulator` enforces the negotiated chunk count and message size while a
+multi-chunk message arrives, refusing a breach **before** copying anything, as
+OPC 10000-6 6.7.3 requires. An abort chunk discards the message.
+
+`FuzzDecodeUACP` drives the framing with arbitrary bytes in CI.
+
 ## What is not decided here
 
-Chunking and the UA-TCP message framing that sits above these built-in types,
-address space construction, session and secure channel handling, subscription
+SecureChannel handling, address space construction, session and secure channel handling, subscription
 and MonitoredItem behavior, certificates, and security policies are out of
 scope for this document. See ADR-0016 for the phase order
 and the conformance language rules.
