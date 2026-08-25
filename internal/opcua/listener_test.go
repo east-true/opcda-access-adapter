@@ -532,12 +532,13 @@ func TestListenerFaultsOnAnUnimplementedService(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// CreateSession is not implemented yet.
+	// Browse is not implemented yet; its encoding id comes from the OPC
+	// Foundation NodeIds table.
 	encoder, err := NewEncoder(client.limits)
 	if err != nil {
 		t.Fatal(err)
 	}
-	encoder.WriteServiceTypeID(461)
+	encoder.WriteServiceTypeID(527)
 	serviceBody, err := encoder.Bytes()
 	if err != nil {
 		t.Fatal(err)
@@ -606,6 +607,216 @@ func TestListenerBoundsConcurrentConnections(t *testing.T) {
 	buffer := make([]byte, 1)
 	if _, err := second.Read(buffer); err == nil {
 		t.Fatal("a connection beyond the limit was served")
+	}
+}
+
+// createSession drives CreateSession over the socket.
+func (c *testClient) createSession(token ChannelSecurityToken, requestID uint32, nonce []byte) (CreateSessionResponse, error) {
+	c.t.Helper()
+	encoder, err := NewEncoder(c.limits)
+	if err != nil {
+		c.t.Fatal(err)
+	}
+	encoder.WriteCreateSessionRequest(CreateSessionRequest{
+		Header: RequestHeader{
+			AuthenticationToken: NumericNodeID(0, 0),
+			RequestHandle:       requestID,
+			AdditionalHeader:    NullExtensionObject(),
+		},
+		SessionName:             "listener-test",
+		ClientNonce:             nonce,
+		RequestedSessionTimeout: 60_000,
+	})
+	serviceBody, err := encoder.Bytes()
+	if err != nil {
+		c.t.Fatal(err)
+	}
+	identifier, decoder, err := c.callService(token, requestID, serviceBody)
+	if err != nil {
+		return CreateSessionResponse{}, err
+	}
+	if identifier == ServiceFaultEncodingID {
+		header, headerErr := decoder.ReadResponseHeader()
+		if headerErr != nil {
+			return CreateSessionResponse{}, headerErr
+		}
+		return CreateSessionResponse{}, &CodecError{Status: header.ServiceResult, Message: "service fault"}
+	}
+	if identifier != CreateSessionResponseEncodingID {
+		c.t.Fatalf("service = %d", identifier)
+	}
+	return decoder.ReadCreateSessionResponse()
+}
+
+func (c *testClient) activateSession(token ChannelSecurityToken, requestID uint32, authToken NodeID, identity ExtensionObject) (ActivateSessionResponse, error) {
+	c.t.Helper()
+	encoder, err := NewEncoder(c.limits)
+	if err != nil {
+		c.t.Fatal(err)
+	}
+	encoder.WriteActivateSessionRequest(ActivateSessionRequest{
+		Header: RequestHeader{
+			AuthenticationToken: authToken,
+			RequestHandle:       requestID,
+			AdditionalHeader:    NullExtensionObject(),
+		},
+		UserIdentityToken: identity,
+	})
+	serviceBody, err := encoder.Bytes()
+	if err != nil {
+		c.t.Fatal(err)
+	}
+	identifier, decoder, err := c.callService(token, requestID, serviceBody)
+	if err != nil {
+		return ActivateSessionResponse{}, err
+	}
+	if identifier == ServiceFaultEncodingID {
+		header, headerErr := decoder.ReadResponseHeader()
+		if headerErr != nil {
+			return ActivateSessionResponse{}, headerErr
+		}
+		return ActivateSessionResponse{}, &CodecError{Status: header.ServiceResult, Message: "service fault"}
+	}
+	if identifier != ActivateSessionResponseEncodingID {
+		c.t.Fatalf("service = %d", identifier)
+	}
+	return decoder.ReadActivateSessionResponse()
+}
+
+// The full session sequence over a real socket: Hello, OPN, CreateSession,
+// ActivateSession, CloseSession.
+func TestListenerCompletesTheSessionSequence(t *testing.T) {
+	_, address := startTestListener(t, testListenerConfig())
+	client := dialTestClient(t, address)
+	client.hello()
+	opened, err := client.openChannel(0, TokenRequestIssue, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	created, err := client.createSession(opened.SecurityToken, 2, testClientNonce())
+	if err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+	if created.Header.ServiceResult != StatusGood || created.Header.RequestHandle != 2 {
+		t.Fatalf("response header = %+v", created.Header)
+	}
+	if created.AuthenticationToken.Type != NodeIDTypeOpaque {
+		t.Fatalf("authentication token = %+v", created.AuthenticationToken)
+	}
+	if created.RevisedSessionTimeout <= 0 {
+		t.Fatalf("revised timeout = %v", created.RevisedSessionTimeout)
+	}
+	if len(created.ServerNonce) < MinNonceBytes {
+		t.Fatalf("server nonce is %d bytes", len(created.ServerNonce))
+	}
+	// The endpoint list lets a client verify what it selected from discovery.
+	if len(created.ServerEndpoints) != 1 ||
+		created.ServerEndpoints[0].EndpointURL != testEndpointConfig().EndpointURL {
+		t.Fatalf("server endpoints = %+v", created.ServerEndpoints)
+	}
+	// No signature is generated when the security mode is None.
+	if len(created.ServerSignature.Signature) != 0 {
+		t.Fatal("a signature was generated for an unsecured session")
+	}
+
+	activated, err := client.activateSession(opened.SecurityToken, 3, created.AuthenticationToken, NullExtensionObject())
+	if err != nil {
+		t.Fatalf("ActivateSession: %v", err)
+	}
+	if activated.Header.ServiceResult != StatusGood || activated.Header.RequestHandle != 3 {
+		t.Fatalf("activate header = %+v", activated.Header)
+	}
+	if len(activated.ServerNonce) < MinNonceBytes {
+		t.Fatalf("activate server nonce is %d bytes", len(activated.ServerNonce))
+	}
+
+	encoder, err := NewEncoder(client.limits)
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoder.WriteCloseSessionRequest(CloseSessionRequest{
+		Header: RequestHeader{
+			AuthenticationToken: created.AuthenticationToken,
+			RequestHandle:       4,
+			AdditionalHeader:    NullExtensionObject(),
+		},
+	})
+	serviceBody, err := encoder.Bytes()
+	if err != nil {
+		t.Fatal(err)
+	}
+	identifier, decoder, err := client.callService(opened.SecurityToken, 4, serviceBody)
+	if err != nil {
+		t.Fatalf("CloseSession: %v", err)
+	}
+	if identifier != CloseSessionResponseEncodingID {
+		t.Fatalf("service = %d", identifier)
+	}
+	header, err := decoder.ReadResponseHeader()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if header.ServiceResult != StatusGood {
+		t.Fatalf("close result = %s", header.ServiceResult.Hex())
+	}
+
+	// The session is gone, so activating it again faults on the same channel.
+	if _, err := client.activateSession(opened.SecurityToken, 5, created.AuthenticationToken, NullExtensionObject()); err == nil {
+		t.Fatal("a closed session was activated")
+	}
+}
+
+// A service-level failure faults without closing the channel, so the client can
+// keep using it.
+func TestListenerFaultsOnAnInvalidNonceWithoutClosing(t *testing.T) {
+	_, address := startTestListener(t, testListenerConfig())
+	client := dialTestClient(t, address)
+	client.hello()
+	opened, err := client.openChannel(0, TokenRequestIssue, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = client.createSession(opened.SecurityToken, 2, []byte{1, 2, 3})
+	if err == nil {
+		t.Fatal("a short client nonce was accepted")
+	}
+	var codecErr *CodecError
+	if !errors.As(err, &codecErr) || codecErr.Status != StatusBadNonceInvalid {
+		t.Fatalf("error = %v", err)
+	}
+	// The channel survived, so a valid request still succeeds.
+	if _, err := client.createSession(opened.SecurityToken, 3, testClientNonce()); err != nil {
+		t.Fatalf("the channel did not survive the fault: %v", err)
+	}
+}
+
+// A session cannot be used from a SecureChannel it was not created on.
+func TestListenerBindsSessionsToTheirChannel(t *testing.T) {
+	_, address := startTestListener(t, testListenerConfig())
+	client := dialTestClient(t, address)
+	client.hello()
+	first, err := client.openChannel(0, TokenRequestIssue, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	created, err := client.createSession(first.SecurityToken, 2, testClientNonce())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	second, err := client.openChannel(0, TokenRequestIssue, 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = client.activateSession(second.SecurityToken, 4, created.AuthenticationToken, NullExtensionObject())
+	if err == nil {
+		t.Fatal("a session was activated from another secure channel")
+	}
+	var codecErr *CodecError
+	if !errors.As(err, &codecErr) || codecErr.Status != StatusBadSecureChannelIDInvalid {
+		t.Fatalf("error = %v", err)
 	}
 }
 

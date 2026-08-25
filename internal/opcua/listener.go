@@ -41,6 +41,7 @@ type ListenerConfig struct {
 	MaxConnections int
 	Binary         BinaryLimits
 	Channels       ChannelLimits
+	Sessions       SessionLimits
 	// Endpoint is the single endpoint this listener publishes through
 	// GetEndpoints.
 	Endpoint EndpointConfig
@@ -58,6 +59,7 @@ func DefaultListenerConfig() ListenerConfig {
 		MaxConnections:    16,
 		Binary:            DefaultBinaryLimits(),
 		Channels:          DefaultChannelLimits(),
+		Sessions:          DefaultSessionLimits(),
 		// The endpoint has no default: its URLs identify a deployment and its
 		// security policy URI is defined by OPC 10000-7, so both are supplied
 		// rather than assumed.
@@ -91,6 +93,9 @@ func (config ListenerConfig) validate() error {
 	if err := config.Channels.validate(); err != nil {
 		return err
 	}
+	if err := config.Sessions.validate(); err != nil {
+		return err
+	}
 	return config.Endpoint.validate()
 }
 
@@ -102,6 +107,7 @@ type Listener struct {
 	config    ListenerConfig
 	registry  *ChannelRegistry
 	endpoints *EndpointService
+	sessions  *SessionRegistry
 
 	listening atomic.Bool
 	slots     chan struct{}
@@ -124,10 +130,15 @@ func NewListener(config ListenerConfig, channelIDSeed, tokenIDSeed uint32) (*Lis
 	if err != nil {
 		return nil, err
 	}
+	sessions, err := NewSessionRegistry(config.Sessions)
+	if err != nil {
+		return nil, err
+	}
 	return &Listener{
 		config:    config,
 		registry:  registry,
 		endpoints: endpoints,
+		sessions:  sessions,
 		slots:     make(chan struct{}, config.MaxConnections),
 		conns:     make(map[net.Conn]struct{}),
 	}, nil
@@ -469,7 +480,7 @@ func (l *Listener) handleSecureMessage(conn net.Conn, state *connectionState, bo
 	if !state.negotiated {
 		return uacpError(StatusBadTcpMessageTypeInvalid, "a secure message arrived before the Hello")
 	}
-	_, token, sequence, payload, err := l.splitSecureMessage(state, body, false)
+	channelID, token, sequence, payload, err := l.splitSecureMessage(state, body, false)
 	if err != nil {
 		return err
 	}
@@ -482,27 +493,118 @@ func (l *Listener) handleSecureMessage(conn net.Conn, state *connectionState, bo
 		return err
 	}
 
+	// A decoding failure means the stream cannot be trusted and closes the
+	// connection. A service failure is reported as a ServiceFault, which leaves
+	// the channel open because the channel itself is healthy.
+	serviceBody, requestHandle, serviceErr, fatal := l.dispatchService(channelID, identifier, decoder)
+	if fatal != nil {
+		return fatal
+	}
+	if serviceErr != nil {
+		status := StatusBadInternalError
+		var codecErr *CodecError
+		if errors.As(serviceErr, &codecErr) {
+			status = codecErr.Status
+		}
+		encoder, encodeErr := NewEncoder(l.config.Binary)
+		if encodeErr != nil {
+			return encodeErr
+		}
+		encoder.WriteServiceFault(NewServiceFault(requestHandle, status, time.Now().UTC()))
+		if serviceBody, encodeErr = encoder.Bytes(); encodeErr != nil {
+			return encodeErr
+		}
+	}
+	return l.writeSecureMessage(conn, state, MessageTypeSecure, token, sequence.RequestID, serviceBody, false)
+}
+
+// StatusBadInternalError is from the OPC Foundation StatusCode list.
+const StatusBadInternalError StatusCode = 0x80020000
+
+// dispatchService decodes and runs one service. It reports the encoded response,
+// the request handle to echo in a fault, a service-level failure, and a fatal
+// error that must close the connection.
+func (l *Listener) dispatchService(channelID uint32, identifier uint32, decoder *Decoder) ([]byte, uint32, error, error) {
+	now := time.Now().UTC()
 	encoder, err := NewEncoder(l.config.Binary)
 	if err != nil {
-		return err
+		return nil, 0, nil, err
 	}
 	switch identifier {
 	case GetEndpointsRequestEncodingID:
 		request, requestErr := decoder.ReadGetEndpointsRequest()
 		if requestErr != nil {
-			return requestErr
+			return nil, 0, nil, requestErr
 		}
-		encoder.WriteGetEndpointsResponse(l.endpoints.GetEndpoints(request, time.Now().UTC()))
+		encoder.WriteGetEndpointsResponse(l.endpoints.GetEndpoints(request, now))
+
+	case CreateSessionRequestEncodingID:
+		request, requestErr := decoder.ReadCreateSessionRequest()
+		if requestErr != nil {
+			return nil, 0, nil, requestErr
+		}
+		session, serverNonce, createErr := l.sessions.Create(channelID, request, now)
+		if createErr != nil {
+			return nil, request.Header.RequestHandle, createErr, nil
+		}
+		encoder.WriteCreateSessionResponse(CreateSessionResponse{
+			Header: ResponseHeader{
+				Timestamp: now, RequestHandle: request.Header.RequestHandle,
+				ServiceResult: StatusGood, AdditionalHeader: NullExtensionObject(),
+			},
+			SessionID:             session.ID,
+			AuthenticationToken:   session.AuthenticationToken,
+			RevisedSessionTimeout: session.Timeout,
+			ServerNonce:           serverNonce,
+			ServerEndpoints:       []EndpointDescription{l.endpoints.Endpoint()},
+			// No signature is generated when the security mode is None.
+			ServerSignature:       SignatureData{},
+			MaxRequestMessageSize: l.config.MaxMessageSize,
+		})
+
+	case ActivateSessionRequestEncodingID:
+		request, requestErr := decoder.ReadActivateSessionRequest()
+		if requestErr != nil {
+			return nil, 0, nil, requestErr
+		}
+		session, lookupErr := l.sessions.Lookup(request.Header.AuthenticationToken, channelID, now)
+		if lookupErr != nil {
+			return nil, request.Header.RequestHandle, lookupErr, nil
+		}
+		serverNonce, activateErr := l.sessions.Activate(session, request, l.config.Endpoint.AnonymousPolicyID, now)
+		if activateErr != nil {
+			return nil, request.Header.RequestHandle, activateErr, nil
+		}
+		encoder.WriteActivateSessionResponse(ActivateSessionResponse{
+			Header: ResponseHeader{
+				Timestamp: now, RequestHandle: request.Header.RequestHandle,
+				ServiceResult: StatusGood, AdditionalHeader: NullExtensionObject(),
+			},
+			ServerNonce: serverNonce,
+			Results:     []StatusCode{},
+			Diagnostics: []DiagnosticInfo{},
+		})
+
+	case CloseSessionRequestEncodingID:
+		request, requestErr := decoder.ReadCloseSessionRequest()
+		if requestErr != nil {
+			return nil, 0, nil, requestErr
+		}
+		if closeErr := l.sessions.Close(request.Header.AuthenticationToken, channelID, now); closeErr != nil {
+			return nil, request.Header.RequestHandle, closeErr, nil
+		}
+		encoder.WriteCloseSessionResponse(CloseSessionResponse{Header: ResponseHeader{
+			Timestamp: now, RequestHandle: request.Header.RequestHandle,
+			ServiceResult: StatusGood, AdditionalHeader: NullExtensionObject(),
+		}})
+
 	default:
 		// The request handle cannot be trusted from an unparsed body, so the
 		// fault echoes zero rather than a guessed value.
-		encoder.WriteServiceFault(NewServiceFault(0, StatusBadServiceUnsupported, time.Now().UTC()))
+		encoder.WriteServiceFault(NewServiceFault(0, StatusBadServiceUnsupported, now))
 	}
-	serviceBody, err := encoder.Bytes()
-	if err != nil {
-		return err
-	}
-	return l.writeSecureMessage(conn, state, MessageTypeSecure, token, sequence.RequestID, serviceBody, false)
+	body, err := encoder.Bytes()
+	return body, 0, nil, err
 }
 
 // writeSecureMessage frames a single-chunk response. Multi-chunk responses are
@@ -577,11 +679,12 @@ func (l *Listener) writeProtocolError(conn net.Conn, cause error) {
 	_ = l.writeMessage(conn, MessageTypeError, ChunkFinal, encoded)
 }
 
-// ExpireStaleChannels reclaims channels whose tokens have all expired. A server
-// calls it periodically; it is exposed rather than run on an internal timer so
-// the owning application keeps control of its own scheduling.
+// ExpireStaleChannels reclaims channels whose tokens have all expired, and
+// sessions that have gone quiet past their revised timeout. A server calls it
+// periodically; it is exposed rather than run on an internal timer so the
+// owning application keeps control of its own scheduling.
 func (l *Listener) ExpireStaleChannels(now time.Time) int {
-	return l.registry.ExpireStale(now)
+	return l.registry.ExpireStale(now) + l.sessions.ExpireStale(now)
 }
 
 // Shutdown closes the listener and waits for the context.

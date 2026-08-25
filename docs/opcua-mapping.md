@@ -452,6 +452,51 @@ URI would be unusable by a real client, which is precisely why the value is
 supplied by configuration rather than written from recollection. The same
 applies to the transport profile URI.
 
+## Sessions
+
+`internal/opcua/session.go` implements `CreateSession`, `ActivateSession` and
+`CloseSession` from **OPC 10000-4 Tables 15, 17 and 19**, and the listener
+serves all three over a real socket.
+
+### Checks that are not conditional on security
+
+**The client nonce length is validated even with `SecurityMode` `None`.** OPC
+10000-4 states the server shall check it and return `Bad_NonceInvalid` outside
+32 to 128 bytes, and that rule is not conditioned on the security mode. It would
+have been easy to skip it on the unsecured path; the clause does not allow that.
+
+**The session is bound to the SecureChannel it was created on.** Table 15 says
+the authentication token is used *together with* the `SecureChannelId` to decide
+whether a client may use the session, so a token that leaked to another channel
+is refused with `Bad_SecureChannelIdInvalid`. This matters more, not less, on an
+unsecured endpoint.
+
+The authentication token is 32 cryptographically random bytes, opaque rather
+than numeric, so it cannot be derived from a session identifier a client has
+already seen. A failure of the random source refuses the request rather than
+falling back to something predictable.
+
+### Identity
+
+Table 17: "Null or empty user token shall always be interpreted as anonymous."
+An explicit `AnonymousIdentityToken` is also accepted when its `policyId`
+matches the one this endpoint publishes; Table 187 makes null and empty equal.
+Every other token type is refused with `Bad_IdentityTokenInvalid`, because no
+other policy is published — accepting one would mean claiming an
+authentication check the adapter does not perform.
+
+### Fault versus close
+
+A **decoding** failure means the stream cannot be trusted and closes the
+connection. A **service** failure — a bad nonce, an unknown session, a rejected
+identity — is reported as a `ServiceFault` and leaves the channel open, because
+the channel is healthy and only the request failed. Tests assert the client can
+keep using the channel afterwards.
+
+Sessions are bounded in count and reclaimed when they go quiet past their
+revised timeout, which is clamped into a configured range and is always greater
+than zero as Table 15 requires.
+
 ## What is not decided here
 
 Certificate handling and the signed and encrypted security policies, address
