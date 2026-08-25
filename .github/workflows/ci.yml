@@ -30,6 +30,8 @@ jobs:
           go test ./internal/frontend/http -run=^$ -fuzz=^FuzzExactJSONString$ -fuzztime=10000x
           go test ./internal/frontend/http -run=^$ -fuzz=^FuzzDecodeWriteValue$ -fuzztime=10000x
           go test ./internal/frontend/grpc -run=^$ -fuzz=^FuzzDecodeDAWriteRequest$ -fuzztime=10000x
+          go test ./internal/opcua -run=^$ -fuzz=^FuzzDecodeUABinary$ -fuzztime=10000x
+          go test ./internal/opcua -run=^$ -fuzz=^FuzzDecodeDateTime$ -fuzztime=10000x
       - name: Vet
         run: go vet ./...
 
