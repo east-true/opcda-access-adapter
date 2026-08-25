@@ -30,8 +30,8 @@ Subscribe.
 
 ## Current main SHA
 
-`717b04dadadc165cef78efdd70bda21f0af836a2` — protected `main` after the
-DA-native Subscribe core (PR #31, squash-merged). No public tag or GitHub
+`85bbcc59f63e3d495274d1fefd95394a24f32fc9` — protected `main` after the
+Subscribe capability probe (PR #35, squash-merged). No public tag or GitHub
 Release has been created. The local destructive review below remains a
 release-promotion gate.
 
@@ -84,6 +84,19 @@ release-promotion gate.
   `NT AUTHORITY\LocalService` lifecycle were merged in PR #26 after all eight
   checks passed. Setup stores the exact selected CLSID, never auto-selects even
   one candidate, and does not edit COM/DCOM or firewall permissions.
+- The gRPC Subscribe server-streaming frontend was merged in PR #34 after all
+  eight checks passed. One stream is one subscription is one DA group, values
+  reuse `DAReadResult`, backpressure is the HTTP/2 window with no adapter-side
+  buffer, ending a stream releases the group, and an invalidated subscription
+  ends the stream with `Aborted` so a resubscribe is never mistaken for a
+  transparently retryable failure. ADR-0014 records the decision.
+- The Subscribe capability probe was merged in PR #35 after all eight checks
+  passed. The runtime no longer advertises `capabilities.subscribe` without
+  probing the group's `IOPCDataCallback` connection point, and a source without
+  one is refused as `SUBSCRIBE_UNSUPPORTED` instead of failing late. ADR-0015
+  records the decision, and `docs/compatibility.md` records the vendor
+  variations a third-party run must observe. No third-party server was tested.
+
 - The DA-native Subscribe core was merged in PR #31 after all eight checks
   passed: one DA group per subscription advised through `IOPCDataCallback`,
   update-rate sampling with per-item coalescing and therefore no notification
@@ -100,14 +113,6 @@ release-promotion gate.
   and simultaneous listeners were not added.
 
 ## In progress
-
-- A Subscribe capability probe is on `fix/subscribe-capability-probe` and awaits
-  PR CI. It fixes the runtime advertising `capabilities.subscribe` without
-  evidence, which would misreport a synchronous-only vendor DA server. This is a
-  correctness fix for an unobserved vendor shape, not a compatibility claim.
-
-- Phase 7 gRPC Subscribe streaming is on `feat/grpc-subscribe-stream` with all
-  eight checks green, including its real-DA stream run. It awaits merge.
 
 - The local KVM/libvirt destructive-validation gate is paused. The dedicated
   `opcda-destructive-review` VM and all of its dedicated host resources were
