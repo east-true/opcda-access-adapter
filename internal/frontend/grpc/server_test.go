@@ -3,6 +3,7 @@ package grpcfrontend
 import (
 	"context"
 	"math"
+	"sync"
 	"testing"
 	"time"
 
@@ -19,6 +20,11 @@ type testRuntime struct {
 	read       func(context.Context, opcda.ReadRequest) ([]opcda.ReadResult, error)
 	write      func(context.Context, []opcda.WriteItem) ([]opcda.WriteResult, error)
 	writeCalls int
+
+	subscribe        func(context.Context, opcda.SubscribeRequest) (opcda.Subscription, error)
+	unsubscribe      func(context.Context, opcda.SubscriptionID) error
+	unsubscribedMu   sync.Mutex
+	unsubscribedList []opcda.SubscriptionID
 }
 
 func (runtime *testRuntime) Status(context.Context) opcda.RuntimeStatus { return runtime.status }
@@ -42,14 +48,27 @@ func (runtime *testRuntime) WriteBatch(ctx context.Context, items []opcda.WriteI
 	return runtime.write(ctx, items)
 }
 
-// Subscribe is not exposed by any frontend in this phase; the stub only
-// satisfies the DA runtime interface.
-func (*testRuntime) Subscribe(context.Context, opcda.SubscribeRequest) (opcda.Subscription, error) {
-	return nil, opcda.NewAdapterError(opcda.CodeSubscribeUnsupported, "subscribe is not exposed by this frontend")
+func (runtime *testRuntime) Subscribe(ctx context.Context, request opcda.SubscribeRequest) (opcda.Subscription, error) {
+	if runtime.subscribe == nil {
+		return nil, opcda.NewAdapterError(opcda.CodeSubscribeUnsupported, "subscribe is not configured in this test")
+	}
+	return runtime.subscribe(ctx, request)
 }
 
-func (*testRuntime) Unsubscribe(context.Context, opcda.SubscriptionID) error {
-	return opcda.NewAdapterError(opcda.CodeSubscribeUnsupported, "subscribe is not exposed by this frontend")
+func (runtime *testRuntime) Unsubscribe(ctx context.Context, id opcda.SubscriptionID) error {
+	runtime.unsubscribedMu.Lock()
+	runtime.unsubscribedList = append(runtime.unsubscribedList, id)
+	runtime.unsubscribedMu.Unlock()
+	if runtime.unsubscribe == nil {
+		return nil
+	}
+	return runtime.unsubscribe(ctx, id)
+}
+
+func (runtime *testRuntime) unsubscribed() []opcda.SubscriptionID {
+	runtime.unsubscribedMu.Lock()
+	defer runtime.unsubscribedMu.Unlock()
+	return append([]opcda.SubscriptionID(nil), runtime.unsubscribedList...)
 }
 
 func (*testRuntime) Shutdown(context.Context) error { return nil }

@@ -18,8 +18,13 @@ vendor-compatibility claim.
 delivered real `OnDataChange` notifications from the source-built OPC
 Foundation fixture on both supported architectures, including change-driven
 delivery, group and advise cleanup, and invalidation across an induced
-disconnect. This is not a broad vendor-compatibility claim. No frontend
-exposes Subscribe.
+disconnect. This is not a broad vendor-compatibility claim.
+
+**PHASE 7 gRPC SUBSCRIBE STREAMING IN REVIEW** — the DA core is now exposed as
+a server-streaming `Subscribe` RPC. Backpressure is the HTTP/2 flow-control
+window with no adapter-side buffer, ending a stream releases the DA group, and
+an invalidated subscription ends the stream with `Aborted` and requires an
+explicit resubscribe. HTTP still exposes no Subscribe.
 
 ## Current main SHA
 
@@ -93,6 +98,13 @@ release-promotion gate.
   and simultaneous listeners were not added.
 
 ## In progress
+
+- Phase 7 gRPC Subscribe streaming is on `feat/grpc-subscribe-stream` and awaits
+  PR CI, including its real-DA run. The `grpcprobe` write-enabled scenario now
+  opens the stream, requires the created message with the source revised rate,
+  requires the initial snapshot and two change-driven notifications induced
+  through typed Write, holds the coalescing bound, and requires that closing the
+  stream returns `subscription_count` to zero.
 
 - The local KVM/libvirt destructive-validation gate is paused. The dedicated
   `opcda-destructive-review` VM and all of its dedicated host resources were
@@ -454,3 +466,4 @@ release-promotion gate.
 - [ADR-0011: guided setup and Windows Service lifecycle](adr/0011-guided-setup-and-windows-service.md)
 - [ADR-0012: DA-native gRPC frontend](adr/0012-grpc-da-native-frontend.md)
 - [ADR-0013: DA-native Subscribe core](adr/0013-da-native-subscribe-core.md)
+- [ADR-0014: gRPC Subscribe server streaming](adr/0014-grpc-subscribe-streaming.md)

@@ -44,7 +44,7 @@ func main() {
 	if err := validateScenario(ctx, client, *expectedCLSID, *writeEnabled); err != nil {
 		fail("validate gRPC DA scenario", err)
 	}
-	fmt.Printf("GRPC_REAL_DA_PASS frontend=grpc source=exact-clsid browse=root+nested read=partial writeEnabled=%t valuesLogged=false\n", *writeEnabled)
+	fmt.Printf("GRPC_REAL_DA_PASS frontend=grpc source=exact-clsid browse=root+nested read=partial writeEnabled=%t subscribeStream=%t valuesLogged=false\n", *writeEnabled, *writeEnabled)
 }
 
 func validateScenario(ctx context.Context, client opcdav1.OPCDAAccessClient, expectedCLSID string, writeEnabled bool) error {
@@ -157,7 +157,165 @@ func validateScenario(ctx context.Context, client opcdav1.OPCDAAccessClient, exp
 	if err != nil || len(denied.Results) != 1 || denied.Results[0].Ok || denied.Results[0].Hresult == nil || denied.Results[0].Hresult.Raw != 0xC0040006 {
 		return fmt.Errorf("source-denied Write did not preserve OPC_E_BADRIGHTS")
 	}
-	return nil
+	return validateSubscribeStream(ctx, client)
+}
+
+var subscribeItems = []string{"Test/Int32", "Test/Float", "Test/String"}
+
+// validateSubscribeStream exercises the server-streaming Subscribe RPC against
+// the real source. The fixture's Test items are static, so the probe writes
+// distinct values through the ordinary typed Write path to require
+// change-driven notifications rather than only the server's initial snapshot.
+func validateSubscribeStream(ctx context.Context, client opcdav1.OPCDAAccessClient) error {
+	statusBefore, err := client.Status(ctx, &opcdav1.DAStatusRequest{})
+	if err != nil {
+		return fmt.Errorf("Status before Subscribe: %w", err)
+	}
+	if statusBefore.Capabilities == nil || !statusBefore.Capabilities.Subscribe {
+		return fmt.Errorf("Status did not report the Subscribe capability")
+	}
+	if statusBefore.Runtime == nil || statusBefore.Runtime.SubscriptionCount != 0 {
+		return fmt.Errorf("runtime already held a subscription before Subscribe")
+	}
+
+	streamCtx, cancelStream := context.WithCancel(ctx)
+	defer cancelStream()
+	items := make([]*opcdav1.DASubscribeItem, len(subscribeItems))
+	for index, itemID := range subscribeItems {
+		items[index] = &opcdav1.DASubscribeItem{ItemId: itemID}
+	}
+	stream, err := client.Subscribe(streamCtx, &opcdav1.DASubscribeRequest{
+		Items: items, RequestedUpdateRateMs: 250,
+	})
+	if err != nil {
+		return fmt.Errorf("open Subscribe stream: %w", err)
+	}
+
+	first, err := stream.Recv()
+	if err != nil {
+		return fmt.Errorf("receive the created message: %w", err)
+	}
+	created := first.GetCreated()
+	if created == nil {
+		return fmt.Errorf("the first stream message was not the created message")
+	}
+	if created.SubscriptionId == "" || created.ConnectionGeneration == 0 {
+		return fmt.Errorf("created message omitted the subscription identity")
+	}
+	if created.RevisedUpdateRateMs == 0 {
+		return fmt.Errorf("created message omitted the source revised update rate")
+	}
+	if int(created.ActiveItemCount) != len(subscribeItems) || len(created.Items) != len(subscribeItems) {
+		return fmt.Errorf("created message did not activate every requested item")
+	}
+	for index, item := range created.Items {
+		if item.ItemId != subscribeItems[index] {
+			return fmt.Errorf("created message changed the exact requested ItemID order")
+		}
+		if !item.Active || item.CanonicalDataType == nil || item.AccessRights == nil {
+			return fmt.Errorf("created item %q lost its DA metadata", item.ItemId)
+		}
+	}
+	fmt.Printf(
+		"grpc subscribe created id=%s generation=%d requestedRate=%dms revisedRate=%dms activeItems=%d\n",
+		created.SubscriptionId, created.ConnectionGeneration,
+		created.RequestedUpdateRateMs, created.RevisedUpdateRateMs, created.ActiveItemCount,
+	)
+
+	// The server's initial snapshot proves the stream carries real callbacks.
+	if err := receiveSubscriptionValue(stream, ""); err != nil {
+		return fmt.Errorf("initial notification: %w", err)
+	}
+
+	const changes = 2
+	for change := 0; change < changes; change++ {
+		written := float32(change+1) + 0.25
+		result, err := client.Write(ctx, &opcdav1.DAWriteRequest{Items: []*opcdav1.DAWriteItem{{
+			ItemId:   "Test/Float",
+			DataType: &opcdav1.DAVarType{Raw: uint32(opcda.VTR4), Name: "VT_R4"},
+			Value:    &opcdav1.DAScalarValue{Value: &opcdav1.DAScalarValue_R4Value{R4Value: written}},
+		}}})
+		if err != nil || len(result.Results) != 1 || !result.Results[0].Ok {
+			return fmt.Errorf("write to induce change %d failed", change+1)
+		}
+		if err := receiveSubscriptionValue(stream, "Test/Float"); err != nil {
+			return fmt.Errorf("change %d was not streamed: %w", change+1, err)
+		}
+	}
+	fmt.Printf("grpc subscribe change-driven notifications verified changes=%d\n", changes)
+
+	statusDuring, err := client.Status(ctx, &opcdav1.DAStatusRequest{})
+	if err != nil {
+		return fmt.Errorf("Status during Subscribe: %w", err)
+	}
+	if statusDuring.Runtime == nil || statusDuring.Runtime.SubscriptionCount != 1 {
+		return fmt.Errorf("runtime did not report the open subscription")
+	}
+
+	// Closing the stream must release the DA group without an explicit RPC.
+	cancelStream()
+	deadline := time.Now().Add(30 * time.Second)
+	for {
+		statusAfter, err := client.Status(ctx, &opcdav1.DAStatusRequest{})
+		if err == nil && statusAfter.Runtime != nil && statusAfter.Runtime.SubscriptionCount == 0 {
+			fmt.Print("grpc subscribe stream close released the subscription\n")
+			return nil
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("closing the stream did not release the subscription")
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(200 * time.Millisecond):
+		}
+	}
+}
+
+// receiveSubscriptionValue reads until an update carries a usable value, and
+// requires the exact ItemID when one is named. Process values are never printed.
+func receiveSubscriptionValue(stream opcdav1.OPCDAAccess_SubscribeClient, requiredItemID string) error {
+	known := make(map[string]struct{}, len(subscribeItems))
+	for _, itemID := range subscribeItems {
+		known[itemID] = struct{}{}
+	}
+	for {
+		message, err := stream.Recv()
+		if err != nil {
+			return err
+		}
+		update := message.GetUpdate()
+		if update == nil {
+			return fmt.Errorf("the stream sent a second created message")
+		}
+		// The pending set holds at most one entry per active item.
+		if len(update.Values) > len(subscribeItems) {
+			return fmt.Errorf("an update carried %d values, more than the %d subscribed items", len(update.Values), len(subscribeItems))
+		}
+		for _, value := range update.Values {
+			if _, ok := known[value.ItemId]; !ok {
+				return fmt.Errorf("an update carried unexpected ItemID %q", value.ItemId)
+			}
+			if value.Hresult == nil {
+				return fmt.Errorf("notification for %q carried no HRESULT", value.ItemId)
+			}
+			if !value.Ok {
+				continue
+			}
+			if value.DataType == nil || value.CanonicalDataType == nil || value.AccessRights == nil || value.Value == nil {
+				return fmt.Errorf("notification for %q lost DA metadata", value.ItemId)
+			}
+			if !value.QualityPresent {
+				return fmt.Errorf("notification for %q carried no raw Quality", value.ItemId)
+			}
+			if !value.TimestampPresent && (value.TimestampUnixSeconds != 0 || value.TimestampNanos != 0) {
+				return fmt.Errorf("notification for %q contradicted its timestamp presence", value.ItemId)
+			}
+			if requiredItemID == "" || value.ItemId == requiredItemID {
+				return nil
+			}
+		}
+	}
 }
 
 func waitConnected(ctx context.Context, client opcdav1.OPCDAAccessClient) (*opcdav1.DAStatusResponse, error) {

@@ -64,9 +64,14 @@ func TestGRPCTransportPreservesReadAndEnforcesReceiveBound(t *testing.T) {
 		t.Fatalf("oversized request code = %s, err=%v", status.Code(err), err)
 	}
 
-	var unknown opcdav1.DAStatusResponse
-	err = connection.Invoke(ctx, "/opcda.access.v1.OPCDAAccess/Subscribe", &opcdav1.DAStatusRequest{}, &unknown)
-	if status.Code(err) != codes.Unimplemented {
-		t.Fatalf("Subscribe code = %s, err=%v", status.Code(err), err)
+	// Subscribe is a server-streaming method, so a unary invocation of it must
+	// be refused rather than silently answered.
+	var unknown opcdav1.DASubscribeResponse
+	err = connection.Invoke(ctx, "/opcda.access.v1.OPCDAAccess/Subscribe", &opcdav1.DASubscribeRequest{}, &unknown)
+	if err == nil {
+		t.Fatal("a unary invocation of the Subscribe stream succeeded")
+	}
+	if status.Code(err) == codes.Unimplemented {
+		t.Fatalf("Subscribe is still unimplemented: %v", err)
 	}
 }

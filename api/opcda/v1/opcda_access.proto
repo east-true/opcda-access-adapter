@@ -10,6 +10,10 @@ service OPCDAAccess {
   rpc Browse(DABrowseRequest) returns (DABrowseResponse);
   rpc Read(DAReadRequest) returns (DAReadResponse);
   rpc Write(DAWriteRequest) returns (DAWriteResponse);
+  // Subscribe opens one DA group and streams its notifications until the
+  // client cancels, the source is lost, or the adapter stops. The stream
+  // never replays a missed value and never resubscribes on its own.
+  rpc Subscribe(DASubscribeRequest) returns (stream DASubscribeResponse);
 }
 
 message DAStatusRequest {}
@@ -46,6 +50,9 @@ message DARuntimeStatus {
   uint32 queue_depth = 1;
   uint64 reconnect_count = 2;
   string degraded_reason = 3;
+  // subscription_count is the number of DA groups the runtime currently holds
+  // for subscriptions. It returns to zero when a Subscribe stream ends.
+  uint32 subscription_count = 4;
 }
 
 message DAGRPCFrontendStatus {
@@ -135,6 +142,58 @@ message DAWriteResult {
   bool ok = 2;
   DAHRESULT hresult = 3;
   string error_code = 4;
+}
+
+message DASubscribeRequest {
+  repeated DASubscribeItem items = 1;
+  // requested_update_rate_ms is the DA group's dwRequestedUpdateRate. The
+  // server answers with its own revised rate, which is reported unchanged.
+  uint32 requested_update_rate_ms = 2;
+  // percent_deadband is the DA group's pPercentDeadband. Zero omits it.
+  float percent_deadband = 3;
+}
+
+message DASubscribeItem {
+  string item_id = 1;
+}
+
+// The first stream message is always `created`; every later message is an
+// `update`.
+message DASubscribeResponse {
+  oneof message {
+    DASubscriptionCreated created = 1;
+    DASubscriptionUpdate update = 2;
+  }
+}
+
+message DASubscriptionCreated {
+  string subscription_id = 1;
+  uint64 connection_generation = 2;
+  uint32 requested_update_rate_ms = 3;
+  uint32 revised_update_rate_ms = 4;
+  float percent_deadband = 5;
+  repeated DASubscriptionItemStatus items = 6;
+  uint32 active_item_count = 7;
+}
+
+// DASubscriptionItemStatus preserves the exact per-item AddItems outcome. A
+// failed item keeps its source HRESULT instead of failing the subscription.
+message DASubscriptionItemStatus {
+  string item_id = 1;
+  bool active = 2;
+  DAVarType canonical_data_type = 3;
+  DAAccessRights access_rights = 4;
+  DAHRESULT hresult = 5;
+  string error_code = 6;
+}
+
+// DASubscriptionUpdate carries one coalesced OPC DA notification batch. OPC DA
+// reports only the latest cache value between update-rate ticks, so a consumer
+// slower than the revised rate observes the same values it would have observed
+// at a slower requested rate. Values reuse DAReadResult so a subscribed value
+// and a device Read value cannot drift apart.
+message DASubscriptionUpdate {
+  repeated DAReadResult values = 1;
 }
 
 message DAVarType {
