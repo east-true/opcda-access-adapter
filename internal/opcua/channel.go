@@ -19,17 +19,15 @@ const (
 	StatusBadSecureChannelTokenUnknown StatusCode = 0x80870000
 )
 
-// TokenRequestType is SecurityTokenRequestType. OPC 10000-4 describes ISSUE as
-// creating a token for a new channel and RENEW as creating one for an existing
-// channel. Its wire values are not bound here: the value table was not
-// obtainable in a transcribable form, and the encoding is only needed when the
-// OpenSecureChannel service body is decoded, which additionally depends on
-// NodeId and ExtensionObject.
-type TokenRequestType int
+// TokenRequestType is SecurityTokenRequestType. OPC 10000-4 describes Issue as
+// creating a token for a new channel and Renew as creating one for an existing
+// channel. The wire values are taken from the OPC Foundation UA NodeSet, whose
+// DataType definition for SecurityTokenRequestType gives Issue 0 and Renew 1.
+type TokenRequestType int32
 
 const (
-	TokenRequestIssue TokenRequestType = iota
-	TokenRequestRenew
+	TokenRequestIssue TokenRequestType = 0
+	TokenRequestRenew TokenRequestType = 1
 )
 
 func (t TokenRequestType) String() string {

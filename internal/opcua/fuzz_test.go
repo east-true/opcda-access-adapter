@@ -270,6 +270,73 @@ func FuzzDecodeStructuredTypes(f *testing.F) {
 	})
 }
 
+// FuzzDecodeSecureChannelService drives the service bodies with arbitrary
+// bytes. An undefined enumeration value must be refused rather than reduced to
+// a neighbouring one, and no length may be honoured beyond the bytes present.
+func FuzzDecodeSecureChannelService(f *testing.F) {
+	limits := DefaultBinaryLimits()
+
+	seed, err := NewEncoder(limits)
+	if err != nil {
+		f.Fatal(err)
+	}
+	seed.WriteOpenSecureChannelRequest(OpenSecureChannelRequest{
+		Header:       RequestHeader{AuthenticationToken: NumericNodeID(0, 0), AdditionalHeader: NullExtensionObject()},
+		RequestType:  TokenRequestIssue,
+		SecurityMode: SecurityModeNone,
+	})
+	encoded, err := seed.Bytes()
+	if err != nil {
+		f.Fatal(err)
+	}
+
+	f.Add(encoded)
+	f.Add([]byte{})
+	f.Add([]byte{0x01, 0x00, 0xBE, 0x01})
+	f.Add(bytes.Repeat([]byte{0xFF}, 48))
+
+	f.Fuzz(func(t *testing.T, data []byte) {
+		decoder, err := NewDecoder(data, limits)
+		if err != nil {
+			return
+		}
+		identifier, err := decoder.ReadServiceTypeID()
+		if err != nil {
+			if _, ok := err.(*CodecError); !ok {
+				t.Fatalf("TypeId error %v is not a CodecError", err)
+			}
+			return
+		}
+		switch identifier {
+		case OpenSecureChannelRequestEncodingID:
+			request, readErr := decoder.ReadOpenSecureChannelRequest()
+			if readErr != nil {
+				if _, ok := readErr.(*CodecError); !ok {
+					t.Fatalf("decode error %v is not a CodecError", readErr)
+				}
+				return
+			}
+			switch request.RequestType {
+			case TokenRequestIssue, TokenRequestRenew:
+			default:
+				t.Fatalf("an undefined request type %d was accepted", int32(request.RequestType))
+			}
+			if request.SecurityMode > SecurityModeSignAndEncrypt {
+				t.Fatalf("an undefined security mode %d was accepted", uint32(request.SecurityMode))
+			}
+		case OpenSecureChannelResponseEncodingID:
+			_, _ = decoder.ReadOpenSecureChannelResponse()
+		case CloseSecureChannelRequestEncodingID:
+			_, _ = decoder.ReadCloseSecureChannelRequest()
+		default:
+			_, _ = decoder.ReadResponseHeader()
+		}
+		if decoder.Remaining() < 0 {
+			t.Fatal("a reader consumed past the end of the buffer")
+		}
+	})
+}
+
 // FuzzDecodeDateTime checks that no wire value produces a panic or an instant
 // outside the range OPC 10000-6 5.2.2.5 defines.
 func FuzzDecodeDateTime(f *testing.F) {

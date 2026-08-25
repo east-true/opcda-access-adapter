@@ -114,16 +114,17 @@ release-promotion gate.
 
 ## In progress
 
-- Phase 8 OPC UA continues on `feat/opcua-nodeid-and-headers` with `NodeId`,
-  `ExpandedNodeId`, `QualifiedName`, `LocalizedText`, `ExtensionObject`,
-  `DiagnosticInfo`, and the service `RequestHeader`/`ResponseHeader`. Merged so
-  far: the DA-to-UA mapping (PR #37), the UA Binary codec (PR #38), the
-  connection protocol framing (PR #39), the secure conversation framing
-  (PR #40), and the SecureChannel token lifecycle (PR #41). There is still no
-  listener and no UA dependency. The SecurityPolicy URI strings, the per-policy
-  `LegacySequenceNumbers` flag, and the `SecurityTokenRequestType` wire values
-  remain deliberately unbound because OPC 10000-7 and that value table were not
-  obtainable. No conformance or interoperability claim is made.
+- Phase 8 OPC UA continues on `feat/opcua-securechannel-bodies` with the
+  `OpenSecureChannel` and `CloseSecureChannel` service bodies and the service
+  layer that joins them to the token lifecycle. Merged so far: the DA-to-UA
+  mapping (PR #37), the UA Binary codec (PR #38), the connection protocol
+  framing (PR #39), the secure conversation framing (PR #40), the SecureChannel
+  token lifecycle (PR #41), and the structured types and service headers
+  (PR #42). `SecurityTokenRequestType` is now bound from the OPC Foundation UA
+  NodeSet; the SecurityPolicy URI strings and the per-policy
+  `LegacySequenceNumbers` flag remain unbound pending OPC 10000-7. There is
+  still no listener and no UA dependency. No conformance or interoperability
+  claim is made.
 
 - The local KVM/libvirt destructive-validation gate is paused. The dedicated
   `opcda-destructive-review` VM and all of its dedicated host resources were
