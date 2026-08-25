@@ -87,7 +87,9 @@ created. The local destructive review below remains a release-promotion gate.
   real-DA callback run. A `subscribeprobe` harness was added to supply exactly
   the missing evidence: real `OnDataChange` delivery from the source-built OPC
   Foundation fixture with exact ItemID, VARTYPE, raw Quality, timestamp
-  presence and HRESULT; the per-item coalescing bound; group and advise cleanup
+  presence and HRESULT; change-driven notifications induced through the typed
+  Write path, because the fixture's `Test` items are otherwise static and
+  produce only the server's initial snapshot; the per-item coalescing bound; group and advise cleanup
   across more subscribe/unsubscribe cycles than `MaxSubscriptions`;
   subscription invalidation across an induced fixture termination; and
   confirmation that reconnect restores nothing and that an explicit resubscribe

@@ -26,6 +26,14 @@ const (
 
 var probeItems = []opcda.DAItemID{"Test/Int32", "Test/Float", "Test/String"}
 
+// The fixture's Test items are static, so a subscription only receives the
+// server's initial snapshot unless something changes a value. Test/Float is the
+// fixture's read/write VT_R4 item, so the probe writes distinct values through
+// the ordinary typed Write path to require change-driven callbacks.
+const changeItem = opcda.DAItemID("Test/Float")
+
+const changeNotifications = 3
+
 func main() {
 	clsid := flag.String("clsid", "", "exact configured source CLSID")
 	updateRate := flag.Duration("update-rate", 250*time.Millisecond, "requested DA group update rate")
@@ -42,8 +50,11 @@ func main() {
 
 	limits := opcda.DefaultLimits()
 	runtime, err := opcda.New(opcda.Config{
-		Source:           opcda.SourceConfig{CLSID: *clsid},
-		Limits:           limits,
+		Source: opcda.SourceConfig{CLSID: *clsid},
+		Limits: limits,
+		// Write is enabled only inside this validation process, so the probe can
+		// change a source value and require change-driven notifications.
+		WriteEnabled:     true,
 		ReconnectInitial: 200 * time.Millisecond,
 		ReconnectMax:     2 * time.Second,
 	})
@@ -62,8 +73,8 @@ func main() {
 		fail("validate DA Subscribe core", err)
 	}
 	fmt.Printf(
-		"SUBSCRIBE_REAL_DA_PASS items=%d cleanupCycles=%d disconnectTested=%t valuesLogged=false\n",
-		len(probeItems), cleanupCycles, *serverProcess != "",
+		"SUBSCRIBE_REAL_DA_PASS items=%d changeNotifications=%d cleanupCycles=%d disconnectTested=%t valuesLogged=false\n",
+		len(probeItems), changeNotifications, cleanupCycles, *serverProcess != "",
 	)
 }
 
@@ -91,7 +102,13 @@ func runProbe(ctx context.Context, runtime opcda.Runtime, limits opcda.Limits, u
 		return fmt.Errorf("status reported %d subscriptions, want 1", count)
 	}
 
-	if err := awaitNotifications(ctx, subscription, info.ActiveItemCount, 3); err != nil {
+	// The server's initial snapshot proves the advise and the callback vtable.
+	if err := awaitNotifications(ctx, subscription, info.ActiveItemCount, 1); err != nil {
+		return err
+	}
+	// A value change proves notifications are driven by the source, not by a
+	// one-time snapshot.
+	if err := awaitChangeNotifications(ctx, runtime, subscription, info.ActiveItemCount); err != nil {
 		return err
 	}
 
@@ -222,6 +239,72 @@ func awaitNotifications(ctx context.Context, subscription opcda.Subscription, ac
 		fmt.Printf("notified itemId=%s batches=%d\n", itemID, count)
 	}
 	return nil
+}
+
+// awaitChangeNotifications writes distinct values to the fixture's read/write
+// item and requires the source to report each change. Written and reported
+// values are never printed.
+func awaitChangeNotifications(ctx context.Context, runtime opcda.Runtime, subscription opcda.Subscription, activeItems int) error {
+	for change := 0; change < changeNotifications; change++ {
+		// Drop anything already pending so the awaited batch is the one caused
+		// by this write.
+		subscription.Drain()
+
+		written := float32(change+1) + 0.5
+		results, err := runtime.WriteBatch(ctx, []opcda.WriteItem{
+			{ItemID: changeItem, VarType: opcda.VTR4, Value: written},
+		})
+		if err != nil {
+			return fmt.Errorf("write to induce change %d: %w", change+1, err)
+		}
+		if len(results) != 1 || results[0].ItemID != changeItem {
+			return fmt.Errorf("change %d write returned an unexpected result set", change+1)
+		}
+		if results[0].HRESULT.Failed() || results[0].ErrorCode != "" {
+			return fmt.Errorf("change %d write failed: hresult=%s code=%s",
+				change+1, results[0].HRESULT.Hex(), results[0].ErrorCode)
+		}
+
+		if err := awaitItem(ctx, subscription, changeItem, activeItems); err != nil {
+			return fmt.Errorf("change %d was not reported by the source: %w", change+1, err)
+		}
+	}
+	fmt.Printf("change-driven notifications verified itemId=%s changes=%d\n", changeItem, changeNotifications)
+	return nil
+}
+
+// awaitItem waits for a drained batch that contains the given item.
+func awaitItem(ctx context.Context, subscription opcda.Subscription, itemID opcda.DAItemID, activeItems int) error {
+	deadline, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	for {
+		select {
+		case <-deadline.Done():
+			return deadline.Err()
+		case <-subscription.Done():
+			return fmt.Errorf("subscription was invalidated: %v", subscription.Err())
+		case <-subscription.Updates():
+		}
+		values := subscription.Drain()
+		if len(values) > activeItems {
+			return fmt.Errorf("drained %d values, more than the %d active items", len(values), activeItems)
+		}
+		for _, value := range values {
+			if value.ItemID != itemID {
+				continue
+			}
+			if !value.HRESULTPresent || value.VarType == nil || value.CanonicalType == nil {
+				return fmt.Errorf("change notification for %q lost DA metadata", itemID)
+			}
+			if value.HRESULT.Failed() {
+				return fmt.Errorf("change notification for %q reported %s", itemID, value.HRESULT.Hex())
+			}
+			if value.Value == nil {
+				return fmt.Errorf("change notification for %q carried no value", itemID)
+			}
+			return nil
+		}
+	}
 }
 
 func verifyUnsubscribeStopsDelivery(ctx context.Context, runtime opcda.Runtime, subscription opcda.Subscription, updateRate time.Duration) error {
