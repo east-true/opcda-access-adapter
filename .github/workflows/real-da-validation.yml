@@ -20,6 +20,7 @@ on:
       - internal/frontend/grpc/**
       - internal/validation/stabilityprobe/**
       - internal/validation/grpcprobe/**
+      - internal/validation/subscribeprobe/**
       - api/opcda/**
       - go.mod
       - go.sum
@@ -78,6 +79,7 @@ jobs:
           go build -trimpath -o "_test/adapter-${{ matrix.arch }}.exe" ./cmd/adapter
           go build -trimpath -o "_test/stability-probe-${{ matrix.arch }}.exe" ./internal/validation/stabilityprobe
           go build -trimpath -o "_test/grpc-probe-${{ matrix.arch }}.exe" ./internal/validation/grpcprobe
+          go build -trimpath -o "_test/subscribe-probe-${{ matrix.arch }}.exe" ./internal/validation/subscribeprobe
 
       - name: Audit, Defender-scan, and build OPC Foundation test server
         shell: pwsh
@@ -100,4 +102,5 @@ jobs:
           -SoakIterations ([int]$env:SOAK_ITERATIONS)
           -StabilityProbePath "_test/stability-probe-${{ matrix.arch }}.exe"
           -GRPCProbePath "_test/grpc-probe-${{ matrix.arch }}.exe"
+          -SubscribeProbePath "_test/subscribe-probe-${{ matrix.arch }}.exe"
           -FailureCycles 3

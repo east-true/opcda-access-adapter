@@ -47,9 +47,22 @@ sample parses the first `-` or `/` in its entire command line as the start of
 normal server loop instead. The harness rejects such a path before execution
 and bounds every registration process to 30 seconds.
 
-The HTTP and gRPC probes do not print or upload process values. Their summaries contain only
+No frontend exposes Subscribe, so the Subscribe probe drives the DA runtime
+directly instead of a listener. It creates one DA group per subscription,
+requires real `IOPCDataCallback::OnDataChange` batches from the fixture,
+checks that a drained batch never exceeds the subscription's active item
+count, and repeats subscribe/unsubscribe more times than `MaxSubscriptions` so
+a leaked group or advise cookie would exhaust the limit. It then terminates the
+fixture process on purpose to require that source loss invalidates the
+subscription, that reconnect restores nothing implicitly, and that an explicit
+resubscribe receives a new generation-scoped identifier. Because it stops the
+fixture, it runs before the long-lived adapter starts and leaves no activated
+server behind.
+
+The HTTP, gRPC, and Subscribe probes do not print or upload process values. Their summaries contain only
 operation outcomes, VARTYPE, raw Quality, timestamp presence, HRESULTs,
-iteration count, and bounded resource deltas.
+subscription identifiers, revised update rates, iteration count, and bounded
+resource deltas.
 
 ## Running
 

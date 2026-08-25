@@ -83,12 +83,16 @@ created. The local destructive review below remains a release-promotion gate.
 
 ## In progress
 
-- Phase 7 DA Subscribe core is on `feat/da-subscribe-core` and awaits PR CI and
-  a real-DA callback run. The remaining evidence is: `OnDataChange` delivery
-  from the source-built OPC Foundation fixture, group/advise cleanup on
-  unsubscribe and shutdown, subscription invalidation across an induced
-  disconnect, and confirmation that no group or advise cookie survives a
-  reconnect. Until those pass, Subscribe is implemented but unproven.
+- Phase 7 DA Subscribe core is on `feat/da-subscribe-core` and awaits the
+  real-DA callback run. A `subscribeprobe` harness was added to supply exactly
+  the missing evidence: real `OnDataChange` delivery from the source-built OPC
+  Foundation fixture with exact ItemID, VARTYPE, raw Quality, timestamp
+  presence and HRESULT; the per-item coalescing bound; group and advise cleanup
+  across more subscribe/unsubscribe cycles than `MaxSubscriptions`;
+  subscription invalidation across an induced fixture termination; and
+  confirmation that reconnect restores nothing and that an explicit resubscribe
+  receives a new generation-scoped identifier. Until that job passes, Subscribe
+  remains implemented but unproven.
 
 - The local KVM/libvirt destructive-validation gate is paused. The dedicated
   `opcda-destructive-review` VM and all of its dedicated host resources were
