@@ -315,6 +315,46 @@ obtainable in a transcribable form, and the encoding is only needed once the
 `NodeId` and `ExtensionObject`, neither of which the codec implements yet. The
 lifecycle above is complete and testable without them.
 
+## Structured types and service headers
+
+`internal/opcua/nodeid.go` implements `NodeId`, `ExpandedNodeId`,
+`QualifiedName`, `LocalizedText`, `ExtensionObject`, and `DiagnosticInfo` from
+**OPC 10000-6 clauses 5.2.2.9 to 5.2.2.15**, plus the `RequestHeader` and
+`ResponseHeader` of **OPC 10000-4 Tables 171 and 172**. Every service body needs
+these, and the address space needs `NodeId`.
+
+The encoder picks the most compact `NodeId` form the value fits, which is what
+Table 17's two-byte and four-byte encodings exist for, and a plain `NodeId` that
+arrives carrying the `ExpandedNodeId` flags is refused rather than having them
+ignored — ignoring them would leave the rest of the stream misaligned. When an
+`ExpandedNodeId` carries a `NamespaceUri` the `NamespaceIndex` is written as 0,
+as 5.2.2.10 requires, because the index is then to be ignored.
+
+The DA frontend will use the string `NodeId` form so an exact DA ItemID is
+carried as-is, consistent with the identity rules above.
+
+### A field order that is not the mask order
+
+`DiagnosticInfo` is worth calling out. Table 22's stream order is `SymbolicId`,
+`NamespaceUri`, **`Locale`**, **`LocalizedText`** — but the mask bits list
+`LocalizedText` as `0x04` and `Locale` as `0x08`. The bits select presence; the
+table rows fix the order, and the two disagree. Writing the fields in mask-bit
+order would produce a stream that decodes into the wrong fields without any
+length error to reveal it.
+
+### Recursion
+
+`DiagnosticInfo` is recursive. OPC 10000-6 5.2.2.12 sets a different bound from
+the general nesting rule: decoders shall support at least 4 levels and are not
+expected to support more than 10. The codec bounds it at 10 and refuses deeper
+input on both the encode and decode paths.
+
+`ExtensionObject` bodies are kept as raw bytes. The clause allows a decoder that
+does not recognise the `TypeId` to treat the body as opaque, and this adapter
+does not decode structures it has no schema for.
+
+`FuzzDecodeStructuredTypes` drives all of these with arbitrary bytes in CI.
+
 ## What is not decided here
 
 Certificate handling and the signed and encrypted security policies, address

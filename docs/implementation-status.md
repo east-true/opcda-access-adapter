@@ -114,14 +114,13 @@ release-promotion gate.
 
 ## In progress
 
-- Phase 8 OPC UA continues on `feat/opcua-securechannel-service` with the
-  SecureChannel token lifecycle: issue, renew with the old token still
-  acceptable until it expires or is superseded, expiry enforcement, bounded
-  concurrent channels, and stale reclamation. The DA-to-UA mapping merged in
-  PR #37, the UA Binary codec in PR #38, the connection protocol framing in
-  PR #39, and the secure conversation framing in PR #40. There is still no
-  listener and no UA dependency. The `OpenSecureChannel` service body waits on
-  `NodeId` and `ExtensionObject`; the SecurityPolicy URI strings, the per-policy
+- Phase 8 OPC UA continues on `feat/opcua-nodeid-and-headers` with `NodeId`,
+  `ExpandedNodeId`, `QualifiedName`, `LocalizedText`, `ExtensionObject`,
+  `DiagnosticInfo`, and the service `RequestHeader`/`ResponseHeader`. Merged so
+  far: the DA-to-UA mapping (PR #37), the UA Binary codec (PR #38), the
+  connection protocol framing (PR #39), the secure conversation framing
+  (PR #40), and the SecureChannel token lifecycle (PR #41). There is still no
+  listener and no UA dependency. The SecurityPolicy URI strings, the per-policy
   `LegacySequenceNumbers` flag, and the `SecurityTokenRequestType` wire values
   remain deliberately unbound because OPC 10000-7 and that value table were not
   obtainable. No conformance or interoperability claim is made.
