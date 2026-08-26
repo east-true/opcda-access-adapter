@@ -328,6 +328,9 @@ type DataAccessLimits struct {
 	MaxNodesPerRead  int
 	MaxNodesPerWrite int
 	RequestTimeout   time.Duration
+	// MaxNodes bounds the address space, including nodes created by addressing
+	// a DA item directly rather than browsing to it.
+	MaxNodes int
 }
 
 func DefaultDataAccessLimits() DataAccessLimits {
@@ -335,11 +338,13 @@ func DefaultDataAccessLimits() DataAccessLimits {
 		MaxNodesPerRead:  100,
 		MaxNodesPerWrite: 100,
 		RequestTimeout:   30 * time.Second,
+		MaxNodes:         DefaultPopulationLimits().MaxNodes,
 	}
 }
 
 func (limits DataAccessLimits) validate() error {
-	if limits.MaxNodesPerRead <= 0 || limits.MaxNodesPerWrite <= 0 || limits.RequestTimeout <= 0 {
+	if limits.MaxNodesPerRead <= 0 || limits.MaxNodesPerWrite <= 0 ||
+		limits.RequestTimeout <= 0 || limits.MaxNodes <= 0 {
 		return fmt.Errorf("all data access limits must be positive")
 	}
 	return nil
@@ -399,8 +404,13 @@ func (s *DataAccessService) Read(ctx context.Context, request ReadRequest, now t
 		}
 		node, ok := s.space.Node(target.NodeID)
 		if !ok {
-			results[index] = failedDataValue(StatusBadNodeIdUnknown)
-			continue
+			// A node identifier that names a DA item is self-describing, so it
+			// can be read without having been browsed. A source need not
+			// implement Browse at all.
+			if node, ok = s.space.ResolveVariable(target.NodeID, s.limits.MaxNodes); !ok {
+				results[index] = failedDataValue(StatusBadNodeIdUnknown)
+				continue
+			}
 		}
 		if target.AttributeID != AttributeValue {
 			results[index] = s.readAttribute(node, target.AttributeID, now, request.TimestampsToReturn)
@@ -623,8 +633,10 @@ func (s *DataAccessService) Write(ctx context.Context, request WriteRequest, now
 		}
 		node, ok := s.space.Node(target.NodeID)
 		if !ok {
-			results[index] = StatusBadNodeIdUnknown
-			continue
+			if node, ok = s.space.ResolveVariable(target.NodeID, s.limits.MaxNodes); !ok {
+				results[index] = StatusBadNodeIdUnknown
+				continue
+			}
 		}
 		if target.AttributeID != AttributeValue {
 			// Every other attribute this adapter exposes is read-only.
@@ -852,6 +864,10 @@ func statusForRuntimeError(err error) StatusCode {
 		return StatusBadTypeMismatch
 	case opcda.CodeUnsupportedVarType:
 		return StatusBadDataTypeIDUnknown
+	case opcda.CodeBrowseUnsupported, opcda.CodeSubscribeUnsupported:
+		// The DA 2.05a Browse and callback interfaces are both optional, so a
+		// source lacking one is reporting a capability rather than failing.
+		return StatusBadServiceUnsupported
 	default:
 		return StatusBadInternalError
 	}

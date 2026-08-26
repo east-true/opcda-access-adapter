@@ -122,6 +122,19 @@ release-promotion gate.
 
 ## In progress
 
+- Third-party vendor compatibility work is on `fix/opcua-vendor-variations`. No
+  vendor DA server was available, so nothing is claimed as a vendor result; the
+  branch fixes defects that reviewing the UA layer against vendor-shaped sources
+  exposed. `IOPCBrowseServerAddressSpace` is optional in DA 2.05a, and against a
+  source lacking it the UA address space could never be populated and nothing
+  was reachable. A UA node identifier carries the exact ItemID, so an item can
+  now be read, written and monitored without having been browsed, bounded by the
+  same node budget. A MonitoredItem's `revisedSamplingInterval` now reports the
+  rate the DA server settled on rather than the subscription's publishing
+  interval. `BROWSE_UNSUPPORTED` and `SUBSCRIBE_UNSUPPORTED` map to
+  `Bad_ServiceUnsupported` rather than `Bad_InternalError`, since both
+  interfaces are optional.
+
 
 - The local KVM/libvirt destructive-validation gate is paused. The dedicated
   `opcda-destructive-review` VM and all of its dedicated host resources were

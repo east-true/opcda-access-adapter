@@ -367,8 +367,10 @@ observation rather than used to change source semantics.
 
 | Variation | What to record | Adapter behavior today |
 |---|---|---|
-| No `IOPCDataCallback` connection point | `capabilities.subscribe` false | Probed at connect; Subscribe refused as `SUBSCRIBE_UNSUPPORTED` |
-| Different revised update rate, or a rate the server refuses | requested and revised values | The server's revised rate is reported unchanged |
+| No `IOPCDataCallback` connection point | `capabilities.subscribe` false | Probed at connect; Subscribe refused as `SUBSCRIBE_UNSUPPORTED`. Over OPC UA this is `Bad_ServiceUnsupported`. |
+| No `IOPCBrowseServerAddressSpace` | `capabilities.browse` `unsupported` | Browse refused as `BROWSE_UNSUPPORTED`, and over OPC UA as `Bad_ServiceUnsupported`. The UA address space stays empty, but a client that knows its ItemIDs can still read, write and monitor them: a UA node identifier carries the exact ItemID. |
+| An item's canonical type or access rights never reported | the node's `DataType` and `AccessLevel` before any Read | DA reports both in `AddItems` rather than Browse, so a browsed node knows neither. The source decides both until a Read or notification teaches the adapter. |
+| Different revised update rate, or a rate the server refuses | requested and revised values | The server's revised rate is reported unchanged, including as a UA MonitoredItem's `revisedSamplingInterval` |
 | Non-Good Quality | the exact raw 16-bit Quality | Passed through as data, never a transport failure |
 | Absent source timestamp | `timestampPresent` false with a zero timestamp | Presence is an independent bit; no timestamp is synthesized |
 | Scalar VARTYPE outside the supported set | the exact raw VARTYPE | Explicit `UNSUPPORTED_VARTYPE`; never coerced or narrowed |

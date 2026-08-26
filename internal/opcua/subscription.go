@@ -741,6 +741,9 @@ type SubscriptionLimits struct {
 	MaxKeepAliveCount          uint32
 	MaxNotificationsPerPublish int
 	RequestTimeout             time.Duration
+	// MaxNodes bounds the address space, including nodes created by monitoring
+	// a DA item that was never browsed.
+	MaxNodes int
 }
 
 func DefaultSubscriptionLimits() SubscriptionLimits {
@@ -753,6 +756,7 @@ func DefaultSubscriptionLimits() SubscriptionLimits {
 		MaxKeepAliveCount:          100,
 		MaxNotificationsPerPublish: 500,
 		RequestTimeout:             30 * time.Second,
+		MaxNodes:                   DefaultPopulationLimits().MaxNodes,
 	}
 }
 
@@ -760,7 +764,8 @@ func (limits SubscriptionLimits) validate() error {
 	if limits.MaxSubscriptions <= 0 || limits.MaxMonitoredItems <= 0 ||
 		limits.MinPublishingInterval <= 0 || limits.MaxPublishingInterval <= 0 ||
 		limits.MinKeepAliveCount == 0 || limits.MaxKeepAliveCount == 0 ||
-		limits.MaxNotificationsPerPublish <= 0 || limits.RequestTimeout <= 0 {
+		limits.MaxNotificationsPerPublish <= 0 || limits.RequestTimeout <= 0 ||
+		limits.MaxNodes <= 0 {
 		return fmt.Errorf("all subscription limits must be positive")
 	}
 	if limits.MinPublishingInterval > limits.MaxPublishingInterval {
@@ -988,7 +993,19 @@ func (s *SubscriptionService) CreateMonitoredItems(ctx context.Context, sessionT
 		subscription.items[item.id] = item
 		subscription.byHandle[item.clientHandle] = item
 	}
-	if err := s.rebuildDASubscription(ctx, subscription, now); err != nil {
+	rebuildErr := s.rebuildDASubscription(ctx, subscription, now)
+	if rebuildErr == nil {
+		// Now that the group exists the source has revised its update rate, so
+		// the results report what the source settled on rather than what the
+		// subscription asked for.
+		revised := subscription.daRevisedInterval()
+		for index := range results {
+			if results[index].StatusCode == StatusGood {
+				results[index].RevisedSamplingInterval = revised
+			}
+		}
+	}
+	if err := rebuildErr; err != nil {
 		// The DA source refused, so nothing was created: the items are removed
 		// and every accepted result carries the source's status.
 		status := statusForRuntimeError(err)
@@ -1038,7 +1055,11 @@ func (s *SubscriptionService) prepareMonitoredItem(subscription *uaSubscription,
 	}
 	node, ok := s.space.Node(create.ItemToMonitor.NodeID)
 	if !ok {
-		return failed(StatusBadNodeIdUnknown), nil
+		// A node identifier naming a DA item can be monitored without having
+		// been browsed, since a source need not implement Browse at all.
+		if node, ok = s.space.ResolveVariable(create.ItemToMonitor.NodeID, s.limits.MaxNodes); !ok {
+			return failed(StatusBadNodeIdUnknown), nil
+		}
 	}
 	if node.Class != NodeClassVariable || node.ItemID == "" {
 		return failed(StatusBadAttributeIDInvalid), nil
@@ -1064,9 +1085,10 @@ func (s *SubscriptionService) prepareMonitoredItem(subscription *uaSubscription,
 	return MonitoredItemCreateResult{
 		StatusCode:      StatusGood,
 		MonitoredItemID: item.id,
-		// The DA group's revised update rate is the real sampling interval, so
-		// the subscription's publishing interval is reported rather than the
-		// client's request, which the source never saw.
+		// The DA group's revised update rate is the real sampling interval. It
+		// is filled in once the group exists, because only the source can say
+		// what rate it settled on, and a vendor may revise it far from what was
+		// requested.
 		RevisedSamplingInterval: subscription.publishingInterval,
 		// The DA core coalesces per item, so the effective queue is one value
 		// per item and reporting anything larger would overstate it.
@@ -1340,6 +1362,20 @@ func (s *SubscriptionService) reportInvalidation(subscription *uaSubscription, n
 			ClientHandle: item.clientHandle, Value: value,
 		})
 	}
+}
+
+// daRevisedInterval reports the update rate the DA server settled on, in
+// milliseconds. Before a group exists the subscription's publishing interval is
+// the best answer available.
+func (subscription *uaSubscription) daRevisedInterval() float64 {
+	if subscription.da == nil {
+		return subscription.publishingInterval
+	}
+	revised := subscription.da.Info().RevisedUpdateRate
+	if revised <= 0 {
+		return subscription.publishingInterval
+	}
+	return float64(revised / time.Millisecond)
 }
 
 func (subscription *uaSubscription) itemForDAItemID(itemID opcda.DAItemID) *monitoredItem {

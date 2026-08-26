@@ -314,10 +314,81 @@ func BranchNodeID(path []string) NodeID {
 	return StringNodeID(AdapterNamespaceIndex, encoded)
 }
 
+// itemNodePrefix marks a node identifier as naming a DA item, so an item and a
+// branch can never collide.
+const itemNodePrefix = "item:"
+
 // ItemNodeID is the node identifier for a DA item. The exact ItemID is carried
 // unchanged, with no trimming, case conversion, or delimiter normalisation.
 func ItemNodeID(itemID opcda.DAItemID) NodeID {
-	return StringNodeID(AdapterNamespaceIndex, "item:"+string(itemID))
+	return StringNodeID(AdapterNamespaceIndex, itemNodePrefix+string(itemID))
+}
+
+// ItemIDForNode recovers the exact DA ItemID a node identifier names.
+//
+// A node identifier is self-describing: it carries the ItemID verbatim, so an
+// item can be addressed without having been browsed. That matters because a DA
+// server need not implement Browse at all — the interface is optional in DA
+// 2.05a — and a client of such a source knows its ItemIDs from elsewhere. The
+// source remains the authority on whether the item exists and answers
+// OPC_E_UNKNOWNITEMID if it does not, which Part 8 Table A.4 maps to exactly
+// the Bad_NodeIdUnknown a client would expect.
+func ItemIDForNode(id NodeID) (opcda.DAItemID, bool) {
+	if id.Namespace != AdapterNamespaceIndex || id.Type != NodeIDTypeString {
+		return "", false
+	}
+	if len(id.StringID) <= len(itemNodePrefix) || id.StringID[:len(itemNodePrefix)] != itemNodePrefix {
+		return "", false
+	}
+	return opcda.DAItemID(id.StringID[len(itemNodePrefix):]), true
+}
+
+// ResolveVariable returns the node for a variable, creating an unbrowsed one
+// when the identifier names a DA item the address space has not seen.
+//
+// The created node knows neither its canonical type nor its access rights,
+// which is the same state a browsed item starts in, so the source decides both.
+// It is not linked into the hierarchy: it was never browsed, so Browse must not
+// report it as a child of anything.
+func (s *AddressSpace) ResolveVariable(id NodeID, maxNodes int) (*Node, bool) {
+	if node, ok := s.Node(id); ok {
+		if node.Class != NodeClassVariable || node.ItemID == "" {
+			return nil, false
+		}
+		return node, true
+	}
+	itemID, ok := ItemIDForNode(id)
+	if !ok {
+		return nil, false
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	// Re-check under the write lock; another caller may have added it.
+	if node, exists := s.nodes[nodeKey(id)]; exists {
+		if node.Class != NodeClassVariable || node.ItemID == "" {
+			return nil, false
+		}
+		return node, true
+	}
+	// Addressing items directly must not let a client grow the space without
+	// limit, so the same node budget applies.
+	if maxNodes > 0 && len(s.nodes) >= maxNodes {
+		return nil, false
+	}
+	node := &Node{
+		ID:             id,
+		Class:          NodeClassVariable,
+		BrowseName:     QualifiedName{Namespace: AdapterNamespaceIndex, Name: string(itemID)},
+		DisplayName:    LocalizedText{Text: string(itemID)},
+		TypeDefinition: NumericNodeID(0, NodeIDBaseDataVariableType),
+		ValueRank:      ValueRankScalar,
+		ItemID:         itemID,
+		DataType:       NumericNodeID(0, NodeIDBaseDataType),
+	}
+	node.AccessLevel, node.AccessRightsKnown = accessLevelFor(nil)
+	s.nodes[nodeKey(node.ID)] = node
+	return node, true
 }
 
 // PopulateBranch adds the entries of one DA Browse result under the node the
