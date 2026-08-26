@@ -539,6 +539,47 @@ Re-browsing a branch replaces its forward references, so the space reflects the
 source instead of accumulating nodes the source no longer has, while the
 inverse references that walk back up survive.
 
+## Browse
+
+`internal/opcua/browse.go` implements `Browse` and `BrowseNext` from **OPC
+10000-4 Tables 34, 37, 113, 168, 112 and 194**, served by the listener to an
+activated session.
+
+Three rules in Table 34 are easy to get subtly wrong, and each is pinned by a
+test:
+
+- **`nodeClassMask` is a mask, not an equality test**, and zero means *all*
+  classes rather than none.
+- **`resultMask` is a request for specific fields.** Anything not asked for is
+  omitted rather than sent anyway.
+- **`requestedMaxReferencesPerNode` of zero means the client imposes no limit**,
+  so the server's own bound applies. A client can tighten that bound but cannot
+  raise it.
+
+Table 168 adds one more: a type definition exists only for `Object` and
+`Variable`, so any other node class carries a null NodeId there.
+
+The results array matches `nodesToBrowse` in size and order, so a node that
+fails occupies its slot with a per-node status rather than shortening the list —
+the service call itself still succeeds. A `referenceTypeId` that names no
+reference type is `Bad_ReferenceTypeIdInvalid`, not a filter that silently
+matches nothing.
+
+### Continuation points
+
+A continuation point is **consumed by use**: the client receives a new one if
+more remains, so a stale point cannot be replayed. Points are bounded in number,
+expire if a client abandons a browse, and `BrowseNext` with
+`releaseContinuationPoints` returns empty arrays and frees them, as Table 37
+requires. When no point can be issued the operation reports
+`Bad_NoContinuationPoints` rather than silently truncating the result.
+
+### Session enforcement
+
+`Browse` and `BrowseNext` require an **activated** session. A session that was
+created but never activated is refused with `Bad_SessionNotActivated`, so a
+client cannot skip `ActivateSession` and still read the address space.
+
 ## What is not decided here
 
 Certificate handling and the signed and encrypted security policies, address
