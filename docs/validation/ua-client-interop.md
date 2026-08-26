@@ -162,13 +162,31 @@ OPC 10000-4 5.7.2 says the `clientNonce` "shall have a length between 32 and
 it as the condition for `Bad_NonceInvalid`. Neither statement is conditioned on
 the security mode.
 
-open62541 sends **no nonce at all** when the channel is unsecured — deliberately,
-by a comment in its own source. So a literal reading of the clause makes this
-server unusable with a reference implementation. The Foundation's .NET stack,
-by contrast, sends a full nonce even under `None`.
+open62541 sends **no nonce at all** when the channel is unsecured, so a literal
+reading of the clause refuses it. That looked at first like open62541 deviating
+and this adapter being correct. **It is the other way round.** Checking what
+real servers actually do:
 
-The adapter accepts an absent nonce **only when the SecurityMode is None and
-this endpoint publishes nothing but the anonymous user token policy**.
+| Server | An absent nonce | Length enforcement |
+| --- | --- | --- |
+| **OPC Foundation .NET** (`StandardServer`) | **accepted** — the check is skipped entirely for an empty nonce, at every security mode | a configurable *minimum* only; no maximum |
+| **open62541** (`ua_services_session.c`) | **accepted** under `None` | 32–128, but only when the policy is not `None` |
+| this adapter, before | **refused** | 32–128, unconditionally |
+
+Neither reference implementation enforces the clause as written, and the
+Foundation's own server goes further than open62541: it accepts an empty nonce
+under *any* policy, and immediately afterwards discards the nonce entirely with
+the comment **"ignore nonce if security policy set to none"**. That is the same
+conclusion this adapter reached, written by the people who publish the
+specification.
+
+So the adapter was the outlier, not open62541 — which is why open62541
+interoperates with the rest of the ecosystem despite the clause.
+
+### What the adapter does now
+
+An absent nonce is accepted **only when the SecurityMode is None and this
+endpoint publishes nothing but the anonymous user token policy**.
 
 The obvious half of the reasoning is that 5.7.2 gives the ClientNonce one job —
 the server proves possession of its ApplicationInstanceCertificate in the
@@ -182,16 +200,18 @@ authenticating with a certificate signs the nonce even on an unsecured channel,
 so "the channel is unsecured" does not by itself make the nonce inert. What
 makes it inert here is that this endpoint offers only the anonymous policy and
 `ActivateSession` refuses every other token, so no `UserTokenSignature` exists.
+Neither reference server makes this distinction; this adapter does.
 
 The acceptance is therefore conditioned on both facts. Publishing any
 non-anonymous user token policy restores the rule automatically, rather than
 leaving the deviation in place under a justification that has quietly stopped
-being true. A nonce that *is* present is always checked, and under any other
-security mode the rule is enforced exactly as written.
+being true. A nonce that *is* present is always checked against the full 32–128
+range, and under any other security mode the rule is enforced exactly as
+written — **both stricter than the Foundation's own server**, which enforces no
+maximum and accepts an absent nonce unconditionally.
 
-This is the one place the adapter knowingly departs from a literal reading, and
-it is recorded here so it can be reversed by a decision rather than discovered
-by accident.
+The deviation is from the text of the clause, not from the ecosystem. It is
+recorded here so it stays a decision rather than an accident.
 
 ## UA Expert
 
