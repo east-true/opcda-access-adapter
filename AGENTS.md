@@ -65,7 +65,8 @@ Phase 8 adds a hand-written OPC UA server frontend for `SecurityPolicy None`:
 UA-TCP framing, SecureChannel, sessions, an address space filled from DA Browse
 on demand, and Browse/Read/Write. It is selectable in configuration version 3,
 is for local interoperability work only, and is never described as production
-ready. UA Subscriptions and MonitoredItems are not implemented.
+ready. UA Subscriptions and MonitoredItems map one UA Subscription onto one DA
+group, so the DA sampling model is carried rather than re-sampled.
 
 Phase 7 adds a DA-native Subscribe core plus its gRPC frontend: one
 subscription is one DA group advised through `IOPCDataCallback`, exposed as a

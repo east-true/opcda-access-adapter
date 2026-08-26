@@ -24,10 +24,9 @@ disconnect. This is not a broad vendor-compatibility claim.
 UA server for `SecurityPolicy None` passed all eight PR checks and completed the
 connection sequence, secure channel, `GetEndpoints`, session, Browse and Read
 against the source-built OPC Foundation fixture on both architectures. Only
-`SecurityMode` `None` is implemented and it is not production ready. UA
-Subscriptions and MonitoredItems are absent, so the DA Subscribe core is not
-reachable over UA. **No third-party UA client has been tested**, and no
-conformance or interoperability claim is made.
+`SecurityMode` `None` is implemented and it is not production ready. **No
+third-party UA client has been tested**, and no conformance or interoperability
+claim is made.
 
 **PHASE 7 gRPC SUBSCRIBE STREAMING IMPLEMENTED AND FIXTURE-VALIDATED** — the
 DA core is exposed as a server-streaming `Subscribe` RPC and passed all eight
@@ -122,6 +121,11 @@ release-promotion gate.
   and simultaneous listeners were not added.
 
 ## In progress
+
+- UA Subscriptions and MonitoredItems are on `feat/opcua-subscriptions`, which
+  makes the DA Subscribe core reachable over UA. One UA Subscription is one DA
+  subscription, which is one DA group. The services are exercised over a real
+  socket against a stubbed DA core; the real-DA probe does not yet drive them.
 
 - The local KVM/libvirt destructive-validation gate is paused. The dedicated
   `opcda-destructive-review` VM and all of its dedicated host resources were

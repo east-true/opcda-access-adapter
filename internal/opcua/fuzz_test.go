@@ -279,6 +279,17 @@ func FuzzDecodeStructuredTypes(f *testing.F) {
 			func(d *Decoder) error { _, err := d.ReadReadResponse(); return err },
 			func(d *Decoder) error { _, err := d.ReadWriteRequest(); return err },
 			func(d *Decoder) error { _, err := d.ReadWriteResponse(); return err },
+			func(d *Decoder) error { _, err := d.ReadMonitoringParameters(); return err },
+			func(d *Decoder) error { _, err := d.ReadCreateSubscriptionRequest(); return err },
+			func(d *Decoder) error { _, err := d.ReadCreateSubscriptionResponse(); return err },
+			func(d *Decoder) error { _, err := d.ReadCreateMonitoredItemsRequest(); return err },
+			func(d *Decoder) error { _, err := d.ReadCreateMonitoredItemsResponse(); return err },
+			func(d *Decoder) error { _, err := d.ReadDeleteMonitoredItemsRequest(); return err },
+			func(d *Decoder) error { _, err := d.ReadDeleteSubscriptionsRequest(); return err },
+			func(d *Decoder) error { _, err := d.ReadSetPublishingModeRequest(); return err },
+			func(d *Decoder) error { _, err := d.ReadPublishRequest(); return err },
+			func(d *Decoder) error { _, err := d.ReadPublishResponse(); return err },
+			func(d *Decoder) error { _, err := d.ReadNotificationMessage(); return err },
 		} {
 			decoder, err := NewDecoder(data, limits)
 			if err != nil {
