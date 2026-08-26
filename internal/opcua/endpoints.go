@@ -115,8 +115,8 @@ func (e *Encoder) WriteApplicationDescription(value ApplicationDescription) {
 	e.WriteString(value.ProductURI)
 	e.WriteLocalizedText(value.ApplicationName)
 	e.WriteInt32(int32(value.ApplicationType))
-	e.WriteString(value.GatewayServerURI)
-	e.WriteString(value.DiscoveryProfileURI)
+	e.WriteOptionalString(value.GatewayServerURI)
+	e.WriteOptionalString(value.DiscoveryProfileURI)
 	e.writeStringArray(value.DiscoveryURLs)
 }
 
@@ -164,11 +164,11 @@ func (d *Decoder) ReadApplicationDescription() (ApplicationDescription, error) {
 }
 
 func (e *Encoder) WriteUserTokenPolicy(value UserTokenPolicy) {
-	e.WriteString(value.PolicyID)
+	e.WriteOptionalString(value.PolicyID)
 	e.WriteInt32(int32(value.TokenType))
-	e.WriteString(value.IssuedTokenType)
-	e.WriteString(value.IssuerEndpointURL)
-	e.WriteString(value.SecurityPolicyURI)
+	e.WriteOptionalString(value.IssuedTokenType)
+	e.WriteOptionalString(value.IssuerEndpointURL)
+	e.WriteOptionalString(value.SecurityPolicyURI)
 }
 
 func (d *Decoder) ReadUserTokenPolicy() (UserTokenPolicy, error) {

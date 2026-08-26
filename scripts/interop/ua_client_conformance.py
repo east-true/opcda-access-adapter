@@ -112,8 +112,12 @@ async def main():
                 ok = actual == code
                 detail = f"got 0x{actual:08X}, wanted 0x{code:08X}"
             check(f"{item} maps through Table A.3", ok, detail)
+        # Table A.3 maps LOCAL_OVERRIDE to Good_LocalOverride: a Good severity
+        # that still carries the override condition.
         dv = await c.get_node(nid("Quality.LocalOverride")).read_data_value(raise_on_bad_status=False)
-        check("Quality.LocalOverride stays Good", dv.StatusCode.is_good(), str(dv.StatusCode))
+        check("Quality.LocalOverride maps to Good_LocalOverride",
+              dv.StatusCode.value == ua.StatusCodes.GoodLocalOverride,
+              f"0x{dv.StatusCode.value:08X}")
 
         # --- timestamps ---
         print("\n[timestamps]")

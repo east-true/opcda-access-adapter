@@ -1,17 +1,30 @@
 # Third-party OPC UA client interoperability
 
-Every OPC UA test in this project before this one exercised its own encoder
+Every OPC UA test in this project before this suite exercised its own encoder
 against its own decoder. Those agree with each other by construction, so a
 round trip against itself cannot catch a field both sides get wrong the same
 way. The duplicated `SecureChannelId` that survived a full unit suite and was
 caught only by a real socket was the standing reminder; this suite is the
 answer to it.
 
-The client is [asyncua](https://github.com/FreeOpcUa/opcua-asyncio). Design
-§5.2 names it among the projects that may be a reference or interop target but
-are not adopted as an implementation base, and nothing in the adapter links
-against it. It is installed into a throwaway virtual environment by the runner
-and is never a build or runtime dependency of the adapter.
+Three independent clients judge the server, because they disagree with it in
+different ways when it is wrong:
+
+| Client | What it is | Why it is here |
+| --- | --- | --- |
+| [asyncua](https://github.com/FreeOpcUa/opcua-asyncio) | Python, hand-rolled codec | A widely used client with an implementation that shares nothing with ours |
+| [open62541](https://github.com/open62541/open62541) | C, a reference implementation | Named in design §5.2 as an interop target |
+| [OPC Foundation .NET stack](https://github.com/OPCFoundation/UA-.NETStandard) | The Foundation's own | Where it and this adapter disagree, look at the adapter first |
+
+Each found something the others did not. Design §5.2 names asyncua and
+open62541 among the projects that may be a reference or interop target but are
+not adopted as an implementation base; **nothing in the adapter links against
+any of them**, and none is a build or runtime dependency. The runner installs
+them into throwaway directories.
+
+asyncua is always run. open62541 and the .NET stack run when their toolchains
+are present and are skipped with a notice when they are not, so the suite stays
+runnable on a machine with only Python.
 
 ## Running it
 
@@ -25,8 +38,16 @@ real-DA probe (`internal/validation/opcuaprobe`) against the same frontend, so
 a change to the UA wire format that would break the Windows validation run is
 caught here rather than in CI. It exits non-zero if any check fails.
 
-`INTEROP_WORKDIR` reuses a prepared directory; `INTEROP_PYTHON` uses an
-interpreter that already has `asyncua`, so a repeated run needs no network.
+Environment overrides, all optional, so a repeated run needs no network:
+
+| Variable | Purpose |
+| --- | --- |
+| `INTEROP_WORKDIR` | reuse a prepared directory |
+| `INTEROP_PYTHON` | an interpreter that already has `asyncua` |
+| `INTEROP_O62_ROOT` | a built open62541 checkout, from which the client is compiled |
+| `INTEROP_O62_CLIENT` | an already-built open62541 client binary |
+| `INTEROP_DOTNET` | a `dotnet` binary |
+| `INTEROP_NETSTACK_PROJECT` | a prepared .NET project directory |
 
 ## What it runs against
 
@@ -86,8 +107,10 @@ The client's own decoder makes every assertion.
 
 ## What it found
 
-Four defects that the Go suite could not see, each of which made the adapter
-unusable with a conforming client:
+Six defects that the Go suite could not see, each of which made the adapter
+unusable with some conforming client. The first four came from asyncua; the
+last two from the second and third clients, against a server the first already
+passed — which is the argument for having more than one.
 
 1. **The `OpenSecureChannel` reply named no security policy.** OPC 10000-6
    6.7.7 requires the response to name the policy the request named, and the
@@ -119,6 +142,50 @@ unusable with a conforming client:
    to decide whether the server is alive. Without those nodes the client
    concluded the server was dead and tore the connection down after the first
    notification.
+5. **Unspecified endpoint strings were written as empty rather than null.**
+   Found by the OPC Foundation's own .NET stack, which refused the endpoint
+   with `Bad_IdentityTokenInvalid`. A null String and a zero-length String are
+   distinct values in the UA binary encoding, and Table 192 says
+   `issuedTokenType` "may only be specified if TokenType is ISSUEDTOKEN" — so
+   writing an empty one on an `ANONYMOUS` policy specifies a field the clause
+   forbids. asyncua and open62541 both tolerated it; the Foundation's stack did
+   not, and it is right. This project's own decoder reads null and empty alike,
+   which is why nothing here noticed.
+6. **`CreateSession` refused a client that sends no nonce.** Found by
+   open62541, which could not connect at all. See the note below — this one is
+   a deliberate deviation rather than a plain defect.
+
+## One deliberate deviation: an absent session nonce
+
+OPC 10000-4 5.7.2 says the `clientNonce` "shall have a length between 32 and
+128 bytes inclusive. The Server shall check the length", and Table 16 repeats
+it as the condition for `Bad_NonceInvalid`. Neither statement is conditioned on
+the security mode.
+
+open62541 sends **no nonce at all** when the channel is unsecured — deliberately,
+by a comment in its own source. So a literal reading of the clause makes this
+server unusable with a reference implementation. The Foundation's .NET stack,
+by contrast, sends a full nonce even under `None`.
+
+The adapter accepts an absent nonce **only when the SecurityMode is None**. The
+clause's own stated purpose for the field is to "prove possession of its
+ApplicationInstanceCertificate in the response", and the same clause says a
+server shall ignore that certificate when the `securityPolicyUri` is `None`.
+Under `None` nothing is signed, so there is nothing for the nonce to take part
+in and accepting its absence costs no security. A nonce that *is* present is
+still checked, and under any other security mode the rule is enforced exactly
+as written — which is where the nonce does real work.
+
+This is the one place the adapter knowingly departs from a literal reading, and
+it is recorded here so it can be reversed by a decision rather than discovered
+by accident.
+
+## UA Expert
+
+**Not tested.** Unified Automation distributes UA Expert only to registered
+users — its download page states "You need to log in to download" — so it could
+not be obtained without creating an account. It remains untested, and no claim
+is made about it either way.
 
 ## What it does not cover
 
@@ -126,9 +193,10 @@ unusable with a conforming client:
   DCOM, a real DA server, or any vendor.
 - **Security.** Only `SecurityPolicy None` is served. ADR-0016 forbids
   describing that as production ready, and this suite does not change that.
-- **Conformance.** One client is not the OPC Foundation's Compliance Test
-  Tool. Passing here means one third-party client interoperates with this
-  server on the services exercised above. **No "OPC UA Certified" or "OPC UA
-  Compliant" claim is made**, and ADR-0016 forbids one.
-- **Other clients.** UA Expert, open62541, and the OPC Foundation .NET stack
-  have not been tried.
+- **Conformance.** Three clients are not the OPC Foundation's Compliance Test
+  Tool. Passing here means three third-party clients interoperate with this
+  server on the services exercised above — including the Foundation's own
+  stack, which is the strongest of the three signals but still not a
+  certification. **No "OPC UA Certified" or "OPC UA Compliant" claim is made**,
+  and ADR-0016 forbids one.
+- **Other clients.** UA Expert has not been tried, for the reason above.
