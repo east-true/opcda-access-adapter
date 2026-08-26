@@ -64,6 +64,10 @@ type subscribingRuntime struct {
 	// revisedRate is what the source says it settled on, which a vendor may
 	// place far from the requested rate.
 	revisedRate time.Duration
+	// unsubscribeDelay makes releasing a DA group take measurable time, the
+	// way a COM call on a real server does, so a test can tell a caller that
+	// waited for it from one that did not.
+	unsubscribeDelay time.Duration
 }
 
 func (r *subscribingRuntime) Subscribe(_ context.Context, request opcda.SubscribeRequest) (opcda.Subscription, error) {
@@ -83,6 +87,15 @@ func (r *subscribingRuntime) Subscribe(_ context.Context, request opcda.Subscrib
 }
 
 func (r *subscribingRuntime) Unsubscribe(_ context.Context, id opcda.SubscriptionID) error {
+	r.mu.Lock()
+	delay := r.unsubscribeDelay
+	r.mu.Unlock()
+	if delay > 0 {
+		// Releasing a DA group is a COM call on a real server, so it is not
+		// instantaneous. The delay is taken outside the lock, as the real one
+		// is taken outside this runtime's.
+		time.Sleep(delay)
+	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.unsubscribed = append(r.unsubscribed, id)

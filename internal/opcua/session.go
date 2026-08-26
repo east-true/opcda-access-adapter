@@ -474,11 +474,31 @@ func (limits SessionLimits) reviseTimeout(requested float64) float64 {
 type Session struct {
 	ID                  NodeID
 	AuthenticationToken NodeID
-	// ChannelID is the SecureChannel the session was created on. OPC 10000-4
-	// Table 15 says the authentication token is used together with the
-	// SecureChannelId to decide whether a client may use the session, so the
-	// binding is kept and enforced.
-	ChannelID    uint32
+	// CreatedOnChannel is the SecureChannel the session was created on. It
+	// never changes, and OPC 10000-4 5.7.3 uses it for exactly one decision:
+	// the *first* ActivateSession must arrive on it.
+	CreatedOnChannel uint32
+	// BoundChannel is the SecureChannel currently permitted to use the
+	// session. Table 15 says the authentication token is used together with
+	// the SecureChannelId to decide whether a client may use the session, so
+	// every request is checked against this.
+	//
+	// It is a separate field from CreatedOnChannel because the two are
+	// different facts, and conflating them is what stopped a client
+	// reconnecting: 5.7.3 says "Subsequent calls to ActivateSession may be
+	// associated with different SecureChannels", and 5.7.2 has a client whose
+	// connection failed open a new one and "call ActivateSession again".
+	// Checking every request against the creating channel refused exactly that,
+	// so a session survived its connection but could never be used again — it
+	// merely sat holding its DA groups until it timed out.
+	BoundChannel uint32
+	// security is what the creating channel offered. 5.7.3 requires a session
+	// moved to a new channel to verify that the new channel's SecurityPolicy
+	// and SecurityMode are the same as the original's, so the original is kept
+	// rather than assumed from the endpoint. Only one endpoint is served
+	// today, but assuming that here would silently stop being true the moment
+	// a second one is.
+	security     SessionSecurity
 	Name         string
 	Timeout      float64
 	CreatedAt    time.Time
@@ -517,10 +537,13 @@ func (s *Session) expired(now time.Time) bool {
 type SessionInfo struct {
 	ID                  NodeID
 	AuthenticationToken NodeID
-	ChannelID           uint32
-	Name                string
-	Timeout             float64
-	Activated           bool
+	// CreatedOnChannel never changes; BoundChannel is the channel currently
+	// permitted to use the session, which ActivateSession may move.
+	CreatedOnChannel uint32
+	BoundChannel     uint32
+	Name             string
+	Timeout          float64
+	Activated        bool
 }
 
 // Key identifies the session a subscription belongs to.
@@ -532,7 +555,8 @@ func (s *Session) snapshot() SessionInfo {
 	return SessionInfo{
 		ID:                  s.ID,
 		AuthenticationToken: s.AuthenticationToken,
-		ChannelID:           s.ChannelID,
+		CreatedOnChannel:    s.CreatedOnChannel,
+		BoundChannel:        s.BoundChannel,
 		Name:                s.Name,
 		Timeout:             s.Timeout,
 		Activated:           s.Activated,
@@ -581,6 +605,10 @@ func randomBytes(length int) ([]byte, error) {
 // mode, and whether this endpoint could ever ask a client to sign anything.
 type SessionSecurity struct {
 	Mode SecurityMode
+	// PolicyURI is the SecurityPolicy the channel was opened with. 5.7.3
+	// requires a session moved to a new channel to be on the same policy as
+	// the original.
+	PolicyURI string
 	// AnonymousIdentityOnly reports that every UserTokenPolicy this endpoint
 	// publishes is Anonymous, so no UserTokenSignature can ever be computed
 	// against it. It is a separate fact from the security mode: OPC 10000-4
@@ -662,7 +690,9 @@ func (r *SessionRegistry) Create(channelID uint32, security SessionSecurity, req
 		ended:               make(chan struct{}),
 		ID:                  NumericNodeID(1, r.nextID),
 		AuthenticationToken: NodeID{Namespace: 1, Type: NodeIDTypeOpaque, Opaque: tokenBytes},
-		ChannelID:           channelID,
+		CreatedOnChannel:    channelID,
+		BoundChannel:        channelID,
+		security:            security,
 		Name:                request.SessionName,
 		Timeout:             r.limits.reviseTimeout(request.RequestedSessionTimeout),
 		CreatedAt:           now,
@@ -690,9 +720,10 @@ func (r *SessionRegistry) Lookup(token NodeID, channelID uint32, now time.Time) 
 	return info, err
 }
 
-// lookupLocked is the shared resolution step. It returns the live session, so
-// every caller must hold the lock for as long as it uses the result.
-func (r *SessionRegistry) lookupLocked(token NodeID, channelID uint32, now time.Time, ended *[]SessionInfo) (*Session, error) {
+// resolveLocked finds a live session by its token, without deciding which
+// channel may use it. ActivateSession is the one caller that must not apply the
+// channel check, because moving the binding is its job.
+func (r *SessionRegistry) resolveLocked(token NodeID, now time.Time, ended *[]SessionInfo) (*Session, error) {
 	if token.Type != NodeIDTypeOpaque {
 		return nil, uacpError(StatusBadSessionIDInvalid, "the authentication token is not a session token")
 	}
@@ -706,8 +737,23 @@ func (r *SessionRegistry) lookupLocked(token NodeID, channelID uint32, now time.
 		}
 		return nil, uacpError(StatusBadSessionClosed, "the session timed out")
 	}
-	// A token that leaked to another channel must not grant access.
-	if session.ChannelID != channelID {
+	return session, nil
+}
+
+// lookupLocked resolves a session and checks that the channel it arrived on is
+// the one currently bound to it. It returns the live session, so every caller
+// must hold the lock for as long as it uses the result.
+func (r *SessionRegistry) lookupLocked(token NodeID, channelID uint32, now time.Time, ended *[]SessionInfo) (*Session, error) {
+	session, err := r.resolveLocked(token, now, ended)
+	if err != nil {
+		return nil, err
+	}
+	// A token that leaked to another channel must not grant access. This is
+	// checked against the bound channel, not the creating one: once
+	// ActivateSession moves a session to a new channel, 5.7.3 requires the
+	// server to "reject requests sent via the old SecureChannel", which is the
+	// same comparison against the updated binding.
+	if session.BoundChannel != channelID {
 		return nil, uacpError(StatusBadSecureChannelIDInvalid,
 			"the session belongs to another secure channel")
 	}
@@ -716,7 +762,7 @@ func (r *SessionRegistry) lookupLocked(token NodeID, channelID uint32, now time.
 
 // Activate completes activation. The identity token must be anonymous: no other
 // user token type is accepted, because none is implemented.
-func (r *SessionRegistry) Activate(token NodeID, channelID uint32, request ActivateSessionRequest, anonymousPolicyID string, now time.Time) ([]byte, error) {
+func (r *SessionRegistry) Activate(token NodeID, channelID uint32, security SessionSecurity, request ActivateSessionRequest, anonymousPolicyID string, now time.Time) ([]byte, error) {
 	if err := requireAnonymousIdentity(request.UserIdentityToken, anonymousPolicyID); err != nil {
 		return nil, err
 	}
@@ -728,13 +774,23 @@ func (r *SessionRegistry) Activate(token NodeID, channelID uint32, request Activ
 	// The session is resolved again under the lock rather than being passed in
 	// by the caller: a caller holding a *Session across two calls is exactly
 	// the shared-mutable-state hazard this registry exists to prevent.
+	//
+	// It is resolved *without* the channel check, because deciding which
+	// channel may use the session is this service's job. OPC 10000-4 5.7.3:
+	// "When the ActivateSession Service is called for the first time then the
+	// Server shall reject the request if the SecureChannel is not same as the
+	// one associated with the CreateSession request. Subsequent calls to
+	// ActivateSession may be associated with different SecureChannels."
 	var ended []SessionInfo
 	err = func() error {
 		r.mu.Lock()
 		defer r.mu.Unlock()
-		session, lookupErr := r.lookupLocked(token, channelID, now, &ended)
-		if lookupErr != nil {
-			return lookupErr
+		session, resolveErr := r.resolveLocked(token, now, &ended)
+		if resolveErr != nil {
+			return resolveErr
+		}
+		if bindErr := session.bindToChannel(channelID, security); bindErr != nil {
+			return bindErr
 		}
 		session.Activated = true
 		session.LastActivity = now
@@ -745,6 +801,48 @@ func (r *SessionRegistry) Activate(token NodeID, channelID uint32, request Activ
 		return nil, err
 	}
 	return serverNonce, nil
+}
+
+// bindToChannel applies 5.7.3's rules for which SecureChannel may carry a
+// session. It is called with the registry lock held.
+func (s *Session) bindToChannel(channelID uint32, security SessionSecurity) error {
+	if !s.Activated {
+		// The first activation is pinned to the channel that created the
+		// session.
+		if channelID != s.CreatedOnChannel {
+			return uacpError(StatusBadSecureChannelIDInvalid,
+				"the first ActivateSession must arrive on the channel that created the session")
+		}
+		s.BoundChannel = channelID
+		return nil
+	}
+	if channelID == s.BoundChannel {
+		return nil
+	}
+
+	// Moving to a different channel is what a client does after its connection
+	// failed. The clause allows it subject to checks; the ones this server can
+	// make are the security ones.
+	//
+	// The certificate and ClientUserId checks the clause also names are not
+	// reproduced: this endpoint serves no certificates and accepts none but an
+	// anonymous identity, so there is nothing to compare. Should either change,
+	// the security comparison below is where the rest belongs.
+	if security.Mode != s.security.Mode || security.PolicyURI != s.security.PolicyURI {
+		return uacpError(StatusBadSecurityChecksFailed,
+			"the new secure channel does not use the security the session was created with")
+	}
+	// "If an Anonymous UserIdentityToken is used, then ActivateSession over a
+	// new SecureChannel shall fail if the SecureChannel is using Sign."
+	if security.AnonymousIdentityOnly && security.Mode == SecurityModeSign {
+		return uacpError(StatusBadIdentityTokenRejected,
+			"an anonymous identity may not move a session to a signed secure channel")
+	}
+	// "Once the Server accepts the new SecureChannel it shall reject requests
+	// sent via the old SecureChannel", which is what moving the binding does:
+	// every request is checked against it.
+	s.BoundChannel = channelID
+	return nil
 }
 
 // requireAnonymousIdentity implements OPC 10000-4 Table 17: "Null or empty user
@@ -861,6 +959,24 @@ func (r *SessionRegistry) notifyEnded(ended []SessionInfo) {
 	for _, session := range ended {
 		hook(session)
 	}
+}
+
+// TerminateAll ends every session, which is what shutting the server down does:
+// the sessions cannot outlive the listener that holds them, and each one's end
+// hook releases what it owned. It reports how many were ended.
+func (r *SessionRegistry) TerminateAll() int {
+	var ended []SessionInfo
+	func() {
+		r.mu.Lock()
+		defer r.mu.Unlock()
+		for _, session := range r.sessions {
+			if info, removed := r.terminateLocked(session); removed {
+				ended = append(ended, info)
+			}
+		}
+	}()
+	r.notifyEnded(ended)
+	return len(ended)
 }
 
 // OnSessionEnd registers what must happen when a session ends, whichever route

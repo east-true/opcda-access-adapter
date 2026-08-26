@@ -598,11 +598,45 @@ constantly and kept its own session alive by accident; holding the request made
 the gap reachable. A session with requests in flight is never stale, and the
 idle clock restarts when the request is answered.
 
-**The session is bound to the SecureChannel it was created on.** Table 15 says
-the authentication token is used *together with* the `SecureChannelId` to decide
-whether a client may use the session, so a token that leaked to another channel
-is refused with `Bad_SecureChannelIdInvalid`. This matters more, not less, on an
-unsecured endpoint.
+### Which channel may carry a session
+
+A session is bound to a SecureChannel, and Table 15 has the authentication
+token checked together with the `SecureChannelId` on every request. But
+**"the channel that created the session" and "the channel that may use it now"
+are two different facts**, and 5.7.3 says so:
+
+> When the ActivateSession Service is called for the first time then the Server
+> shall reject the request if the SecureChannel is not same as the one
+> associated with the CreateSession request. **Subsequent calls to
+> ActivateSession may be associated with different SecureChannels.**
+
+The second sentence is the client's documented way back after a connection
+failure — 5.7.2 has it open a new connection and *"call ActivateSession
+again"*. Storing both facts in one field and checking every request against the
+creating channel refused exactly that: a session survived its connection, as
+the clause intends, and then **could never be used again**. It sat holding its
+DA groups until it timed out, and the client had to build a new session for
+every network blip.
+
+The two facts are now separate. `CreatedOnChannel` never changes and decides one
+thing only: the first activation must arrive on it. `BoundChannel` is what every
+request is checked against, and ActivateSession may move it — which is also how
+*"once the Server accepts the new SecureChannel it shall reject requests sent
+via the old SecureChannel"* is satisfied, since the check is against the
+updated binding.
+
+A move is allowed subject to the clause's checks. The security ones are made:
+the new channel must offer the SecurityMode and SecurityPolicy the session was
+created with, and an anonymous identity may not move onto a signed channel. The
+certificate and ClientUserId checks are not reproduced, because this endpoint
+serves no certificates and accepts no identity but anonymous — there is nothing
+to compare. The session records the security it was created under rather than
+reading it back from the endpoint, so the comparison keeps working if a second
+endpoint is ever published.
+
+**A token that leaked to another channel is refused** with
+`Bad_SecureChannelIdInvalid`. This matters more, not less, on an unsecured
+endpoint.
 
 The authentication token is 32 cryptographically random bytes, opaque rather
 than numeric, so it cannot be derived from a session identifier a client has
@@ -1020,6 +1054,26 @@ status in the next notification, so a client **learns the source is gone rather
 than seeing the stream fall silent**. The DA subscription is released rather
 than left dangling; recovering means creating monitored items again, which
 matches the DA core's rule that resubscribing is always explicit.
+
+## Shutting the listener down
+
+`Shutdown` takes a context, so it has to mean something. It used to close the
+socket and return at once however long a caller was prepared to wait, because
+the wait it needed did not exist: `Serve` joined its goroutines privately, and
+nothing outside could observe when that had happened. The two other frontends
+delegate to `net/http` and `grpc-go` and really do drain, so a caller could not
+tell from the signature which behaviour it was getting.
+
+The listener now tracks every goroutine it starts — connection loops *and* the
+goroutines holding a `Publish`, which outlive the read loop that accepted them —
+and raises a completion signal once `Serve` has joined them all. `Shutdown`
+waits on that signal or on the caller's context, whichever comes first.
+
+It also **ends its sessions**, which releases the DA groups their subscriptions
+hold on the source. That was previously left to the DA runtime's own teardown,
+which worked only because the application happens to stop the runtime
+immediately afterwards — the listener's shutdown depended on its caller's
+ordering rather than on itself.
 
 ## What has and has not been tested
 
