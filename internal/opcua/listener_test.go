@@ -1198,6 +1198,152 @@ func TestListenerPopulatesFromTheSourceOnDemand(t *testing.T) {
 	}
 }
 
+// The subscription services over a real socket, from the DA core through to a
+// Publish response.
+func TestListenerServesSubscriptions(t *testing.T) {
+	runtime := &subscribingRuntime{}
+	listener, err := NewListenerWithRuntime(testListenerConfig(), runtime, 1000, 2000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	socket, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	served := make(chan error, 1)
+	go func() { served <- listener.Serve(socket) }()
+	t.Cleanup(func() {
+		_ = listener.Close()
+		if err := <-served; err != nil {
+			t.Errorf("Serve: %v", err)
+		}
+	})
+
+	rights := &opcda.DAAccessRights{Raw: 3, Read: true, Write: true}
+	if err := listener.AddressSpace().PopulateBranch(nil, []opcda.BrowseEntry{
+		{Kind: opcda.BrowseEntryItem, Name: "Int32", ItemID: itemID("Test/Int32"),
+			CanonicalType: varType(opcda.VTI4), AccessRights: rights},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	client := dialTestClient(t, socket.Addr().String())
+	client.hello()
+	opened, err := client.openChannel(0, TokenRequestIssue, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	created, err := client.createSession(opened.SecurityToken, 2, testClientNonce())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.activateSession(opened.SecurityToken, 3, created.AuthenticationToken, NullExtensionObject()); err != nil {
+		t.Fatal(err)
+	}
+
+	call := func(handle uint32, write func(*Encoder)) (uint32, *Decoder) {
+		t.Helper()
+		encoder, encodeErr := NewEncoder(client.limits)
+		if encodeErr != nil {
+			t.Fatal(encodeErr)
+		}
+		write(encoder)
+		body, bodyErr := encoder.Bytes()
+		if bodyErr != nil {
+			t.Fatal(bodyErr)
+		}
+		identifier, decoder, callErr := client.callService(opened.SecurityToken, handle, body)
+		if callErr != nil {
+			t.Fatalf("service call %d: %v", handle, callErr)
+		}
+		return identifier, decoder
+	}
+
+	identifier, decoder := call(4, func(e *Encoder) {
+		e.WriteCreateSubscriptionRequest(CreateSubscriptionRequest{
+			Header:                      requestHeaderFor(created.AuthenticationToken, 4),
+			RequestedPublishingInterval: 250,
+			RequestedMaxKeepAliveCount:  3,
+			PublishingEnabled:           true,
+		})
+	})
+	if identifier != CreateSubscriptionResponseEncodingID {
+		t.Fatalf("service = %d", identifier)
+	}
+	subscription, err := decoder.ReadCreateSubscriptionResponse()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if subscription.SubscriptionID == 0 || subscription.RevisedPublishingInterval <= 0 {
+		t.Fatalf("subscription = %+v", subscription)
+	}
+
+	identifier, decoder = call(5, func(e *Encoder) {
+		e.WriteCreateMonitoredItemsRequest(CreateMonitoredItemsRequest{
+			Header:             requestHeaderFor(created.AuthenticationToken, 5),
+			SubscriptionID:     subscription.SubscriptionID,
+			TimestampsToReturn: TimestampsBoth,
+			ItemsToCreate: []MonitoredItemCreateRequest{{
+				ItemToMonitor: ReadValueID{
+					NodeID: ItemNodeID("Test/Int32"), AttributeID: AttributeValue},
+				MonitoringMode: MonitoringModeReporting,
+				RequestedParameters: MonitoringParameters{
+					ClientHandle: 77, Filter: NullExtensionObject()},
+			}},
+		})
+	})
+	if identifier != CreateMonitoredItemsResponseEncodingID {
+		t.Fatalf("service = %d", identifier)
+	}
+	items, err := decoder.ReadCreateMonitoredItemsResponse()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if items.Results[0].StatusCode != StatusGood {
+		t.Fatalf("monitored item = %s", items.Results[0].StatusCode.Hex())
+	}
+
+	// A DA notification reaches the client through Publish.
+	runtime.latest().push(daNotification("Test/Int32", 4242, QualityGood))
+	identifier, decoder = call(6, func(e *Encoder) {
+		e.WritePublishRequest(PublishRequest{
+			Header: requestHeaderFor(created.AuthenticationToken, 6),
+		})
+	})
+	if identifier != PublishResponseEncodingID {
+		t.Fatalf("service = %d", identifier)
+	}
+	published, err := decoder.ReadPublishResponse()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if published.SubscriptionID != subscription.SubscriptionID {
+		t.Fatalf("published subscription = %d", published.SubscriptionID)
+	}
+	if !published.NotificationMessage.HasData ||
+		len(published.NotificationMessage.Notifications) != 1 {
+		t.Fatalf("notification message = %+v", published.NotificationMessage)
+	}
+	notification := published.NotificationMessage.Notifications[0]
+	if notification.ClientHandle != 77 {
+		t.Fatalf("client handle = %d", notification.ClientHandle)
+	}
+	if notification.Value.Value.Value != int32(4242) {
+		t.Fatalf("value = %v", notification.Value.Value.Value)
+	}
+	if notification.Value.Status != StatusGood {
+		t.Fatalf("status = %s", notification.Value.Status.Hex())
+	}
+}
+
+func requestHeaderFor(authToken NodeID, handle uint32) RequestHeader {
+	return RequestHeader{
+		AuthenticationToken: authToken,
+		RequestHandle:       handle,
+		AdditionalHeader:    NullExtensionObject(),
+	}
+}
+
 func TestListenerConfigValidation(t *testing.T) {
 	if err := testListenerConfig().ValidateForConfiguration(); err != nil {
 		t.Fatalf("test config rejected: %v", err)

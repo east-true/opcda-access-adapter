@@ -47,6 +47,7 @@ type ListenerConfig struct {
 	Browse         BrowseLimits
 	DataAccess     DataAccessLimits
 	Population     PopulationLimits
+	Subscriptions  SubscriptionLimits
 	// AddressSpace describes the namespace and folder the DA source appears
 	// under.
 	AddressSpace AddressSpaceConfig
@@ -71,6 +72,7 @@ func DefaultListenerConfig() ListenerConfig {
 		Browse:            DefaultBrowseLimits(),
 		DataAccess:        DefaultDataAccessLimits(),
 		Population:        DefaultPopulationLimits(),
+		Subscriptions:     DefaultSubscriptionLimits(),
 		// The endpoint has no default: its URLs identify a deployment and its
 		// security policy URI is defined by OPC 10000-7, so both are supplied
 		// rather than assumed.
@@ -116,6 +118,9 @@ func (config ListenerConfig) validate() error {
 	if err := config.Population.validate(); err != nil {
 		return err
 	}
+	if err := config.Subscriptions.validate(); err != nil {
+		return err
+	}
 	if err := config.AddressSpace.validate(); err != nil {
 		return err
 	}
@@ -135,6 +140,7 @@ type Listener struct {
 	browse    *BrowseService
 	data      *DataAccessService
 	populator *Populator
+	subs      *SubscriptionService
 
 	listening atomic.Bool
 	slots     chan struct{}
@@ -187,6 +193,14 @@ func NewListenerWithRuntime(config ListenerConfig, runtime opcda.Runtime, channe
 		}
 		browse.AttachPopulator(populator)
 	}
+	var subs *SubscriptionService
+	if runtime != nil {
+		// Table 82 advises that subscription ids start from a random value, so
+		// a restart does not reuse identifiers a client still holds.
+		if subs, err = NewSubscriptionService(space, runtime, config.Subscriptions, channelIDSeed); err != nil {
+			return nil, err
+		}
+	}
 	return &Listener{
 		config:    config,
 		registry:  registry,
@@ -196,6 +210,7 @@ func NewListenerWithRuntime(config ListenerConfig, runtime opcda.Runtime, channe
 		browse:    browse,
 		data:      data,
 		populator: populator,
+		subs:      subs,
 		slots:     make(chan struct{}, config.MaxConnections),
 		conns:     make(map[net.Conn]struct{}),
 	}, nil
@@ -584,14 +599,21 @@ func (l *Listener) handleSecureMessage(conn net.Conn, state *connectionState, bo
 // Bad_SessionNotActivated for exactly that state, so a client cannot skip
 // ActivateSession and still read the address space.
 func (l *Listener) requireActivatedSession(header RequestHeader, channelID uint32, now time.Time) error {
+	_, err := l.activatedSession(header, channelID, now)
+	return err
+}
+
+// activatedSession resolves the session and returns an opaque key identifying
+// it, so a subscription can be tied to the session that created it.
+func (l *Listener) activatedSession(header RequestHeader, channelID uint32, now time.Time) (string, error) {
 	session, err := l.sessions.Lookup(header.AuthenticationToken, channelID, now)
 	if err != nil {
-		return err
+		return "", err
 	}
 	if !session.Activated {
-		return uacpError(StatusBadSessionNotActivated, "the session has not been activated")
+		return "", uacpError(StatusBadSessionNotActivated, "the session has not been activated")
 	}
-	return nil
+	return string(session.AuthenticationToken.Opaque), nil
 }
 
 // AddressSpace exposes the served address space. With a DA runtime attached the
@@ -687,6 +709,11 @@ func (l *Listener) dispatchService(channelID uint32, identifier uint32, decoder 
 		if requestErr != nil {
 			return nil, 0, nil, requestErr
 		}
+		if l.subs != nil {
+			// A closed session must not leave DA groups open on the source.
+			l.subs.ReleaseSession(context.Background(),
+				string(request.Header.AuthenticationToken.Opaque))
+		}
 		if closeErr := l.sessions.Close(request.Header.AuthenticationToken, channelID, now); closeErr != nil {
 			return nil, request.Header.RequestHandle, closeErr, nil
 		}
@@ -756,6 +783,114 @@ func (l *Listener) dispatchService(channelID uint32, identifier uint32, decoder 
 			return nil, request.Header.RequestHandle, writeErr, nil
 		}
 		encoder.WriteWriteResponse(response)
+
+	case CreateSubscriptionRequestEncodingID:
+		request, requestErr := decoder.ReadCreateSubscriptionRequest()
+		if requestErr != nil {
+			return nil, 0, nil, requestErr
+		}
+		session, sessionErr := l.activatedSession(request.Header, channelID, now)
+		if sessionErr != nil {
+			return nil, request.Header.RequestHandle, sessionErr, nil
+		}
+		if l.subs == nil {
+			return nil, request.Header.RequestHandle, errNoDataSource, nil
+		}
+		response, createErr := l.subs.CreateSubscription(session, request, now)
+		if createErr != nil {
+			return nil, request.Header.RequestHandle, createErr, nil
+		}
+		encoder.WriteCreateSubscriptionResponse(response)
+
+	case CreateMonitoredItemsRequestEncodingID:
+		request, requestErr := decoder.ReadCreateMonitoredItemsRequest()
+		if requestErr != nil {
+			return nil, 0, nil, requestErr
+		}
+		session, sessionErr := l.activatedSession(request.Header, channelID, now)
+		if sessionErr != nil {
+			return nil, request.Header.RequestHandle, sessionErr, nil
+		}
+		if l.subs == nil {
+			return nil, request.Header.RequestHandle, errNoDataSource, nil
+		}
+		response, createErr := l.subs.CreateMonitoredItems(context.Background(), session, request, now)
+		if createErr != nil {
+			return nil, request.Header.RequestHandle, createErr, nil
+		}
+		encoder.WriteCreateMonitoredItemsResponse(response)
+
+	case DeleteMonitoredItemsRequestEncodingID:
+		request, requestErr := decoder.ReadDeleteMonitoredItemsRequest()
+		if requestErr != nil {
+			return nil, 0, nil, requestErr
+		}
+		session, sessionErr := l.activatedSession(request.Header, channelID, now)
+		if sessionErr != nil {
+			return nil, request.Header.RequestHandle, sessionErr, nil
+		}
+		if l.subs == nil {
+			return nil, request.Header.RequestHandle, errNoDataSource, nil
+		}
+		response, deleteErr := l.subs.DeleteMonitoredItems(context.Background(), session, request, now)
+		if deleteErr != nil {
+			return nil, request.Header.RequestHandle, deleteErr, nil
+		}
+		encoder.WriteDeleteMonitoredItemsResponse(response)
+
+	case DeleteSubscriptionsRequestEncodingID:
+		request, requestErr := decoder.ReadDeleteSubscriptionsRequest()
+		if requestErr != nil {
+			return nil, 0, nil, requestErr
+		}
+		session, sessionErr := l.activatedSession(request.Header, channelID, now)
+		if sessionErr != nil {
+			return nil, request.Header.RequestHandle, sessionErr, nil
+		}
+		if l.subs == nil {
+			return nil, request.Header.RequestHandle, errNoDataSource, nil
+		}
+		response, deleteErr := l.subs.DeleteSubscriptions(context.Background(), session, request, now)
+		if deleteErr != nil {
+			return nil, request.Header.RequestHandle, deleteErr, nil
+		}
+		encoder.WriteDeleteSubscriptionsResponse(response)
+
+	case SetPublishingModeRequestEncodingID:
+		request, requestErr := decoder.ReadSetPublishingModeRequest()
+		if requestErr != nil {
+			return nil, 0, nil, requestErr
+		}
+		session, sessionErr := l.activatedSession(request.Header, channelID, now)
+		if sessionErr != nil {
+			return nil, request.Header.RequestHandle, sessionErr, nil
+		}
+		if l.subs == nil {
+			return nil, request.Header.RequestHandle, errNoDataSource, nil
+		}
+		response, modeErr := l.subs.SetPublishingMode(session, request, now)
+		if modeErr != nil {
+			return nil, request.Header.RequestHandle, modeErr, nil
+		}
+		encoder.WriteSetPublishingModeResponse(response)
+
+	case PublishRequestEncodingID:
+		request, requestErr := decoder.ReadPublishRequest()
+		if requestErr != nil {
+			return nil, 0, nil, requestErr
+		}
+		session, sessionErr := l.activatedSession(request.Header, channelID, now)
+		if sessionErr != nil {
+			return nil, request.Header.RequestHandle, sessionErr, nil
+		}
+		if l.subs == nil {
+			return nil, request.Header.RequestHandle, errNoDataSource, nil
+		}
+		response, publishErr := l.subs.Publish(context.Background(), session, request, now)
+		if publishErr != nil {
+			return nil, request.Header.RequestHandle, publishErr, nil
+		}
+		encoder.WritePublishResponse(response)
 
 	default:
 		// The request handle cannot be trusted from an unparsed body, so the

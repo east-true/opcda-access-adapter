@@ -723,6 +723,63 @@ nodes must not be served as if they were current. The same tick expires stale
 secure channels, sessions, and continuation points, which keeps that
 housekeeping on one owned goroutine rather than a timer inside the listener.
 
+## Subscriptions and MonitoredItems
+
+`internal/opcua/subscription.go` implements `CreateSubscription`,
+`CreateMonitoredItems`, `DeleteMonitoredItems`, `DeleteSubscriptions`,
+`SetPublishingMode` and `Publish` from **OPC 10000-4 Tables 82, 63, 89, 164,
+161, 140 and 148**. This is what makes the DA Subscribe core reachable over UA.
+
+**One UA Subscription is one DA subscription, which is one DA group.** That
+keeps the DA sampling model intact: the DA server decides what a client sees
+between update-rate ticks, and this layer carries those notifications rather
+than re-sampling them. The subscription's revised publishing interval becomes
+the DA group's requested update rate.
+
+Because a DA group's item set is fixed when the group is created, adding or
+removing a MonitoredItem **replaces** the DA subscription with one covering the
+new set, releasing the old one. The DA core never resubscribes on its own, so
+doing it here is explicit rather than hidden.
+
+### What the parameters actually mean here
+
+- **`revisedSamplingInterval`** reports the subscription's publishing interval,
+  not the client's request, because the DA group's update rate is the real
+  sampling rate and the source never saw the client's number.
+- **`revisedQueueSize` is 1.** The DA core coalesces per item, so the effective
+  queue is one value per item; reporting a larger queue would overstate what the
+  client will receive.
+- **A monitoring filter is refused** with `Bad_FilterNotAllowed`. The DA group's
+  percent deadband is the only filtering the source offers, and silently
+  ignoring a filter a client asked for would misreport what it receives.
+- **Two items may not share a client handle**, since the handle is what
+  identifies an item in a notification.
+
+### Publish
+
+`Publish` answers from what the DA core has already delivered. It does **not**
+hold the request open: a real UA server does, but this listener serves one
+request at a time per connection, so holding it would block the connection
+entirely. With nothing to report it answers a keep-alive, which carries no
+`NotificationData` at all and does not consume a sequence number.
+
+Table 82's `maxNotificationsPerPublish` of zero means the client imposes no
+limit; a smaller client value tightens the server's bound. What does not fit is
+reported through `moreNotifications` rather than dropped.
+
+A subscription belongs to the session that created it, and closing a session
+releases its DA groups — a closed session must not leave groups open on the
+source.
+
+### When the source goes away
+
+The DA core invalidates its subscription on a source disconnect. The UA
+subscription survives, but every reporting item is given a `Bad_NotConnected`
+status in the next notification, so a client **learns the source is gone rather
+than seeing the stream fall silent**. The DA subscription is released rather
+than left dangling; recovering means creating monitored items again, which
+matches the DA core's rule that resubscribing is always explicit.
+
 ## What has and has not been tested
 
 The real-DA validation runs the UA frontend against the source-built OPC
