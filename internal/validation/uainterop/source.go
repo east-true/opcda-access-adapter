@@ -39,6 +39,10 @@ type scriptedItem struct {
 	// changes marks an item whose value advances on every subscription tick,
 	// so a client can observe a real data change rather than a repeat.
 	changes bool
+	// dirty marks an item whose cached value a write has just changed. A DA
+	// server reports such a change through OnDataChange like any other, so a
+	// client that writes and then waits for a notification gets one.
+	dirty bool
 }
 
 // branch is one level of the browse hierarchy. Names are the browse names; the
@@ -345,6 +349,7 @@ func (s *scriptedSource) writeLocked(write opcda.WriteItem) opcda.WriteResult {
 		}
 	}
 	item.value = write.Value
+	item.dirty = true
 	return opcda.WriteResult{
 		ItemID:         write.ItemID,
 		HRESULT:        opcda.SOK,

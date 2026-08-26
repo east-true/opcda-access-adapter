@@ -27,6 +27,9 @@ fi
 
 echo "== building the harness =="
 go build -o "$workdir/uainterop" "$root/internal/validation/uainterop"
+# The real-DA probe is built too, so a change to the UA wire format that would
+# break the Windows validation run is caught here rather than in CI.
+go build -o "$workdir/opcuaprobe" "$root/internal/validation/opcuaprobe"
 
 # Each configuration gets its own harness, because a source either implements
 # the optional DA interfaces or it does not, and write is on or off.
@@ -54,6 +57,13 @@ echo; echo "== a source that does not implement Browse =="
 "$python" "$here/ua_client_conformance.py" "opc.tcp://127.0.0.1:48412" --browseless || status=1
 echo; echo "== write enabled =="
 "$python" "$here/ua_client_conformance.py" "opc.tcp://127.0.0.1:48413" --write || status=1
+
+echo; echo "== the real-DA probe against the same frontend =="
+"$workdir/opcuaprobe" \
+    -address 127.0.0.1:48413 \
+    -endpoint-url "opc.tcp://127.0.0.1:48413" \
+    -security-policy-uri "http://opcfoundation.org/UA/SecurityPolicy#None" \
+    -write-enabled || status=1
 
 echo
 if [ "$status" -ne 0 ]; then

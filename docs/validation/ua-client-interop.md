@@ -20,8 +20,10 @@ scripts/interop/run.sh
 ```
 
 The runner builds `internal/validation/uainterop`, starts it in three
-configurations, and runs the client against each. It exits non-zero if any
-check fails.
+configurations, and runs the client against each. It also runs the Windows
+real-DA probe (`internal/validation/opcuaprobe`) against the same frontend, so
+a change to the UA wire format that would break the Windows validation run is
+caught here rather than in CI. It exits non-zero if any check fails.
 
 `INTEROP_WORKDIR` reuses a prepared directory; `INTEROP_PYTHON` uses an
 interpreter that already has `asyncua`, so a repeated run needs no network.
@@ -95,6 +97,13 @@ unusable with a conforming client:
    the empty field its own encoder wrote, which is exactly the blind spot a
    self-round-trip has. The same clause also requires the receiver to verify
    that it supports the requested policy, which was not being checked either.
+
+   This project's own real-DA probe had the matching defect: it sent an empty
+   policy too. Adding the server-side check the clause requires failed the
+   probe immediately, which is the right outcome — the probe now names its
+   policy and asserts that the reply echoes it, so the Windows validation run
+   covers both halves of the clause against a real DA source.
+
 2. **`Browse` decoded `includeSubtypes` and then ignored it.** A client that
    browses for `HierarchicalReferences` with subtypes included — the normal
    way to walk an address space — saw nothing. This project's own probe

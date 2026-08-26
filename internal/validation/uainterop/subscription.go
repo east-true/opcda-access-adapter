@@ -148,9 +148,10 @@ func (s *scriptedSubscription) sample(watched []*scriptedItem) {
 		s.mu.Lock()
 		first := s.firstTick
 		s.mu.Unlock()
-		if !first && !item.changes {
+		if !first && !item.changes && !item.dirty {
 			continue
 		}
+		item.dirty = false
 		read := s.source.readLocked(item.itemID)
 		values = append(values, opcda.SubscriptionValue{
 			ItemID:         read.ItemID,
