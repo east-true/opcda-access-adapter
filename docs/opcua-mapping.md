@@ -532,8 +532,23 @@ different parents stay distinct nodes.
 A variable's DataType comes from the Part 8 mapping. A VARTYPE with no Table A.2
 row falls back to the **abstract base type** rather than borrowing a
 numerically similar one, and every variable is a scalar because the DA core
-decodes no arrays. Access rights the source did not report leave the access
-level empty rather than being assumed readable.
+decodes no arrays.
+
+### Access rights are usually unknown
+
+**OPC DA carries access rights in the `AddItems` result, not in Browse**, so a
+browsed item normally arrives without them. The address space records whether
+the source actually reported them.
+
+When they are unknown the adapter reports the node as readable and writable and
+**does not gate the operation itself**, because the adapter imposes no
+restriction: the source is the authority and answers `OPC_E_BADRIGHTS` for an
+operation it does not permit, which Tables A.4 and A.5 map to `Bad_NotReadable`
+and `Bad_NotWritable`. Reporting no access instead would be the adapter claiming
+a restriction it does not enforce and cannot verify — and would make every
+browsed item unreadable.
+
+When the source *did* report rights, they are enforced without asking it again.
 
 Re-browsing a branch replaces its forward references, so the space reflects the
 source instead of accumulating nodes the source no longer has, while the

@@ -572,7 +572,7 @@ func (c *client) readItem(token opcua.ChannelSecurityToken, session, node opcua.
 		return fmt.Errorf("a usable status carried no value")
 	}
 	if result.ServerTimestamp.IsZero() {
-		return fmt.Errorf("the server timestamp was absent")
+		return fmt.Errorf("the server timestamp was absent for status %s", result.Status.Hex())
 	}
 	fmt.Printf("opcua read status=%s sourceTimestampPresent=%t\n",
 		result.Status.Hex(), !result.SourceTimestamp.IsZero())

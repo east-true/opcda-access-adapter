@@ -52,6 +52,10 @@ func testDataService(t *testing.T, runtime *stubRuntime) (*DataAccessService, *A
 			CanonicalType: varType(opcda.VTBSTR), AccessRights: readOnly},
 		{Kind: opcda.BrowseEntryItem, Name: "Closed", ItemID: itemID("Test/Closed"),
 			CanonicalType: varType(opcda.VTI4), AccessRights: noAccess},
+		// OPC DA carries access rights in AddItems, not in Browse, so a browsed
+		// item normally arrives without them.
+		{Kind: opcda.BrowseEntryItem, Name: "Unknown", ItemID: itemID("Test/Unknown"),
+			CanonicalType: varType(opcda.VTI4)},
 		{Kind: opcda.BrowseEntryBranch, Name: "Folder"},
 	}); err != nil {
 		t.Fatal(err)
@@ -306,13 +310,75 @@ func TestReadResultsKeepRequestOrder(t *testing.T) {
 	if response.Results[1].Status != StatusGood {
 		t.Fatalf("readable node = %s", response.Results[1].Status.Hex())
 	}
-	// A source that reported no read right is refused rather than attempted.
+	// A right the source actually reported is enforced without asking it again.
 	if response.Results[2].Status != StatusBadNotReadable {
 		t.Fatalf("unreadable node = %s, want Bad_NotReadable", response.Results[2].Status.Hex())
 	}
 	// Only the readable node reached the source.
 	if len(runtime.readRequest.Items) != 1 {
 		t.Fatalf("the source was asked for %d items", len(runtime.readRequest.Items))
+	}
+}
+
+// An item whose rights the source never reported is read anyway: the adapter
+// imposes no restriction it cannot verify, and the source answers
+// OPC_E_BADRIGHTS if it does not permit the read.
+func TestReadAsksTheSourceWhenRightsAreUnknown(t *testing.T) {
+	runtime := &stubRuntime{}
+	service, _ := testDataService(t, runtime)
+	varTypeI4 := opcda.VTI4
+	runtime.readResults = []opcda.ReadResult{{
+		ItemID: "Test/Unknown", VarType: &varTypeI4, HRESULT: opcda.SOK, HRESULTPresent: true,
+		Value: &opcda.DAValue{ItemID: "Test/Unknown", Value: int32(5), QualityRaw: QualityGood},
+	}}
+	response, err := service.Read(context.Background(),
+		readRequestFor(readValue(ItemNodeID("Test/Unknown"))), time.Now().UTC())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if response.Results[0].Status != StatusGood {
+		t.Fatalf("status = %s, want the source's answer", response.Results[0].Status.Hex())
+	}
+	if len(runtime.readRequest.Items) != 1 {
+		t.Fatal("the read was refused locally instead of reaching the source")
+	}
+
+	// When the source does refuse, its HRESULT decides.
+	runtime.readResults = []opcda.ReadResult{{
+		ItemID: "Test/Unknown", HRESULT: OPCEBadRights, HRESULTPresent: true,
+	}}
+	response, err = service.Read(context.Background(),
+		readRequestFor(readValue(ItemNodeID("Test/Unknown"))), time.Now().UTC())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if response.Results[0].Status != StatusBadNotReadable {
+		t.Fatalf("status = %s, want the source's refusal", response.Results[0].Status.Hex())
+	}
+}
+
+// The same rule applies to Write.
+func TestWriteAsksTheSourceWhenRightsAreUnknown(t *testing.T) {
+	runtime := &stubRuntime{}
+	service, _ := testDataService(t, runtime)
+	runtime.writeResults = []opcda.WriteResult{{
+		ItemID: "Test/Unknown", HRESULT: opcda.SOK, HRESULTPresent: true,
+	}}
+	response, err := service.Write(context.Background(), WriteRequest{
+		Header: RequestHeader{AdditionalHeader: NullExtensionObject()},
+		NodesToWrite: []WriteValue{{
+			NodeID: ItemNodeID("Test/Unknown"), AttributeID: AttributeValue,
+			Value: DataValue{Value: Variant{Type: BuiltInInt32, Value: int32(1)}},
+		}},
+	}, time.Now().UTC())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if response.Results[0] != StatusGood {
+		t.Fatalf("status = %s", response.Results[0].Hex())
+	}
+	if len(runtime.writeItems) != 1 {
+		t.Fatal("the write was refused locally instead of reaching the source")
 	}
 }
 

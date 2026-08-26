@@ -409,7 +409,10 @@ func (s *DataAccessService) Read(ctx context.Context, request ReadRequest, now t
 			results[index] = failedDataValue(StatusBadAttributeIDInvalid)
 			continue
 		}
-		if node.AccessLevel&AccessLevelCurrentRead == 0 {
+		// A right the source actually reported is enforced here; an unknown one
+		// is left to the source, which answers OPC_E_BADRIGHTS if it does not
+		// permit the read.
+		if node.AccessRightsKnown && node.AccessLevel&AccessLevelCurrentRead == 0 {
 			results[index] = failedDataValue(StatusBadNotReadable)
 			continue
 		}
@@ -625,7 +628,7 @@ func (s *DataAccessService) Write(ctx context.Context, request WriteRequest, now
 			results[index] = StatusBadAttributeIDInvalid
 			continue
 		}
-		if node.AccessLevel&AccessLevelCurrentWrite == 0 {
+		if node.AccessRightsKnown && node.AccessLevel&AccessLevelCurrentWrite == 0 {
 			results[index] = StatusBadNotWritable
 			continue
 		}
