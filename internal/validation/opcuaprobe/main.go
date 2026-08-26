@@ -38,6 +38,25 @@ func main() {
 	}
 }
 
+// dialWhenReady retries until the adapter's listener accepts or the deadline
+// passes. The adapter is started moments earlier by the validation harness, so
+// the first connection attempt is refused rather than timing out.
+func dialWhenReady(ctx context.Context, address string) (net.Conn, error) {
+	var lastErr error
+	for {
+		conn, err := net.DialTimeout("tcp", address, 5*time.Second)
+		if err == nil {
+			return conn, nil
+		}
+		lastErr = err
+		select {
+		case <-ctx.Done():
+			return nil, fmt.Errorf("the OPC UA listener did not accept a connection: %w", lastErr)
+		case <-time.After(200 * time.Millisecond):
+		}
+	}
+}
+
 // client is a minimal UA-TCP client: enough to complete the connection sequence
 // and call the services this adapter implements.
 type client struct {
@@ -49,9 +68,9 @@ type client struct {
 
 func run(ctx context.Context, address, endpointURL, policyURI string) error {
 	deadline, _ := ctx.Deadline()
-	conn, err := net.DialTimeout("tcp", address, 15*time.Second)
+	conn, err := dialWhenReady(ctx, address)
 	if err != nil {
-		return fmt.Errorf("dial %s: %w", address, err)
+		return err
 	}
 	defer conn.Close()
 	if err := conn.SetDeadline(deadline); err != nil {
