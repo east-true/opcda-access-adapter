@@ -81,7 +81,18 @@ defined by OPC 10000-7, which this project has not transcribed, so the probe
 checks only that the server publishes exactly what it was configured with and
 makes **no claim that those are the standard URIs**.
 
-Write is never enabled for the OPC UA scenario. The read assertion allows any
+The probe then creates a Subscription and a MonitoredItem over the fixture's
+read/write VT_R4 item, requires the server's initial snapshot to arrive through
+Publish, writes distinct values through the UA Write service, and requires each
+change to arrive with the client handle it registered. The fixture's `Test`
+items are static, so without induced changes a subscription would only ever show
+one snapshot; this is the same reason the DA Subscribe probe writes.
+
+Write is therefore enabled for the OPC UA scenario. The write-disabled default
+is covered by the HTTP and gRPC scenarios.
+
+Publish does not block on this server, so the probe polls it within a bounded
+deadline rather than waiting on an open request. The read assertion allows any
 status the source's quality produces — a non-Good quality is data, not a failure
 — and requires only that a usable status carries a value and a bad one does not.
 

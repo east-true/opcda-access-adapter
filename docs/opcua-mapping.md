@@ -785,7 +785,9 @@ matches the DA core's rule that resubscribing is always explicit.
 The real-DA validation runs the UA frontend against the source-built OPC
 Foundation DA 2.05a fixture on both architectures: the connection sequence, a
 secure channel, `GetEndpoints`, a session, a Browse walk from Root down to a
-variable, and a Read of that variable.
+variable, a Read of that variable, and a Subscription whose MonitoredItem
+receives the server's initial snapshot and then change-driven notifications
+induced through the UA Write service.
 
 **No third-party OPC UA client has been tested against this server.** The probe
 is written against this project's own codec, so it proves the server is

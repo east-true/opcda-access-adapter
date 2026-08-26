@@ -122,10 +122,12 @@ release-promotion gate.
 
 ## In progress
 
-- UA Subscriptions and MonitoredItems are on `feat/opcua-subscriptions`, which
-  makes the DA Subscribe core reachable over UA. One UA Subscription is one DA
-  subscription, which is one DA group. The services are exercised over a real
-  socket against a stubbed DA core; the real-DA probe does not yet drive them.
+- The OPC UA subscription real-DA validation is on
+  `test/opcua-subscription-validation`. The probe now creates a Subscription and
+  MonitoredItem against the fixture, requires the initial snapshot and two
+  change-driven notifications induced through UA Write, and deletes the
+  subscription. Write is enabled for the OPC UA scenario for that reason; the
+  write-disabled default stays covered by the HTTP and gRPC scenarios.
 
 - The local KVM/libvirt destructive-validation gate is paused. The dedicated
   `opcda-destructive-review` VM and all of its dedicated host resources were

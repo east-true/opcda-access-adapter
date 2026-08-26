@@ -268,6 +268,9 @@ function Start-OPCUAAdapter {
         [int]$Port,
 
         [Parameter(Mandatory = $true)]
+        [bool]$WriteEnabled,
+
+        [Parameter(Mandatory = $true)]
         [string]$Label
     )
 
@@ -286,8 +289,11 @@ function Start-OPCUAAdapter {
     $env:OPCDA_OPCUA_SECURITY_POLICY_URI = 'urn:validation:security-policy:none'
     $env:OPCDA_OPCUA_TRANSPORT_PROFILE_URI = 'urn:validation:transport:uatcp-uasc-uabinary'
     $env:OPCDA_OPCUA_SOURCE_FOLDER = 'Source'
-    # Write is never enabled for the OPC UA scenario.
-    $env:OPCDA_WRITE_ENABLED = 'false'
+    # The subscription scenario needs Write, because the fixture's Test items
+    # are static and would otherwise only ever produce the server's initial
+    # snapshot. The write-disabled default is covered by the HTTP and gRPC
+    # scenarios.
+    $env:OPCDA_WRITE_ENABLED = $WriteEnabled.ToString().ToLowerInvariant()
     $env:OPCDA_RECONNECT_INITIAL = '200ms'
     $env:OPCDA_RECONNECT_MAX = '2s'
     $env:OPCDA_REQUEST_DEADLINE = '10s'
@@ -304,18 +310,21 @@ function Test-OPCUAFrontend {
     $port = if ($AdapterArch -eq '386') { 18751 } else { 18752 }
     $adapter = $null
     try {
-        $adapter = Start-OPCUAAdapter -Port $port -Label 'opcua'
+        $adapter = Start-OPCUAAdapter -Port $port -WriteEnabled $true -Label 'opcua'
         Invoke-NativeProcess -FilePath $script:OPCUAProbeExecutable -ArgumentList @(
             '-address', "127.0.0.1:$port",
             '-endpoint-url', "opc.tcp://127.0.0.1:$port",
             '-security-policy-uri', 'urn:validation:security-policy:none',
-            '-timeout', '60s'
-        ) -TimeoutSeconds 90
+            '-write-enabled',
+            # The subscription scenario waits on real source notifications, so
+            # it needs a longer bound than the read-only path.
+            '-timeout', '150s'
+        ) -TimeoutSeconds 180
         $listeners = @(Get-NetTCPConnection -State Listen -OwningProcess $adapter.Id -ErrorAction SilentlyContinue)
         Assert-True ($listeners.Count -eq 1) 'OPC UA adapter did not expose exactly one TCP listener'
         Assert-True ($listeners[0].LocalAddress -eq '127.0.0.1' -and [int]$listeners[0].LocalPort -eq $port) `
             'OPC UA adapter listener was reachable beyond IPv4 loopback'
-        Write-Host "OPCUA_FRONTEND_PASS arch=$AdapterArch securityMode=None writeEnabled=false valuesLogged=false"
+        Write-Host "OPCUA_FRONTEND_PASS arch=$AdapterArch securityMode=None writeEnabled=true subscription=true valuesLogged=false"
     }
     finally {
         Stop-Adapter $adapter
