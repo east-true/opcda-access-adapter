@@ -532,8 +532,23 @@ different parents stay distinct nodes.
 A variable's DataType comes from the Part 8 mapping. A VARTYPE with no Table A.2
 row falls back to the **abstract base type** rather than borrowing a
 numerically similar one, and every variable is a scalar because the DA core
-decodes no arrays. Access rights the source did not report leave the access
-level empty rather than being assumed readable.
+decodes no arrays.
+
+### Access rights are usually unknown
+
+**OPC DA carries access rights in the `AddItems` result, not in Browse**, so a
+browsed item normally arrives without them. The address space records whether
+the source actually reported them.
+
+When they are unknown the adapter reports the node as readable and writable and
+**does not gate the operation itself**, because the adapter imposes no
+restriction: the source is the authority and answers `OPC_E_BADRIGHTS` for an
+operation it does not permit, which Tables A.4 and A.5 map to `Bad_NotReadable`
+and `Bad_NotWritable`. Reporting no access instead would be the adapter claiming
+a restriction it does not enforce and cannot verify — and would make every
+browsed item unreadable.
+
+When the source *did* report rights, they are enforced without asking it again.
 
 Re-browsing a branch replaces its forward references, so the space reflects the
 source instead of accumulating nodes the source no longer has, while the
@@ -670,6 +685,57 @@ all.
 `Listener.InvalidateAddressSpace` sends the next browse of every branch back to
 the source. The application calls it after a reconnect, because a new connection
 generation may expose a different address space.
+
+## Selecting the OPC UA frontend
+
+The adapter can now be configured to serve OPC UA. It remains **one process, one
+source, one frontend**: selecting OPC UA means HTTP and gRPC are not served,
+exactly as choosing between HTTP and gRPC already worked.
+
+Configuration file **version 3** adds the frontend. Versions 1 and 2 still load,
+so an installed adapter keeps running after an upgrade, and a version below 3
+that names the OPC UA frontend is refused rather than half-understood. Only the
+selected frontend's listener is written, and a non-UA frontend may not carry OPC
+UA settings.
+
+### What the operator must supply
+
+The endpoint settings have **no defaults**:
+
+| Setting | Why it is not defaulted |
+|---|---|
+| `securityPolicyUri` | Defined by OPC 10000-7. A wrong URI makes the server unusable by a real client. |
+| `transportProfileUri` | Same. |
+| `endpointUrl`, `applicationUri`, `namespaceUri` | These identify a deployment, and the namespace URI must stay stable across restarts because design §35.2 forbids treating a namespace index as identity. |
+
+Guided setup lists OPC UA as a third frontend and labels it plainly:
+`SecurityPolicy None; local interoperability only, not production ready`. The
+review screen repeats that the mode is None — no signing, no encryption,
+anonymous users — before the operator confirms. ADR-0016 requires that language
+and forbids describing this path as production ready.
+
+### After a reconnect
+
+The service watches the DA connection generation and invalidates the UA address
+space when it changes. A new generation may expose a different address space,
+and item registrations from the previous one are already invalid, so the cached
+nodes must not be served as if they were current. The same tick expires stale
+secure channels, sessions, and continuation points, which keeps that
+housekeeping on one owned goroutine rather than a timer inside the listener.
+
+## What has and has not been tested
+
+The real-DA validation runs the UA frontend against the source-built OPC
+Foundation DA 2.05a fixture on both architectures: the connection sequence, a
+secure channel, `GetEndpoints`, a session, a Browse walk from Root down to a
+variable, and a Read of that variable.
+
+**No third-party OPC UA client has been tested against this server.** The probe
+is written against this project's own codec, so it proves the server is
+internally consistent and reaches the DA source — not that a real UA client
+interoperates with it. Per ADR-0016 no conformance or interoperability claim is
+made, and the `SecurityPolicy None` path is for local interoperability work
+only.
 
 ## What is not decided here
 

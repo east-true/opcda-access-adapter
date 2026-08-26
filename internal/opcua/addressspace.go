@@ -138,9 +138,13 @@ type Node struct {
 	TypeDefinition NodeID
 
 	// DataType and the access level apply to variables only.
-	DataType    NodeID
-	ValueRank   int32
-	AccessLevel byte
+	DataType  NodeID
+	ValueRank int32
+	// AccessLevel is what the adapter reports. AccessRightsKnown records
+	// whether the source actually told us: OPC DA carries access rights in
+	// AddItems, not in Browse, so a browsed item usually arrives without them.
+	AccessLevel       byte
+	AccessRightsKnown bool
 
 	// ItemID is the exact DA ItemID a variable stands for. It is empty for a
 	// folder, because design §35.2 forbids inventing an ItemID for a branch.
@@ -391,18 +395,26 @@ func (s *AddressSpace) nodeForEntry(path []string, entry opcda.BrowseEntry) (*No
 				}
 			}
 		}
-		node.AccessLevel = accessLevelFor(entry.AccessRights)
+		node.AccessLevel, node.AccessRightsKnown = accessLevelFor(entry.AccessRights)
 		return node, nil
 	default:
 		return nil, fmt.Errorf("browse entry kind %q is not known", entry.Kind)
 	}
 }
 
-// accessLevelFor maps DA access rights onto the UA access level. Rights the
-// source did not report are absent rather than assumed readable.
-func accessLevelFor(rights *opcda.DAAccessRights) byte {
+// accessLevelFor maps DA access rights onto the UA access level and reports
+// whether the source supplied them.
+//
+// OPC DA carries access rights in the AddItems result, not in Browse, so a
+// browsed item normally arrives without them. When they are unknown the adapter
+// reports the node as readable and writable, because the adapter itself imposes
+// no restriction: the source is the authority and answers OPC_E_BADRIGHTS for
+// an operation it does not permit, which Part 8 Table A.4 and A.5 map to
+// Bad_NotReadable and Bad_NotWritable. Reporting no access instead would be the
+// adapter claiming a restriction it does not enforce and cannot verify.
+func accessLevelFor(rights *opcda.DAAccessRights) (byte, bool) {
 	if rights == nil {
-		return 0
+		return AccessLevelCurrentRead | AccessLevelCurrentWrite, false
 	}
 	var level byte
 	if rights.Read {
@@ -411,7 +423,7 @@ func accessLevelFor(rights *opcda.DAAccessRights) byte {
 	if rights.Write {
 		level |= AccessLevelCurrentWrite
 	}
-	return level
+	return level, true
 }
 
 // NodeCount reports how many nodes the space holds, for bounds and diagnostics.

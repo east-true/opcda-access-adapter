@@ -257,7 +257,8 @@ func TestItemNodesCarryDataTypeAndAccessLevel(t *testing.T) {
 		// rather than borrowing a similar one.
 		{Kind: opcda.BrowseEntryItem, Name: "cy", ItemID: itemID("cy"),
 			CanonicalType: varType(opcda.VTCY), AccessRights: rights(true, false)},
-		// A source that reported no rights is not assumed readable.
+		// OPC DA carries access rights in AddItems, not in Browse, so a browsed
+		// item normally arrives without them.
 		{Kind: opcda.BrowseEntryItem, Name: "unknown", ItemID: itemID("unknown")},
 	}
 	if err := space.PopulateBranch(nil, entries); err != nil {
@@ -273,7 +274,7 @@ func TestItemNodesCarryDataTypeAndAccessLevel(t *testing.T) {
 		{"r4", NodeIDFloat, AccessLevelCurrentRead},
 		{"bstr", NodeIDString, AccessLevelCurrentRead},
 		{"cy", NodeIDBaseDataType, AccessLevelCurrentRead},
-		{"unknown", NodeIDBaseDataType, 0},
+		{"unknown", NodeIDBaseDataType, AccessLevelCurrentRead | AccessLevelCurrentWrite},
 	}
 	for _, testCase := range cases {
 		t.Run(testCase.item, func(t *testing.T) {
@@ -286,6 +287,11 @@ func TestItemNodesCarryDataTypeAndAccessLevel(t *testing.T) {
 			}
 			if node.AccessLevel != testCase.accessLevel {
 				t.Fatalf("access level = %d, want %d", node.AccessLevel, testCase.accessLevel)
+			}
+			// Only rights the source actually reported are marked known, which
+			// is what decides whether the adapter enforces them itself.
+			if node.AccessRightsKnown != (testCase.item != "unknown") {
+				t.Fatalf("access rights known = %t for %q", node.AccessRightsKnown, testCase.item)
 			}
 			// The DA core decodes no arrays, so every variable is a scalar.
 			if node.ValueRank != ValueRankScalar {

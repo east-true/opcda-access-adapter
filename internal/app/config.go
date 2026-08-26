@@ -11,10 +11,16 @@ import (
 )
 
 type Config struct {
-	Source                 opcda.SourceConfig
-	Frontend               FrontendType
-	HTTPListenAddress      string
-	GRPCListenAddress      string
+	Source             opcda.SourceConfig
+	Frontend           FrontendType
+	HTTPListenAddress  string
+	GRPCListenAddress  string
+	OPCUAListenAddress string
+	// OPCUA carries the endpoint description this adapter publishes. Its
+	// security policy and transport profile URIs have no defaults: the known
+	// URIs are defined by OPC 10000-7, and a server publishing a wrong one
+	// would be unusable by a real client.
+	OPCUA                  OPCUAFrontendConfig
 	WriteEnabled           bool
 	MaxHTTPBodyBytes       int64
 	MaxHTTPConnections     int
@@ -43,8 +49,9 @@ type Config struct {
 type FrontendType string
 
 const (
-	FrontendHTTP FrontendType = "http"
-	FrontendGRPC FrontendType = "grpc"
+	FrontendHTTP  FrontendType = "http"
+	FrontendGRPC  FrontendType = "grpc"
+	FrontendOPCUA FrontendType = "opcua"
 )
 
 const (
@@ -61,6 +68,7 @@ func DefaultConfig() Config {
 		Frontend:               FrontendHTTP,
 		HTTPListenAddress:      "127.0.0.1:8080",
 		GRPCListenAddress:      "127.0.0.1:50051",
+		OPCUAListenAddress:     "127.0.0.1:4840",
 		MaxHTTPBodyBytes:       1 << 20,
 		MaxHTTPConnections:     64,
 		MaxConcurrentRequests:  32,
@@ -100,6 +108,15 @@ func LoadConfig() (Config, error) {
 	config.Frontend = FrontendType(valueOrDefault("OPCDA_FRONTEND", string(config.Frontend)))
 	config.HTTPListenAddress = valueOrDefault("OPCDA_HTTP_LISTEN", config.HTTPListenAddress)
 	config.GRPCListenAddress = valueOrDefault("OPCDA_GRPC_LISTEN", config.GRPCListenAddress)
+	config.OPCUAListenAddress = valueOrDefault("OPCDA_OPCUA_LISTEN", config.OPCUAListenAddress)
+	config.OPCUA.EndpointURL = valueOrDefault("OPCDA_OPCUA_ENDPOINT_URL", config.OPCUA.EndpointURL)
+	config.OPCUA.ApplicationURI = valueOrDefault("OPCDA_OPCUA_APPLICATION_URI", config.OPCUA.ApplicationURI)
+	config.OPCUA.ProductURI = valueOrDefault("OPCDA_OPCUA_PRODUCT_URI", config.OPCUA.ProductURI)
+	config.OPCUA.ApplicationName = valueOrDefault("OPCDA_OPCUA_APPLICATION_NAME", config.OPCUA.ApplicationName)
+	config.OPCUA.SecurityPolicyURI = valueOrDefault("OPCDA_OPCUA_SECURITY_POLICY_URI", config.OPCUA.SecurityPolicyURI)
+	config.OPCUA.TransportProfileURI = valueOrDefault("OPCDA_OPCUA_TRANSPORT_PROFILE_URI", config.OPCUA.TransportProfileURI)
+	config.OPCUA.NamespaceURI = valueOrDefault("OPCDA_OPCUA_NAMESPACE_URI", config.OPCUA.NamespaceURI)
+	config.OPCUA.SourceFolderName = valueOrDefault("OPCDA_OPCUA_SOURCE_FOLDER", config.OPCUA.SourceFolderName)
 
 	var err error
 	if config.WriteEnabled, err = boolEnv("OPCDA_WRITE_ENABLED", false); err != nil {
@@ -213,8 +230,10 @@ func (config *Config) finalizeAndValidate() error {
 		config.HTTPWriteTimeout <= 0 || config.HTTPIdleTimeout <= 0 || config.RequestDeadline <= 0 {
 		return fmt.Errorf("HTTP bounds and timeouts must be positive")
 	}
-	if config.Frontend != FrontendHTTP && config.Frontend != FrontendGRPC {
-		return fmt.Errorf("frontend must be http or grpc")
+	switch config.Frontend {
+	case FrontendHTTP, FrontendGRPC, FrontendOPCUA:
+	default:
+		return fmt.Errorf("frontend must be http, grpc, or opcua")
 	}
 	if config.MaxGRPCReceiveBytes <= 0 || config.MaxGRPCSendBytes <= 0 || config.MaxGRPCConnections <= 0 ||
 		config.MaxConcurrentGRPCRPCs <= 0 || config.MaxGRPCStreams == 0 || config.MaxGRPCMetadataBytes == 0 ||
@@ -254,9 +273,16 @@ func (config *Config) finalizeAndValidate() error {
 	}
 	listenAddress := config.HTTPListenAddress
 	listenSetting := "OPCDA_HTTP_LISTEN"
-	if config.Frontend == FrontendGRPC {
+	switch config.Frontend {
+	case FrontendGRPC:
 		listenAddress = config.GRPCListenAddress
 		listenSetting = "gRPC listen address"
+	case FrontendOPCUA:
+		listenAddress = config.OPCUAListenAddress
+		listenSetting = "OPC UA listen address"
+		if err := config.OPCUA.validate(); err != nil {
+			return err
+		}
 	}
 	_, port, err := net.SplitHostPort(listenAddress)
 	if err != nil {
@@ -348,4 +374,49 @@ func durationEnv(key string, fallback time.Duration) (time.Duration, error) {
 		return 0, fmt.Errorf("%s: %w", key, err)
 	}
 	return parsed, nil
+}
+
+// OPCUAFrontendConfig describes the single endpoint the OPC UA frontend
+// publishes.
+//
+// SecurityPolicyURI and TransportProfileURI have no defaults. The known URIs
+// are defined by OPC 10000-7, which this project has not transcribed, and a
+// server that published a wrong one would be unusable by a real client. They
+// are supplied by the operator rather than guessed.
+type OPCUAFrontendConfig struct {
+	EndpointURL         string
+	ApplicationURI      string
+	ProductURI          string
+	ApplicationName     string
+	SecurityPolicyURI   string
+	TransportProfileURI string
+	NamespaceURI        string
+	SourceFolderName    string
+	AnonymousPolicyID   string
+}
+
+// validate checks what the operator must supply. Only SecurityMode None is
+// implemented; ADR-0016 forbids describing that as production ready.
+func (config OPCUAFrontendConfig) validate() error {
+	if config.EndpointURL == "" {
+		return fmt.Errorf("the OPC UA frontend requires an endpoint URL")
+	}
+	if config.ApplicationURI == "" {
+		return fmt.Errorf("the OPC UA frontend requires an application URI")
+	}
+	if config.SecurityPolicyURI == "" {
+		return fmt.Errorf(
+			"the OPC UA frontend requires a security policy URI; the known URIs are defined by OPC 10000-7")
+	}
+	if config.TransportProfileURI == "" {
+		return fmt.Errorf(
+			"the OPC UA frontend requires a transport profile URI; the known URIs are defined by OPC 10000-7")
+	}
+	if config.NamespaceURI == "" {
+		return fmt.Errorf("the OPC UA frontend requires a stable namespace URI")
+	}
+	if config.SourceFolderName == "" {
+		return fmt.Errorf("the OPC UA frontend requires a source folder name")
+	}
+	return nil
 }
