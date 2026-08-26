@@ -320,7 +320,7 @@ func TestActivateAcceptsAnonymousIdentities(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	nonce, err := registry.Activate(session.AuthenticationToken, session.ChannelID, ActivateSessionRequest{
+	nonce, err := registry.Activate(session.AuthenticationToken, session.BoundChannel, testSessionSecurity(), ActivateSessionRequest{
 		UserIdentityToken: NullExtensionObject(),
 	}, "", channelEpoch)
 	if err != nil {
@@ -332,7 +332,7 @@ func TestActivateAcceptsAnonymousIdentities(t *testing.T) {
 	// The snapshot taken at Create does not change when the session does, so
 	// the registry is asked again. That is the point of handing out values:
 	// nothing outside the registry can observe a half-written session.
-	activated, err := registry.Lookup(session.AuthenticationToken, session.ChannelID, channelEpoch)
+	activated, err := registry.Lookup(session.AuthenticationToken, session.BoundChannel, channelEpoch)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -352,7 +352,7 @@ func TestActivateAcceptsAnonymousIdentities(t *testing.T) {
 		Encoding: ExtensionObjectByteString,
 		Body:     body,
 	}
-	if _, err := registry.Activate(session.AuthenticationToken, session.ChannelID, ActivateSessionRequest{UserIdentityToken: token}, "anon", channelEpoch); err != nil {
+	if _, err := registry.Activate(session.AuthenticationToken, session.BoundChannel, testSessionSecurity(), ActivateSessionRequest{UserIdentityToken: token}, "anon", channelEpoch); err != nil {
 		t.Fatalf("a matching anonymous token was refused: %v", err)
 	}
 }
@@ -366,7 +366,7 @@ func TestActivateRejectsOtherIdentityTypes(t *testing.T) {
 	// A UserNameIdentityToken is not accepted, because no such policy is
 	// published.
 	other := ExtensionObject{TypeID: NumericNodeID(0, 324), Encoding: ExtensionObjectNoBody}
-	_, err = registry.Activate(session.AuthenticationToken, session.ChannelID, ActivateSessionRequest{UserIdentityToken: other}, "", channelEpoch)
+	_, err = registry.Activate(session.AuthenticationToken, session.BoundChannel, testSessionSecurity(), ActivateSessionRequest{UserIdentityToken: other}, "", channelEpoch)
 	if err == nil {
 		t.Fatal("a non-anonymous identity token was accepted")
 	}
@@ -386,7 +386,7 @@ func TestActivateRejectsOtherIdentityTypes(t *testing.T) {
 		Encoding: ExtensionObjectByteString,
 		Body:     body,
 	}
-	_, err = registry.Activate(session.AuthenticationToken, session.ChannelID, ActivateSessionRequest{UserIdentityToken: mismatched}, "anon", channelEpoch)
+	_, err = registry.Activate(session.AuthenticationToken, session.BoundChannel, testSessionSecurity(), ActivateSessionRequest{UserIdentityToken: mismatched}, "anon", channelEpoch)
 	if err == nil {
 		t.Fatal("a mismatched policy id was accepted")
 	}
@@ -518,12 +518,109 @@ func TestTerminatingASessionWakesItsOutstandingRequests(t *testing.T) {
 	default:
 	}
 
-	if err := registry.Close(session.AuthenticationToken, session.ChannelID, channelEpoch); err != nil {
+	if err := registry.Close(session.AuthenticationToken, session.BoundChannel, channelEpoch); err != nil {
 		t.Fatal(err)
 	}
 	select {
 	case <-ended:
 	case <-time.After(5 * time.Second):
 		t.Fatal("terminating the session did not wake its outstanding requests")
+	}
+}
+
+// OPC 10000-4 5.7.3: "When the ActivateSession Service is called for the first
+// time then the Server shall reject the request if the SecureChannel is not
+// same as the one associated with the CreateSession request. Subsequent calls
+// to ActivateSession may be associated with different SecureChannels."
+//
+// The second sentence is the client's documented way back after a connection
+// failure — 5.7.2 has it open a new connection and "call ActivateSession
+// again". Checking every request against the creating channel refused exactly
+// that, so a session survived its connection and could never be used again: it
+// sat holding its DA groups until it timed out. Two facts had been stored in
+// one field.
+func TestActivateSessionMovesTheSessionToANewChannel(t *testing.T) {
+	registry := newTestSessionRegistry(t, DefaultSessionLimits())
+	const createdOn, reconnectedOn = uint32(1), uint32(2)
+
+	session, _, err := registry.Create(createdOn, testSessionSecurity(), testCreateSessionRequest(), channelEpoch)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// The first activation is pinned to the creating channel.
+	if _, err := registry.Activate(session.AuthenticationToken, reconnectedOn, testSessionSecurity(),
+		ActivateSessionRequest{UserIdentityToken: NullExtensionObject()}, "", channelEpoch); err == nil {
+		t.Fatal("the first activation was accepted on another channel")
+	}
+	if _, err := registry.Activate(session.AuthenticationToken, createdOn, testSessionSecurity(),
+		ActivateSessionRequest{UserIdentityToken: NullExtensionObject()}, "", channelEpoch); err != nil {
+		t.Fatalf("the first activation was refused on its own channel: %v", err)
+	}
+
+	// The connection fails and the client comes back on a new channel.
+	if _, err := registry.Activate(session.AuthenticationToken, reconnectedOn, testSessionSecurity(),
+		ActivateSessionRequest{UserIdentityToken: NullExtensionObject()}, "", channelEpoch); err != nil {
+		t.Fatalf("a subsequent activation on a new channel was refused: %v", err)
+	}
+
+	// "Once the Server accepts the new SecureChannel it shall reject requests
+	// sent via the old SecureChannel."
+	if _, err := registry.Lookup(session.AuthenticationToken, createdOn, channelEpoch); err == nil {
+		t.Fatal("a request on the old channel was still accepted")
+	} else if got := codecStatus(t, err); got != StatusBadSecureChannelIDInvalid {
+		t.Fatalf("status = %s, want Bad_SecureChannelIdInvalid", got.Hex())
+	}
+	if _, err := registry.Lookup(session.AuthenticationToken, reconnectedOn, channelEpoch); err != nil {
+		t.Fatalf("a request on the new channel was refused: %v", err)
+	}
+}
+
+// The clause allows the move "subject to" checks, and the security ones are
+// what this server can make: the new channel must offer the security the
+// session was created with.
+func TestASessionWillNotMoveToAChannelWithDifferentSecurity(t *testing.T) {
+	registry := newTestSessionRegistry(t, DefaultSessionLimits())
+	created := testSessionSecurity()
+	session, _, err := registry.Create(1, created, testCreateSessionRequest(), channelEpoch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := registry.Activate(session.AuthenticationToken, 1, created,
+		ActivateSessionRequest{UserIdentityToken: NullExtensionObject()}, "", channelEpoch); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, testCase := range []struct {
+		name     string
+		security SessionSecurity
+		want     StatusCode
+	}{
+		{
+			name:     "a different security mode",
+			security: SessionSecurity{Mode: SecurityModeSignAndEncrypt, PolicyURI: created.PolicyURI, AnonymousIdentityOnly: true},
+			want:     StatusBadSecurityChecksFailed,
+		},
+		{
+			name:     "a different security policy",
+			security: SessionSecurity{Mode: created.Mode, PolicyURI: "urn:test:security-policy:other", AnonymousIdentityOnly: true},
+			want:     StatusBadSecurityChecksFailed,
+		},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			_, err := registry.Activate(session.AuthenticationToken, 9, testCase.security,
+				ActivateSessionRequest{UserIdentityToken: NullExtensionObject()}, "", channelEpoch)
+			if err == nil {
+				t.Fatal("the session moved to a channel with different security")
+			}
+			if got := codecStatus(t, err); got != testCase.want {
+				t.Fatalf("status = %s, want %s", got.Hex(), testCase.want.Hex())
+			}
+		})
+	}
+
+	// The session is still usable on the channel it was already bound to.
+	if _, err := registry.Lookup(session.AuthenticationToken, 1, channelEpoch); err != nil {
+		t.Fatalf("a refused move unbound the session: %v", err)
 	}
 }

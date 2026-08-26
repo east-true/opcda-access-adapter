@@ -169,6 +169,19 @@ type Listener struct {
 	listening atomic.Bool
 	slots     chan struct{}
 
+	// active counts every goroutine the listener starts — connection loops and
+	// the goroutines that hold a Publish — so Shutdown can wait for all of
+	// them. It lives here rather than inside Serve because a Publish outlives
+	// the read loop that accepted it, and a WaitGroup local to Serve could
+	// only ever see the read loops.
+	active sync.WaitGroup
+	// drained is closed when Serve has returned and every goroutine it started
+	// has finished. It is what lets Shutdown honour its context instead of
+	// pretending to.
+	drained chan struct{}
+
+	drainedOnce sync.Once
+
 	mu       sync.Mutex
 	closed   bool
 	conns    map[net.Conn]struct{}
@@ -247,6 +260,7 @@ func NewListenerWithRuntime(config ListenerConfig, runtime opcda.Runtime, channe
 		subs:      subs,
 		slots:     make(chan struct{}, config.MaxConnections),
 		conns:     make(map[net.Conn]struct{}),
+		drained:   make(chan struct{}),
 	}
 	if subs != nil {
 		// A session's subscriptions hold DA groups open on the source, so
@@ -273,10 +287,16 @@ func (l *Listener) Serve(listener net.Listener) error {
 	l.mu.Unlock()
 
 	l.listening.Store(true)
-	defer l.listening.Store(false)
 
-	var active sync.WaitGroup
-	defer active.Wait()
+	// Nothing is served after this returns, so anything still running is
+	// waited for and the completion signal is raised for Shutdown. The order
+	// inside matters: everything an observer of the signal may check is
+	// settled before the signal is raised, so waiting on it is enough.
+	defer func() {
+		l.active.Wait()
+		l.listening.Store(false)
+		l.drainedOnce.Do(func() { close(l.drained) })
+	}()
 	for {
 		conn, err := listener.Accept()
 		if err != nil {
@@ -302,9 +322,9 @@ func (l *Listener) Serve(listener net.Listener) error {
 			_ = conn.Close()
 			continue
 		}
-		active.Add(1)
+		l.active.Add(1)
 		go func() {
-			defer active.Done()
+			defer l.active.Done()
 			defer func() { <-l.slots }()
 			defer l.untrack(conn)
 			l.serveConnection(conn)
@@ -713,6 +733,24 @@ func (l *Listener) requireActivatedSession(header RequestHeader, channelID uint3
 	return err
 }
 
+// sessionSecurity describes the security of the channel a request arrived on.
+// CreateSession records it and ActivateSession compares against it, so the two
+// cannot disagree about what a channel offered.
+func (l *Listener) sessionSecurity(channelID uint32) (SessionSecurity, error) {
+	channel, err := l.registry.Lookup(channelID)
+	if err != nil {
+		return SessionSecurity{}, err
+	}
+	return SessionSecurity{
+		Mode: channel.SecurityMode,
+		// One endpoint is served, so its policy is the policy of every channel
+		// on it. Reading it from the endpoint rather than assuming it keeps
+		// the comparison meaningful if a second endpoint is ever published.
+		PolicyURI:             l.config.Endpoint.SecurityPolicyURI,
+		AnonymousIdentityOnly: l.endpoints.AnonymousIdentityOnly(),
+	}, nil
+}
+
 // activatedSession resolves the session and returns an opaque key identifying
 // it, so a subscription can be tied to the session that created it.
 func (l *Listener) activatedSession(header RequestHeader, channelID uint32, now time.Time) (string, error) {
@@ -772,16 +810,13 @@ func (l *Listener) dispatchService(channelID uint32, identifier uint32, decoder 
 		if requestErr != nil {
 			return nil, 0, nil, requestErr
 		}
-		// The nonce rule depends on the channel's security mode, so the
-		// channel is resolved before the session is created.
-		channel, channelErr := l.registry.Lookup(channelID)
-		if channelErr != nil {
-			return nil, request.Header.RequestHandle, channelErr, nil
+		// Both the nonce rule and the channel binding depend on the security
+		// of the channel the request arrived on.
+		security, securityErr := l.sessionSecurity(channelID)
+		if securityErr != nil {
+			return nil, request.Header.RequestHandle, securityErr, nil
 		}
-		session, serverNonce, createErr := l.sessions.Create(channelID, SessionSecurity{
-			Mode:                  channel.SecurityMode,
-			AnonymousIdentityOnly: l.endpoints.AnonymousIdentityOnly(),
-		}, request, now)
+		session, serverNonce, createErr := l.sessions.Create(channelID, security, request, now)
 		if createErr != nil {
 			return nil, request.Header.RequestHandle, createErr, nil
 		}
@@ -805,8 +840,12 @@ func (l *Listener) dispatchService(channelID uint32, identifier uint32, decoder 
 		if requestErr != nil {
 			return nil, 0, nil, requestErr
 		}
+		security, securityErr := l.sessionSecurity(channelID)
+		if securityErr != nil {
+			return nil, request.Header.RequestHandle, securityErr, nil
+		}
 		serverNonce, activateErr := l.sessions.Activate(request.Header.AuthenticationToken,
-			channelID, request, l.config.Endpoint.AnonymousPolicyID, now)
+			channelID, security, request, l.config.Endpoint.AnonymousPolicyID, now)
 		if activateErr != nil {
 			return nil, request.Header.RequestHandle, activateErr, nil
 		}
@@ -1093,15 +1132,37 @@ func (l *Listener) ExpireStaleChannels(now time.Time) int {
 }
 
 // Shutdown closes the listener and waits for the context.
+// Shutdown stops accepting, drops live connections, and waits for everything
+// the listener started to finish, or for the context to expire.
+//
+// It used to take a context it could not honour: the wait it needed did not
+// exist, because Serve joined its goroutines privately and nothing outside
+// could observe when that had happened. So Shutdown closed the socket and
+// returned at once, however long a caller was prepared to wait — while the
+// two other frontends, which delegate to net/http and grpc-go, really do
+// drain. A caller cannot tell the difference from the signature, which is what
+// made it worth fixing rather than documenting.
 func (l *Listener) Shutdown(ctx context.Context) error {
 	if err := l.Close(); err != nil {
 		return err
 	}
+	// The sessions cannot outlive the listener that holds them, and ending
+	// them releases the DA groups their subscriptions hold on the source.
+	// Leaving that to the DA runtime's own teardown worked only because the
+	// application happens to stop the runtime immediately afterwards, which
+	// made this listener's shutdown depend on a caller's ordering rather than
+	// on itself.
+	l.sessions.TerminateAll()
+	if !l.Listening() {
+		// Serve was never started, so there is nothing to drain and no
+		// goroutine that will ever raise the signal.
+		l.drainedOnce.Do(func() { close(l.drained) })
+	}
 	select {
+	case <-l.drained:
+		return nil
 	case <-ctx.Done():
 		return ctx.Err()
-	default:
-		return nil
 	}
 }
 
@@ -1166,7 +1227,9 @@ func (l *Listener) handlePublish(conn net.Conn, state *connectionState, parts se
 	// Bad_SessionClosed rather than waiting on a session that is gone.
 	sessionEnded, _ := l.sessions.Ended(request.Header.AuthenticationToken)
 
+	l.active.Add(1)
 	go func() {
+		defer l.active.Done()
 		defer state.publishing.Add(-1)
 		defer releaseRequest()
 

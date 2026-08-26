@@ -175,7 +175,7 @@ func TestSharedServicesAreConcurrencySafe(t *testing.T) {
 				session, _, createErr := sessions.Create(
 					channel.ID, testSessionSecurity(), testCreateSessionRequest(), channelEpoch)
 				if createErr == nil {
-					_, _ = sessions.Activate(session.AuthenticationToken, channel.ID,
+					_, _ = sessions.Activate(session.AuthenticationToken, channel.ID, testSessionSecurity(),
 						ActivateSessionRequest{UserIdentityToken: NullExtensionObject()},
 						"", channelEpoch)
 					_, _ = sessions.Lookup(session.AuthenticationToken, channel.ID, channelEpoch)
@@ -208,7 +208,7 @@ func TestSessionEndReleasesDAGroupsByEveryRoute(t *testing.T) {
 		{
 			name: "an explicit CloseSession",
 			end: func(t *testing.T, sessions *SessionRegistry, session SessionInfo) {
-				if err := sessions.Close(session.AuthenticationToken, session.ChannelID, channelEpoch); err != nil {
+				if err := sessions.Close(session.AuthenticationToken, session.BoundChannel, channelEpoch); err != nil {
 					t.Fatal(err)
 				}
 			},
@@ -224,7 +224,7 @@ func TestSessionEndReleasesDAGroupsByEveryRoute(t *testing.T) {
 		{
 			name: "a lookup finding it already expired",
 			end: func(t *testing.T, sessions *SessionRegistry, session SessionInfo) {
-				_, err := sessions.Lookup(session.AuthenticationToken, session.ChannelID,
+				_, err := sessions.Lookup(session.AuthenticationToken, session.BoundChannel,
 					channelEpoch.Add(24*time.Hour))
 				if err == nil {
 					t.Fatal("an expired session was resolved")
@@ -373,5 +373,241 @@ func TestListenerReleasesDAGroupsWhenASessionTimesOut(t *testing.T) {
 
 	if got := runtime.unsubscribeCount(); got != 1 {
 		t.Fatalf("DA unsubscribes = %d, want the group released when the session timed out", got)
+	}
+}
+
+// A client that lost its connection reconnects by opening a new SecureChannel
+// and activating the same session on it. This drives that end to end, because
+// the registry-level test cannot show that the listener passes the new
+// channel's security through.
+func TestAClientReconnectsOntoANewChannel(t *testing.T) {
+	runtime := &subscribingRuntime{}
+	listener, err := NewListenerWithRuntime(testListenerConfig(), runtime, 1000, 2000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	socket, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	served := make(chan error, 1)
+	go func() { served <- listener.Serve(socket) }()
+	t.Cleanup(func() {
+		_ = listener.Close()
+		if err := <-served; err != nil {
+			t.Errorf("Serve: %v", err)
+		}
+	})
+
+	first := dialTestClient(t, socket.Addr().String())
+	first.hello()
+	openedA, err := first.openChannel(0, TokenRequestIssue, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	created, err := first.createSession(openedA.SecurityToken, 2, testClientNonce())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := first.activateSession(openedA.SecurityToken, 3,
+		created.AuthenticationToken, NullExtensionObject()); err != nil {
+		t.Fatal(err)
+	}
+
+	// The connection is lost.
+	_ = first.conn.Close()
+
+	second := dialTestClient(t, socket.Addr().String())
+	defer func() { _ = second.conn.Close() }()
+	second.hello()
+	openedB, err := second.openChannel(0, TokenRequestIssue, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if openedB.SecurityToken.SecureChannelID == openedA.SecurityToken.SecureChannelID {
+		t.Fatal("the reconnect reused the same channel, so nothing was proved")
+	}
+	if _, err := second.activateSession(openedB.SecurityToken, 2,
+		created.AuthenticationToken, NullExtensionObject()); err != nil {
+		t.Fatalf("a reconnecting client could not reactivate its session: %v", err)
+	}
+
+	// The session works on the new channel, so the client kept it rather than
+	// having to build another and leave this one holding DA groups until it
+	// timed out.
+	encoder, err := NewEncoder(second.limits)
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoder.WriteReadRequest(ReadRequest{
+		Header:             requestHeaderFor(created.AuthenticationToken, 3),
+		TimestampsToReturn: TimestampsBoth,
+		NodesToRead: []ReadValueID{{
+			NodeID: NumericNodeID(0, NodeIDServerStatusState), AttributeID: AttributeValue}},
+	})
+	body, err := encoder.Bytes()
+	if err != nil {
+		t.Fatal(err)
+	}
+	identifier, _, err := second.callService(openedB.SecurityToken, 3, body)
+	if err != nil {
+		t.Fatalf("a read on the reconnected session failed: %v", err)
+	}
+	if identifier != ReadResponseEncodingID {
+		t.Fatalf("service = %d, want the read answered", identifier)
+	}
+	if listener.sessions.Count() != 1 {
+		t.Fatalf("sessions = %d, want the one the client kept", listener.sessions.Count())
+	}
+}
+
+// Shutdown takes a context, so it has to mean something: when it returns, the
+// listener has released what it held and everything it started has finished.
+//
+// It used to close the socket and return at once, so a caller that passed a
+// generous timeout got none of that — while the HTTP and gRPC frontends, which
+// delegate to net/http and grpc-go, really do drain. The DA groups were
+// released only because the application stops the DA runtime immediately
+// afterwards, which made this listener's shutdown depend on its caller's
+// ordering rather than on itself.
+//
+// The slow Unsubscribe is what this test discriminates on: a Shutdown that does
+// not release the listener's sessions fails it.
+//
+// The waiting half is not covered behaviourally, and saying so is more useful
+// than implying otherwise: Close drops every connection, so the drain is over
+// in microseconds either way and no assertion can reliably tell a Shutdown that
+// waited from one that did not. The wait is there because the signature
+// promises it — a caller that passes a ten second context is entitled to have
+// the goroutines finished when it returns — not because a test caught it.
+func TestShutdownWaitsForWhatTheListenerStarted(t *testing.T) {
+	runtime := &subscribingRuntime{unsubscribeDelay: 250 * time.Millisecond}
+	listener, err := NewListenerWithRuntime(testListenerConfig(), runtime, 1000, 2000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	socket, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	served := make(chan error, 1)
+	go func() { served <- listener.Serve(socket) }()
+
+	rights := &opcda.DAAccessRights{Raw: 3, Read: true, Write: true}
+	if err := listener.AddressSpace().PopulateBranch(nil, []opcda.BrowseEntry{
+		{Kind: opcda.BrowseEntryItem, Name: "Int32", ItemID: itemID("Test/Int32"),
+			CanonicalType: varType(opcda.VTI4), AccessRights: rights},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	client := dialTestClient(t, socket.Addr().String())
+	client.hello()
+	opened, err := client.openChannel(0, TokenRequestIssue, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	created, err := client.createSession(opened.SecurityToken, 2, testClientNonce())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.activateSession(opened.SecurityToken, 3,
+		created.AuthenticationToken, NullExtensionObject()); err != nil {
+		t.Fatal(err)
+	}
+
+	encode := func(write func(*Encoder)) []byte {
+		t.Helper()
+		encoder, encodeErr := NewEncoder(client.limits)
+		if encodeErr != nil {
+			t.Fatal(encodeErr)
+		}
+		write(encoder)
+		body, bodyErr := encoder.Bytes()
+		if bodyErr != nil {
+			t.Fatal(bodyErr)
+		}
+		return body
+	}
+	identifier, decoder, err := client.callService(opened.SecurityToken, 4, encode(func(e *Encoder) {
+		e.WriteCreateSubscriptionRequest(CreateSubscriptionRequest{
+			Header:                      requestHeaderFor(created.AuthenticationToken, 4),
+			RequestedPublishingInterval: 250, RequestedMaxKeepAliveCount: 100,
+			PublishingEnabled: true,
+		})
+	}))
+	if err != nil || identifier != CreateSubscriptionResponseEncodingID {
+		t.Fatalf("CreateSubscription: %v", err)
+	}
+	subscription, err := decoder.ReadCreateSubscriptionResponse()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := client.callService(opened.SecurityToken, 5, encode(func(e *Encoder) {
+		e.WriteCreateMonitoredItemsRequest(CreateMonitoredItemsRequest{
+			Header:             requestHeaderFor(created.AuthenticationToken, 5),
+			SubscriptionID:     subscription.SubscriptionID,
+			TimestampsToReturn: TimestampsBoth,
+			ItemsToCreate: []MonitoredItemCreateRequest{{
+				ItemToMonitor:       ReadValueID{NodeID: ItemNodeID("Test/Int32"), AttributeID: AttributeValue},
+				MonitoringMode:      MonitoringModeReporting,
+				RequestedParameters: MonitoringParameters{ClientHandle: 9, Filter: NullExtensionObject()},
+			}},
+		})
+	})); err != nil {
+		t.Fatal(err)
+	}
+
+	// A Publish with nothing to report is held, so a goroutine is running that
+	// the read loop does not own.
+	client.sendService(opened.SecurityToken, 6, encode(func(e *Encoder) {
+		e.WritePublishRequest(PublishRequest{
+			Header: requestHeaderFor(created.AuthenticationToken, 6),
+		})
+	}))
+	time.Sleep(100 * time.Millisecond)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := listener.Shutdown(ctx); err != nil {
+		t.Fatalf("Shutdown: %v", err)
+	}
+
+	// Shutdown returned, so everything the listener started has finished and
+	// the accept loop has stopped. Both are settled before the drain signal is
+	// raised, so this is a postcondition rather than a race: with a Shutdown
+	// that only closed the socket, neither would be guaranteed here.
+	if listener.Listening() {
+		t.Fatal("Shutdown returned while the listener was still serving")
+	}
+	// The DA group the session held is released, and the slow Unsubscribe has
+	// finished rather than being left in flight.
+	if got := runtime.unsubscribeCount(); got != 1 {
+		t.Fatalf("DA unsubscribes = %d, want the group released before Shutdown returned", got)
+	}
+	if got := listener.subs.Count(); got != 0 {
+		t.Fatalf("the listener still holds %d subscriptions after shutdown", got)
+	}
+	select {
+	case err := <-served:
+		if err != nil {
+			t.Errorf("Serve: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Serve did not finish after Shutdown returned")
+	}
+}
+
+// A listener that was never served still shuts down, rather than waiting for a
+// drain signal no goroutine will ever raise.
+func TestShutdownOfAListenerThatNeverServed(t *testing.T) {
+	listener, err := NewListener(testListenerConfig(), 1000, 2000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if err := listener.Shutdown(ctx); err != nil {
+		t.Fatalf("Shutdown: %v", err)
 	}
 }

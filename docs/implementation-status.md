@@ -122,37 +122,42 @@ release-promotion gate.
 
 ## In progress
 
-- OPC UA listener concurrency and session lifetime are on
-  `fix/opcua-listener-lifecycle`. Auditing the listener after the interop work
-  found three defects, all reachable in ordinary use and none caught by the
-  suite:
+- OPC UA session rebinding and listener shutdown are on
+  `fix/opcua-session-rebinding`. Continuing the audit from coverage data found
+  three service paths the Go suite had never executed — `handleCloseChannel`,
+  `Shutdown` and `writeServiceFault` — and two defects among them:
 
-  1. **Two clients connecting at the same time faulted the process** with a Go
-     runtime `concurrent map read and map write`, which no `recover` catches.
-     The channel and session registries held mutable maps with no
-     synchronisation, behind a comment asserting a single-goroutine owner the
-     listener has never provided. Reproduced in 11 ms with 12 clients.
-  2. **A session that timed out left its DA groups open on the source.** The
-     release lived at the `CloseSession` call site rather than in session
-     termination, so the ordinary ways a client goes away — a crash, a lost
-     network — leaked groups on a real DA server permanently.
-  3. **A quiet subscription could outlive its own session.** The limits allow a
-     legitimate silence of up to 1h40m against a session timeout of at most 10
-     minutes. Holding `Publish` open, which is required, made this reachable;
-     before that the client's busy loop kept its session alive by accident.
+  1. **A session could not move to a new SecureChannel.** OPC 10000-4 5.7.3
+     says "Subsequent calls to ActivateSession may be associated with different
+     SecureChannels", and 5.7.2 has a client whose connection failed open a new
+     one and "call ActivateSession again". Every request was checked against
+     the channel that *created* the session, so that was refused with
+     `Bad_SecureChannelIdInvalid`: a session survived its connection, as the
+     clause intends, and then could never be used again — it held its DA groups
+     until it timed out while the client built a replacement. asyncua attempts
+     this on every reconnect. Root cause: one field stored two different facts.
+     They are now `CreatedOnChannel` (fixed, decides the first activation) and
+     `BoundChannel` (what requests are checked against, which ActivateSession
+     may move), with the clause's security checks applied to a move.
+  2. **`Shutdown` ignored its context and released nothing.** It closed the
+     socket and returned at once, while the HTTP and gRPC frontends really
+     drain. Root cause: the listener had no completion signal — `Serve` joined
+     its goroutines privately — and did not track the goroutines holding a
+     `Publish` at all. It now tracks everything it starts, raises a signal when
+     `Serve` has joined them, and waits on that or the caller's context. It also
+     ends its sessions, so releasing the DA groups no longer depends on the
+     application stopping the DA runtime immediately afterwards.
 
-  The fixes are structural rather than local. The listener now states one
-  concurrency rule and the registries follow it, handing out `ChannelInfo` and
-  `SessionInfo` value snapshots so no caller can hold or mutate state a service
-  owns. Session termination is one operation every route goes through, which
-  releases subscriptions through a hook the listener registers once and wakes
-  outstanding requests. A request in flight holds its session open, which is
-  what OPC 10000-4 5.7.2 says when it terminates a session whose client "fails
-  to issue a Service request".
+  Checked and sound in the same pass: the DA runtime's concurrency design
+  (command channel to a single STA thread), the gRPC and HTTP frontends,
+  `CloseSecureChannel` (including that sending no response matches OPC 10000-6
+  7.1.4), write deadlines, continuation-point bounds, and the per-connection
+  Publish bound.
 
-  Each fix has a test that fails against the original code, and
-  `internal/opcua/concurrency_test.go` drives concurrent clients against a live
-  listener while expiry runs — the test whose absence let all three through.
+  The session-rebinding fixes have tests verified by reverting them. The
+  shutdown release is covered the same way; the waiting half is not covered
+  behaviourally, because `Close` drops every connection and the drain is over in
+  microseconds either way — the wait is there because the signature promises it.
 
 - The local KVM/libvirt destructive-validation gate is paused. The dedicated
   `opcda-destructive-review` VM and all of its dedicated host resources were
