@@ -537,10 +537,15 @@ type SessionSecurity struct {
 //
 // One deliberate deviation: an absent nonce is accepted when the SecurityMode
 // is None *and* this endpoint publishes only the anonymous user token policy.
-// Read literally the rule is unconditional, and the OPC Foundation's own .NET
-// stack sends a full nonce even unsecured — but open62541, a reference
-// implementation, sends none at all under None, so enforcing the rule literally
-// makes this server unusable with it.
+//
+// Read literally the rule is unconditional, but no reference server enforces it
+// that way. The OPC Foundation's own StandardServer skips the check entirely
+// for an empty nonce at every security mode, enforces a configurable minimum
+// and no maximum, and then discards the nonce with the comment "ignore nonce if
+// security policy set to none". open62541's server skips the 32 to 128 check
+// whenever the policy is None. Enforcing the text literally made this adapter
+// stricter than the specification's own reference implementation and unusable
+// with open62541, whose client sends no nonce on an unsecured channel.
 //
 // Both conditions are needed, and the second is easy to miss. 5.7.2 gives the
 // ClientNonce exactly one job: the Server proves possession of its
@@ -553,8 +558,10 @@ type SessionSecurity struct {
 // identity — ActivateSession refuses every other token — does no signature
 // exist for the nonce to weaken.
 //
-// A nonce that is present is always checked, and where the nonce does real
-// work the rule is enforced exactly as written.
+// A nonce that is present is always checked against the full 32 to 128 range,
+// and where the nonce does real work the rule is enforced exactly as written.
+// Both are stricter than the Foundation's server, which enforces no maximum and
+// accepts an absent nonce unconditionally.
 func checkClientNonce(nonce []byte, security SessionSecurity) error {
 	if len(nonce) == 0 && security.Mode == SecurityModeNone && security.AnonymousIdentityOnly {
 		return nil

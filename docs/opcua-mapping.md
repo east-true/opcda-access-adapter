@@ -502,10 +502,14 @@ statement is conditioned on the security mode.
 
 **An absent nonce is accepted when the mode is `None` *and* the endpoint
 publishes only the anonymous user token policy.** This is the one place the
-adapter knowingly departs from a literal reading. open62541 sends no nonce at
-all on an unsecured channel — deliberately, per a comment in its own source —
-so enforcing the clause literally makes this server unusable with a reference
-implementation.
+adapter knowingly departs from a literal reading of the clause — though not
+from what real servers do. open62541 sends no nonce at all on an unsecured
+channel, and neither reference server enforces the clause as written: the OPC
+Foundation's own `StandardServer` skips the check entirely for an empty nonce
+at every security mode, enforces no maximum, and then discards the nonce with
+the comment *"ignore nonce if security policy set to none"*. Enforcing the text
+literally made this adapter stricter than the specification's own reference
+implementation, and unusable with open62541.
 
 **Both conditions are needed, and the second is easy to miss.** 5.7.2 gives the
 ClientNonce one job: the server proves possession of its
@@ -523,7 +527,8 @@ policy and `ActivateSession` refuses every other token, so no
 that fact rather than on the security mode alone, so publishing any
 non-anonymous policy restores the rule automatically instead of silently
 inheriting a justification that no longer holds. A nonce that is present is
-always checked. The
+always checked against the full 32–128 range, and every other security mode
+enforces the rule as written — both stricter than the Foundation's server. The
 [interop validation doc](validation/ua-client-interop.md) records the deviation
 so it can be reversed by decision rather than found by accident.
 
