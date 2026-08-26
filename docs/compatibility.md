@@ -104,6 +104,30 @@ uses this project's own codec, so this is evidence that the server is internally
 consistent and reaches the DA source, not that a real UA client interoperates
 with it. No conformance or interoperability claim is made.
 
+### OPC UA subscription result
+
+PR #53 workflow run
+[`32928909002`](https://github.com/east-true/opcda-access-adapter/actions/runs/32928909002)
+tested adapter head `e989553efb9d9ab8b7c3e537b54804b314c024d1` on both native x86/386
+and x64/amd64. On top of the earlier UA result, each architecture passed:
+
+- a Subscription with a requested 250 ms publishing interval revised to 250 ms
+  and a keep-alive count of 3, whose revised lifetime count is at least three
+  times the keep-alive count;
+- a MonitoredItem with a revised queue size of **1**, matching the DA core's
+  per-item coalescing;
+- the server's initial snapshot delivered through Publish;
+- **two change-driven notifications**, each induced by writing a distinct value
+  through the UA Write service and required to arrive carrying the client handle
+  the probe registered;
+- the subscription deleted cleanly.
+
+Write is enabled for the OPC UA scenario so those changes can be induced; the
+fixture's `Test` items are static and would otherwise show only one snapshot.
+The write-disabled default stays covered by the HTTP and gRPC scenarios.
+
+Still no third-party OPC UA client: the probe uses this project's own codec.
+
 ### Phase 7 gRPC Subscribe streaming result
 
 PR #34 workflow run
