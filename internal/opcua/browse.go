@@ -1,7 +1,9 @@
 package opcua
 
 import (
+	"context"
 	"crypto/rand"
+	"errors"
 	"fmt"
 	"sync"
 	"time"
@@ -455,6 +457,10 @@ type continuation struct {
 type BrowseService struct {
 	space  *AddressSpace
 	limits BrowseLimits
+	// populator fills a branch from the DA source before it is browsed. It is
+	// nil when no source is attached, in which case only the standard nodes
+	// exist.
+	populator *Populator
 
 	mu     sync.Mutex
 	points map[string]*continuation
@@ -467,10 +473,14 @@ func NewBrowseService(space *AddressSpace, limits BrowseLimits) (*BrowseService,
 	return &BrowseService{space: space, limits: limits, points: make(map[string]*continuation)}, nil
 }
 
+// AttachPopulator makes the service fill a branch from the DA source before
+// browsing it.
+func (s *BrowseService) AttachPopulator(populator *Populator) { s.populator = populator }
+
 // Browse answers one request. Table 34: the size and order of the results match
 // the size and order of nodesToBrowse, so a per-node failure occupies its slot
 // rather than shortening the list.
-func (s *BrowseService) Browse(request BrowseRequest, now time.Time) (BrowseResponse, error) {
+func (s *BrowseService) Browse(ctx context.Context, request BrowseRequest, now time.Time) (BrowseResponse, error) {
 	if len(request.NodesToBrowse) == 0 {
 		return BrowseResponse{}, uacpError(StatusBadNothingToDo, "the browse request named no nodes")
 	}
@@ -494,6 +504,14 @@ func (s *BrowseService) Browse(request BrowseRequest, now time.Time) (BrowseResp
 
 	results := make([]BrowseResult, 0, len(request.NodesToBrowse))
 	for _, description := range request.NodesToBrowse {
+		// The branch is filled from the source before it is read, so a client
+		// sees the source's current contents rather than a stale snapshot. A
+		// population failure is reported for that node alone; the other nodes
+		// in the same request are unaffected.
+		if err := s.ensurePopulated(ctx, description.NodeID, now); err != nil {
+			results = append(results, BrowseResult{StatusCode: statusForPopulationError(err)})
+			continue
+		}
 		results = append(results, s.browseNode(description, maximum, now))
 	}
 	return BrowseResponse{
@@ -504,6 +522,32 @@ func (s *BrowseService) Browse(request BrowseRequest, now time.Time) (BrowseResp
 		Results:     results,
 		Diagnostics: []DiagnosticInfo{},
 	}, nil
+}
+
+// ensurePopulated fills the branch a node stands for. Only the source folder
+// and branch nodes have a DA browse path; anything else needs no population.
+func (s *BrowseService) ensurePopulated(ctx context.Context, id NodeID, now time.Time) error {
+	if s.populator == nil {
+		return nil
+	}
+	if id.Equal(s.space.SourceFolderID()) {
+		return s.populator.EnsureBranch(ctx, nil, now)
+	}
+	path, ok := PathForNode(id)
+	if !ok {
+		return nil
+	}
+	return s.populator.EnsureBranch(ctx, path, now)
+}
+
+// statusForPopulationError keeps a CodecError's own status and maps a DA
+// failure through the same rules the data services use.
+func statusForPopulationError(err error) StatusCode {
+	var codecErr *CodecError
+	if errors.As(err, &codecErr) {
+		return codecErr.Status
+	}
+	return statusForRuntimeError(err)
 }
 
 func (s *BrowseService) browseNode(description BrowseDescription, maximum int, now time.Time) BrowseResult {

@@ -1110,6 +1110,94 @@ func TestListenerReportsNoDataSource(t *testing.T) {
 	}
 }
 
+// With a DA runtime attached the listener fills the address space from the
+// source on demand, so a client browses live contents without the application
+// populating anything.
+func TestListenerPopulatesFromTheSourceOnDemand(t *testing.T) {
+	runtime := newBrowsingRuntime()
+	runtime.setEntries(nil, []opcda.BrowseEntry{
+		{Kind: opcda.BrowseEntryBranch, Name: "Test"},
+	})
+	runtime.setEntries([]string{"Test"}, []opcda.BrowseEntry{
+		{Kind: opcda.BrowseEntryItem, Name: "Float", ItemID: itemID("Test/Float"),
+			CanonicalType: varType(opcda.VTR4),
+			AccessRights:  &opcda.DAAccessRights{Raw: 1, Read: true}},
+	})
+
+	listener, err := NewListenerWithRuntime(testListenerConfig(), runtime, 1000, 2000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	socket, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	served := make(chan error, 1)
+	go func() { served <- listener.Serve(socket) }()
+	t.Cleanup(func() {
+		_ = listener.Close()
+		if err := <-served; err != nil {
+			t.Errorf("Serve: %v", err)
+		}
+	})
+
+	client := dialTestClient(t, socket.Addr().String())
+	client.hello()
+	opened, err := client.openChannel(0, TokenRequestIssue, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	created, err := client.createSession(opened.SecurityToken, 2, testClientNonce())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.activateSession(opened.SecurityToken, 3, created.AuthenticationToken, NullExtensionObject()); err != nil {
+		t.Fatal(err)
+	}
+
+	// The source folder was never populated by the test; browsing it triggers
+	// the DA Browse.
+	_, decoder, err := client.browse(
+		opened.SecurityToken, 4, created.AuthenticationToken, listener.AddressSpace().SourceFolderID())
+	if err != nil {
+		t.Fatal(err)
+	}
+	response, err := decoder.ReadBrowseResponse()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(response.Results[0].References) != 1 {
+		t.Fatalf("root references = %d", len(response.Results[0].References))
+	}
+	branch := response.Results[0].References[0]
+	if branch.BrowseName.Name != "Test" || branch.NodeClass != NodeClassObject {
+		t.Fatalf("branch = %+v", branch)
+	}
+
+	// Browsing the branch drives a second, deeper DA Browse.
+	_, decoder, err = client.browse(
+		opened.SecurityToken, 5, created.AuthenticationToken, branch.NodeID.NodeID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	response, err = decoder.ReadBrowseResponse()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(response.Results[0].References) != 1 {
+		t.Fatalf("branch references = %d", len(response.Results[0].References))
+	}
+	item := response.Results[0].References[0]
+	if item.NodeID.NodeID.StringID != "item:Test/Float" {
+		t.Fatalf("item node id = %q", item.NodeID.NodeID.StringID)
+	}
+
+	paths := runtime.browsedPaths()
+	if len(paths) != 2 || len(paths[0]) != 0 || paths[1][0] != "Test" {
+		t.Fatalf("the source was browsed as %v", paths)
+	}
+}
+
 func TestListenerConfigValidation(t *testing.T) {
 	if err := testListenerConfig().ValidateForConfiguration(); err != nil {
 		t.Fatalf("test config rejected: %v", err)

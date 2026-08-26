@@ -631,6 +631,46 @@ A listener built without a DA runtime answers `Read` and `Write` with
 `Bad_NotConnected` rather than returning empty values, so a client is told the
 source is unavailable instead of being handed something that looks like data.
 
+## Filling the address space
+
+`internal/opcua/population.go` fills the address space from DA Browse **on
+demand**: a branch is browsed the first time a client browses its node, not when
+the server starts.
+
+That choice follows from what Annex A says about wrapper strategies and from how
+DA servers behave. A DA address space can be large and can change while the
+server runs, so browsing it all at startup would delay startup, hold a snapshot
+that drifts, and do work for branches no client ever visits. Browsing on demand
+also keeps every DA call on the request path, where its failure can be reported
+to the client that caused it.
+
+### Bounds and freshness
+
+`PopulationLimits` caps the total node count and the depth a client can drive
+the adapter into the source, so neither a very large hierarchy nor a persistent
+client can exhaust memory. **The node budget is checked before entries are
+added**, so a large branch cannot push the space past its bound and then be
+trimmed.
+
+A branch is reused for a configured refresh interval and then browsed again,
+because a DA address space can change while the server runs. A **failed browse
+is not recorded as done**, so the next caller retries rather than treating an
+empty branch as authoritative.
+
+Concurrent clients asking for the same branch **share one DA call**. A DA Browse
+is serialized on the runtime's owning thread, so several identical calls would
+queue behind each other for no benefit.
+
+A population failure is reported for **that node alone**; other nodes in the
+same Browse request are unaffected, and a standard node needs no population at
+all.
+
+### After a reconnect
+
+`Listener.InvalidateAddressSpace` sends the next browse of every branch back to
+the source. The application calls it after a reconnect, because a new connection
+generation may expose a different address space.
+
 ## What is not decided here
 
 Certificate handling and the signed and encrypted security policies, address
