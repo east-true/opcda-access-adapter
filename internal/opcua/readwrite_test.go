@@ -294,7 +294,7 @@ func TestReadResultsKeepRequestOrder(t *testing.T) {
 	}}
 
 	response, err := service.Read(context.Background(), readRequestFor(
-		readValue(StringNodeID(AdapterNamespaceIndex, "item:missing")),
+		readValue(StringNodeID(AdapterNamespaceIndex, "not-an-item")),
 		readValue(ItemNodeID("Test/Int32")),
 		readValue(ItemNodeID("Test/Closed")),
 	), time.Now().UTC())
@@ -627,8 +627,11 @@ func TestWriteRefusesUnwritableTargets(t *testing.T) {
 			NodeID: ItemNodeID("Test/String"), AttributeID: AttributeValue,
 			Value: DataValue{Value: Variant{Type: BuiltInString, Value: "x"}},
 		}, StatusBadNotWritable},
-		{"unknown node", WriteValue{
-			NodeID: StringNodeID(AdapterNamespaceIndex, "item:missing"), AttributeID: AttributeValue,
+		// A node identifier that names no DA item at all is unknown; one that
+		// names an item reaches the source instead, which is the authority on
+		// whether that item exists.
+		{"a node identifier that is not an item", WriteValue{
+			NodeID: StringNodeID(AdapterNamespaceIndex, "not-an-item"), AttributeID: AttributeValue,
 			Value: DataValue{Value: Variant{Type: BuiltInInt32, Value: int32(1)}},
 		}, StatusBadNodeIdUnknown},
 		{"a folder", WriteValue{
@@ -886,5 +889,90 @@ func TestWriteAsksTheSourceWhenTheTypeIsUnknown(t *testing.T) {
 	}
 	if response.Results[0] != StatusBadTypeMismatch {
 		t.Fatalf("a known type did not reject the wrong width: %s", response.Results[0].Hex())
+	}
+}
+
+// The DA 2.05a Browse interface is optional. A client of a source that does not
+// implement it knows its ItemIDs from elsewhere, and a node identifier carries
+// the ItemID verbatim, so the item can be read without any browsing.
+func TestReadAnItemThatWasNeverBrowsed(t *testing.T) {
+	runtime := &stubRuntime{}
+	space := testAddressSpace(t)
+	service, err := NewDataAccessService(space, runtime, DefaultDataAccessLimits())
+	if err != nil {
+		t.Fatal(err)
+	}
+	actual := opcda.VTI4
+	runtime.readResults = []opcda.ReadResult{{
+		ItemID: "Vendor/Tag", VarType: &actual, HRESULT: opcda.SOK, HRESULTPresent: true,
+		Value: &opcda.DAValue{ItemID: "Vendor/Tag", Value: int32(9), QualityRaw: QualityGood},
+	}}
+
+	response, err := service.Read(context.Background(),
+		readRequestFor(readValue(ItemNodeID("Vendor/Tag"))), time.Now().UTC())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if response.Results[0].Status != StatusGood {
+		t.Fatalf("status = %s", response.Results[0].Status.Hex())
+	}
+	// The exact ItemID reached the source unchanged.
+	if len(runtime.readRequest.Items) != 1 || runtime.readRequest.Items[0] != "Vendor/Tag" {
+		t.Fatalf("source items = %v", runtime.readRequest.Items)
+	}
+
+	// The source stays the authority on whether the item exists: its
+	// OPC_E_UNKNOWNITEMID maps to exactly the Bad_NodeIdUnknown a client
+	// expects for a node that is not there.
+	runtime.readResults = []opcda.ReadResult{{
+		ItemID: "Vendor/Absent", HRESULT: OPCEUnknownItemID, HRESULTPresent: true,
+	}}
+	response, err = service.Read(context.Background(),
+		readRequestFor(readValue(ItemNodeID("Vendor/Absent"))), time.Now().UTC())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if response.Results[0].Status != StatusBadNodeIdUnknown {
+		t.Fatalf("status = %s, want the source's answer", response.Results[0].Status.Hex())
+	}
+}
+
+// Addressing items directly must not let a client grow the address space
+// without limit.
+func TestDirectlyAddressedItemsAreBounded(t *testing.T) {
+	runtime := &stubRuntime{}
+	space := testAddressSpace(t)
+	limits := DefaultDataAccessLimits()
+	// The standard nodes already occupy the space, so nothing new fits.
+	limits.MaxNodes = space.NodeCount()
+	service, err := NewDataAccessService(space, runtime, limits)
+	if err != nil {
+		t.Fatal(err)
+	}
+	response, err := service.Read(context.Background(),
+		readRequestFor(readValue(ItemNodeID("Vendor/Tag"))), time.Now().UTC())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if response.Results[0].Status != StatusBadNodeIdUnknown {
+		t.Fatalf("status = %s", response.Results[0].Status.Hex())
+	}
+	if len(runtime.readRequest.Items) != 0 {
+		t.Fatal("a node beyond the budget still reached the source")
+	}
+}
+
+// A source that does not implement Browse is reporting a capability, not
+// failing, so it is not an internal error.
+func TestOptionalCapabilitiesMapToServiceUnsupported(t *testing.T) {
+	cases := map[opcda.ErrorCode]StatusCode{
+		opcda.CodeBrowseUnsupported:    StatusBadServiceUnsupported,
+		opcda.CodeSubscribeUnsupported: StatusBadServiceUnsupported,
+	}
+	for code, want := range cases {
+		got := statusForRuntimeError(opcda.NewAdapterError(code, "optional interface"))
+		if got != want {
+			t.Fatalf("%s mapped to %s, want %s", code, got.Hex(), want.Hex())
+		}
 	}
 }

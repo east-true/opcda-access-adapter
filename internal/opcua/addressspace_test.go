@@ -410,3 +410,63 @@ func TestAddressSpaceConfigValidation(t *testing.T) {
 		})
 	}
 }
+
+// A node identifier carries the exact DA ItemID, so it is self-describing.
+func TestItemIDForNode(t *testing.T) {
+	for _, value := range []string{"Test/Float", "MiXeD.CaSe", "with space", "tab\there"} {
+		recovered, ok := ItemIDForNode(ItemNodeID(opcda.DAItemID(value)))
+		if !ok {
+			t.Fatalf("%q was not recognised as an item", value)
+		}
+		if string(recovered) != value {
+			t.Fatalf("recovered %q, want %q", recovered, value)
+		}
+	}
+	// A branch, a standard node, and a bare identifier name no item.
+	for _, id := range []NodeID{
+		BranchNodeID([]string{"Test"}),
+		NumericNodeID(0, NodeIDObjectsFolder),
+		StringNodeID(AdapterNamespaceIndex, "not-an-item"),
+		StringNodeID(AdapterNamespaceIndex, "item:"),
+		StringNodeID(3, "item:Test/Float"),
+	} {
+		if _, ok := ItemIDForNode(id); ok {
+			t.Fatalf("%s was read as an item", id)
+		}
+	}
+}
+
+// Resolving an item that was never browsed creates a node that knows neither
+// its type nor its rights, so the source decides both.
+func TestResolveVariableCreatesAnUnbrowsedNode(t *testing.T) {
+	space := testAddressSpace(t)
+	node, ok := space.ResolveVariable(ItemNodeID("Vendor/Tag"), 1000)
+	if !ok {
+		t.Fatal("an item identifier did not resolve")
+	}
+	if node.Class != NodeClassVariable || string(node.ItemID) != "Vendor/Tag" {
+		t.Fatalf("node = %+v", node)
+	}
+	if node.DataTypeKnown || node.AccessRightsKnown {
+		t.Fatal("an unbrowsed node claimed to know its type or rights")
+	}
+	// It is not linked into the hierarchy, because it was never browsed.
+	source, _ := space.Node(space.SourceFolderID())
+	for _, reference := range source.References {
+		if reference.IsForward && reference.TargetID.NodeID.Equal(node.ID) {
+			t.Fatal("an unbrowsed node appeared as a child of the source folder")
+		}
+	}
+	// Resolving again returns the same node rather than a second one.
+	before := space.NodeCount()
+	if _, ok := space.ResolveVariable(ItemNodeID("Vendor/Tag"), 1000); !ok {
+		t.Fatal("the second resolve failed")
+	}
+	if space.NodeCount() != before {
+		t.Fatalf("resolving twice created %d nodes", space.NodeCount()-before)
+	}
+	// A branch identifier is not a variable.
+	if _, ok := space.ResolveVariable(BranchNodeID([]string{"Test"}), 1000); ok {
+		t.Fatal("a branch identifier resolved as a variable")
+	}
+}

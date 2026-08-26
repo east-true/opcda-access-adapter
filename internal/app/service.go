@@ -291,6 +291,12 @@ func newOPCUAListener(config Config, runtime opcda.Runtime) (*opcua.Listener, er
 	listenerConfig.DataAccess.MaxNodesPerRead = config.Runtime.Limits.MaxReadItems
 	listenerConfig.DataAccess.MaxNodesPerWrite = config.Runtime.Limits.MaxWriteItems
 	listenerConfig.DataAccess.RequestTimeout = config.RequestDeadline
+	// The address space bound is shared, so browsing and addressing items
+	// directly draw on one budget rather than two.
+	listenerConfig.DataAccess.MaxNodes = listenerConfig.Population.MaxNodes
+	listenerConfig.Subscriptions.MaxNodes = listenerConfig.Population.MaxNodes
+	listenerConfig.Subscriptions.MaxMonitoredItems = config.Runtime.Limits.MaxSubscriptionItems
+	listenerConfig.Subscriptions.MaxSubscriptions = config.Runtime.Limits.MaxSubscriptions
 	listenerConfig.Browse.MaxReferencesPerNode = config.Runtime.Limits.MaxBrowseEntries
 	listenerConfig.Population.MaxDepth = config.Runtime.Limits.MaxBrowseDepth
 

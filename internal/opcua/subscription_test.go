@@ -61,6 +61,9 @@ type subscribingRuntime struct {
 	unsubscribed  []opcda.SubscriptionID
 	err           error
 	nextID        int
+	// revisedRate is what the source says it settled on, which a vendor may
+	// place far from the requested rate.
+	revisedRate time.Duration
 }
 
 func (r *subscribingRuntime) Subscribe(_ context.Context, request opcda.SubscribeRequest) (opcda.Subscription, error) {
@@ -72,6 +75,9 @@ func (r *subscribingRuntime) Subscribe(_ context.Context, request opcda.Subscrib
 	}
 	r.nextID++
 	created := newFakeDASubscription(opcda.SubscriptionID(string(rune('a' + r.nextID))))
+	if r.revisedRate > 0 {
+		created.info.RevisedUpdateRate = r.revisedRate
+	}
 	r.subscriptions = append(r.subscriptions, created)
 	return created, nil
 }
@@ -513,9 +519,11 @@ func TestMonitoredItemsRefuseWhatTheyCannotMonitor(t *testing.T) {
 		request MonitoredItemCreateRequest
 		want    StatusCode
 	}{
-		{"unknown node", MonitoredItemCreateRequest{
+		// A node identifier that names no DA item at all is unknown; one that
+		// names an item is monitored, and the source decides whether it exists.
+		{"a node identifier that is not an item", MonitoredItemCreateRequest{
 			ItemToMonitor: ReadValueID{
-				NodeID: StringNodeID(AdapterNamespaceIndex, "item:missing"), AttributeID: AttributeValue},
+				NodeID: StringNodeID(AdapterNamespaceIndex, "not-an-item"), AttributeID: AttributeValue},
 			RequestedParameters: MonitoringParameters{ClientHandle: 10, Filter: NullExtensionObject()},
 		}, StatusBadNodeIdUnknown},
 		{"a folder", MonitoredItemCreateRequest{
@@ -915,5 +923,58 @@ func TestSubscriptionLimitsValidation(t *testing.T) {
 				t.Fatal("invalid limits were accepted")
 			}
 		})
+	}
+}
+
+// A DA server need not implement Browse, so a client that knows its ItemIDs can
+// monitor them without the address space having been populated.
+func TestMonitorAnItemThatWasNeverBrowsed(t *testing.T) {
+	runtime := &subscribingRuntime{}
+	space := testAddressSpace(t)
+	service, err := NewSubscriptionService(space, runtime, DefaultSubscriptionLimits(), 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := createSubscription(t, service)
+
+	// Nothing was browsed; the identifier itself names the item.
+	result := monitorItem(t, service, id, ItemNodeID("Vendor/Tag"), 3)
+	if result.StatusCode != StatusGood {
+		t.Fatalf("status = %s, want the item to be monitored", result.StatusCode.Hex())
+	}
+	requests := runtime.subscribeRequests()
+	if len(requests) != 1 || requests[0].Items[0] != "Vendor/Tag" {
+		t.Fatalf("the exact ItemID did not reach the source: %v", requests)
+	}
+
+	runtime.latest().push(daNotification("Vendor/Tag", 5, QualityGood))
+	response, err := service.Publish(context.Background(), testSession, PublishRequest{
+		Header: RequestHeader{AdditionalHeader: NullExtensionObject()},
+	}, channelEpoch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(response.NotificationMessage.Notifications) != 1 {
+		t.Fatal("the unbrowsed item produced no notification")
+	}
+	if response.NotificationMessage.Notifications[0].ClientHandle != 3 {
+		t.Fatalf("client handle = %d", response.NotificationMessage.Notifications[0].ClientHandle)
+	}
+}
+
+// A vendor may revise the update rate far from what was requested, and the
+// client is told what the source settled on rather than what was asked for.
+func TestRevisedSamplingIntervalComesFromTheSource(t *testing.T) {
+	runtime := &subscribingRuntime{revisedRate: 2 * time.Second}
+	service, _ := testSubscriptionService(t, runtime)
+	id := createSubscription(t, service)
+
+	result := monitorItem(t, service, id, ItemNodeID("Test/Int32"), 1)
+	if result.StatusCode != StatusGood {
+		t.Fatalf("status = %s", result.StatusCode.Hex())
+	}
+	if result.RevisedSamplingInterval != 2000 {
+		t.Fatalf("revised sampling = %vms, want the source's 2000ms",
+			result.RevisedSamplingInterval)
 	}
 }

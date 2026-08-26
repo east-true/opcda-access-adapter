@@ -555,6 +555,32 @@ Refusing locally in either case would be the adapter enforcing a restriction it
 invented and cannot verify, and would make **every browsed item permanently
 unreadable and unwritable**.
 
+### A source need not implement Browse
+
+`IOPCBrowseServerAddressSpace` is **optional in DA 2.05a**. Against a source
+that does not implement it the address space can never be populated, which would
+leave the UA server with nothing but its standard nodes.
+
+A node identifier is self-describing: it carries the exact DA ItemID verbatim.
+So an item can be **read, written, and monitored without having been browsed** —
+a client of such a source knows its ItemIDs from elsewhere, and the adapter has
+everything it needs to ask the source about them.
+
+The source stays the authority on whether the item exists. Its
+`OPC_E_UNKNOWNITEMID` maps through Table A.4 to exactly the `Bad_NodeIdUnknown`
+a client expects for a node that is not there, so accepting the identifier costs
+no correctness.
+
+A node created this way is **not linked into the hierarchy** — it was never
+browsed, so Browse must not report it as a child of anything — and it draws on
+the same node budget browsing does, so addressing items directly cannot grow the
+space without limit. An identifier that names no DA item at all is still
+`Bad_NodeIdUnknown`.
+
+A source that does not implement Browse, or that has no `IOPCDataCallback`
+connection point, reports `Bad_ServiceUnsupported`: both interfaces are optional,
+so a source lacking one is stating a capability rather than failing.
+
 ### The address space learns
 
 A Read and a subscription notification both come back through `AddItems`, so
