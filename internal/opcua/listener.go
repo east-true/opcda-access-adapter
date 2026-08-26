@@ -744,8 +744,10 @@ func (l *Listener) dispatchService(channelID uint32, identifier uint32, decoder 
 		if channelErr != nil {
 			return nil, request.Header.RequestHandle, channelErr, nil
 		}
-		session, serverNonce, createErr := l.sessions.Create(
-			channelID, channel.SecurityMode(), request, now)
+		session, serverNonce, createErr := l.sessions.Create(channelID, SessionSecurity{
+			Mode:                  channel.SecurityMode(),
+			AnonymousIdentityOnly: l.endpoints.AnonymousIdentityOnly(),
+		}, request, now)
 		if createErr != nil {
 			return nil, request.Header.RequestHandle, createErr, nil
 		}

@@ -518,25 +518,45 @@ func randomBytes(length int) ([]byte, error) {
 	return value, nil
 }
 
+// SessionSecurity is what the nonce rule depends on: the channel's security
+// mode, and whether this endpoint could ever ask a client to sign anything.
+type SessionSecurity struct {
+	Mode SecurityMode
+	// AnonymousIdentityOnly reports that every UserTokenPolicy this endpoint
+	// publishes is Anonymous, so no UserTokenSignature can ever be computed
+	// against it. It is a separate fact from the security mode: OPC 10000-4
+	// Table 101 gives a UserTokenSignature for SecurityMode None whose inputs
+	// include the ClientNonce, so an unsecured channel alone does not make the
+	// nonce inert.
+	AnonymousIdentityOnly bool
+}
+
 // checkClientNonce applies OPC 10000-4 5.7.2's rule that the server shall check
 // the client nonce length, returning Bad_NonceInvalid below 32 or above 128
 // bytes.
 //
-// One deliberate deviation: with SecurityMode None an absent nonce is accepted.
+// One deliberate deviation: an absent nonce is accepted when the SecurityMode
+// is None *and* this endpoint publishes only the anonymous user token policy.
 // Read literally the rule is unconditional, and the OPC Foundation's own .NET
 // stack sends a full nonce even unsecured — but open62541, a reference
 // implementation, sends none at all under None, so enforcing the rule literally
-// makes this server unusable with it. The clause's own stated purpose for the
-// field is to "prove possession of its ApplicationInstanceCertificate in the
-// response", and 5.7.2 also says a server shall ignore that certificate when
-// the securityPolicyUri is None. Under None there is no signature, so there is
-// nothing to prove and the nonce is inert: accepting its absence costs no
-// security.
+// makes this server unusable with it.
 //
-// A nonce that is present is still checked, and under any other security mode
-// the rule is enforced exactly as written — that is where the nonce does work.
-func checkClientNonce(nonce []byte, mode SecurityMode) error {
-	if len(nonce) == 0 && mode == SecurityModeNone {
+// Both conditions are needed, and the second is easy to miss. 5.7.2 gives the
+// ClientNonce exactly one job: the Server proves possession of its
+// ApplicationInstanceCertificate in the response, and the same clause says the
+// Server ignores certificates entirely when the securityPolicyUri is None. But
+// Table 101's last row defines a UserTokenSignature *for SecurityMode None*
+// over "ServerNonce | HASH(ServerCertificate) | ClientNonce", so a client
+// authenticating with a certificate signs the nonce even on an unsecured
+// channel. Only because this endpoint accepts nothing but an anonymous
+// identity — ActivateSession refuses every other token — does no signature
+// exist for the nonce to weaken.
+//
+// A nonce that is present is always checked, and where the nonce does real
+// work the rule is enforced exactly as written.
+func checkClientNonce(nonce []byte, security SessionSecurity) error {
+	if len(nonce) == 0 && security.Mode == SecurityModeNone && security.AnonymousIdentityOnly {
 		return nil
 	}
 	if len(nonce) < MinNonceBytes || len(nonce) > MaxNonceBytes {
@@ -548,8 +568,8 @@ func checkClientNonce(nonce []byte, mode SecurityMode) error {
 }
 
 // Create issues a session bound to the given SecureChannel.
-func (r *SessionRegistry) Create(channelID uint32, mode SecurityMode, request CreateSessionRequest, now time.Time) (*Session, []byte, error) {
-	if err := checkClientNonce(request.ClientNonce, mode); err != nil {
+func (r *SessionRegistry) Create(channelID uint32, security SessionSecurity, request CreateSessionRequest, now time.Time) (*Session, []byte, error) {
+	if err := checkClientNonce(request.ClientNonce, security); err != nil {
 		return nil, nil, err
 	}
 	if len(r.sessions) >= r.limits.MaxSessions {
