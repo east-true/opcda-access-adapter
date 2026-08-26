@@ -1315,6 +1315,9 @@ func (s *SubscriptionService) collect(ctx context.Context, subscription *uaSubsc
 		if item.mode != MonitoringModeReporting {
 			continue
 		}
+		// A notification carries the same DA metadata an AddItems result does,
+		// so it teaches the address space what Browse could not.
+		s.space.LearnFromRead(item.nodeID, value.CanonicalType, value.AccessRights)
 		subscription.pending = append(subscription.pending, MonitoredItemNotification{
 			ClientHandle: item.clientHandle,
 			Value:        dataValueForSubscription(value, item.timestamps, now),

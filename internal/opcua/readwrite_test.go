@@ -779,3 +779,112 @@ func TestDataAccessLimitsValidation(t *testing.T) {
 		t.Fatal("a service was built with no runtime")
 	}
 }
+
+// OPC DA reports an item's canonical type and access rights in the AddItems
+// result, which Browse never produces, so a browsed node starts knowing
+// neither. A Read is the source telling us, and the node records it.
+func TestReadTeachesTheAddressSpace(t *testing.T) {
+	runtime := &stubRuntime{}
+	space := testAddressSpace(t)
+	// A browsed item, exactly as DA Browse delivers one: a name and an ItemID
+	// and nothing else.
+	if err := space.PopulateBranch(nil, []opcda.BrowseEntry{
+		{Kind: opcda.BrowseEntryItem, Name: "Float", ItemID: itemID("Test/Float")},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	service, err := NewDataAccessService(space, runtime, DefaultDataAccessLimits())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	node, _ := space.Node(ItemNodeID("Test/Float"))
+	if node.DataTypeKnown || node.AccessRightsKnown {
+		t.Fatal("a browsed item claimed to know its type or rights")
+	}
+	if node.DataType.Numeric != NodeIDBaseDataType {
+		t.Fatalf("an unknown type reported %s rather than the abstract base type", node.DataType)
+	}
+
+	canonical := opcda.VTR4
+	actual := opcda.VTR4
+	runtime.readResults = []opcda.ReadResult{{
+		ItemID: "Test/Float", VarType: &actual, CanonicalType: &canonical,
+		AccessRights:   &opcda.DAAccessRights{Raw: 3, Read: true, Write: true},
+		HRESULT:        opcda.SOK,
+		HRESULTPresent: true,
+		Value: &opcda.DAValue{
+			ItemID: "Test/Float", VarType: actual, Value: float32(1.5), QualityRaw: QualityGood,
+		},
+	}}
+	if _, err := service.Read(context.Background(),
+		readRequestFor(readValue(ItemNodeID("Test/Float"))), time.Now().UTC()); err != nil {
+		t.Fatal(err)
+	}
+
+	node, _ = space.Node(ItemNodeID("Test/Float"))
+	if !node.DataTypeKnown || node.DataType.Numeric != NodeIDFloat {
+		t.Fatalf("the node did not learn its type: known=%t type=%s", node.DataTypeKnown, node.DataType)
+	}
+	if !node.AccessRightsKnown || node.AccessLevel&AccessLevelCurrentWrite == 0 {
+		t.Fatalf("the node did not learn its rights: known=%t level=%d",
+			node.AccessRightsKnown, node.AccessLevel)
+	}
+}
+
+// A browsed item whose canonical type is unknown is still writable: the client's
+// Variant decides the VARTYPE and the source is the authority.
+func TestWriteAsksTheSourceWhenTheTypeIsUnknown(t *testing.T) {
+	runtime := &stubRuntime{}
+	space := testAddressSpace(t)
+	if err := space.PopulateBranch(nil, []opcda.BrowseEntry{
+		{Kind: opcda.BrowseEntryItem, Name: "Float", ItemID: itemID("Test/Float")},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	service, err := NewDataAccessService(space, runtime, DefaultDataAccessLimits())
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtime.writeResults = []opcda.WriteResult{{
+		ItemID: "Test/Float", HRESULT: opcda.SOK, HRESULTPresent: true,
+	}}
+
+	response, err := service.Write(context.Background(), WriteRequest{
+		Header: RequestHeader{AdditionalHeader: NullExtensionObject()},
+		NodesToWrite: []WriteValue{{
+			NodeID: ItemNodeID("Test/Float"), AttributeID: AttributeValue,
+			Value: DataValue{Value: Variant{Type: BuiltInFloat, Value: float32(2.5)}},
+		}},
+	}, time.Now().UTC())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if response.Results[0] != StatusGood {
+		t.Fatalf("status = %s", response.Results[0].Hex())
+	}
+	if len(runtime.writeItems) != 1 {
+		t.Fatal("the write was refused locally instead of reaching the source")
+	}
+	// The client's Variant width decides the VARTYPE; nothing is widened.
+	if runtime.writeItems[0].VarType != opcda.VTR4 {
+		t.Fatalf("VARTYPE = %s, want VT_R4", runtime.writeItems[0].VarType)
+	}
+
+	// Once the type is known it is enforced locally again.
+	canonical := opcda.VTR4
+	space.LearnFromRead(ItemNodeID("Test/Float"), &canonical, nil)
+	response, err = service.Write(context.Background(), WriteRequest{
+		Header: RequestHeader{AdditionalHeader: NullExtensionObject()},
+		NodesToWrite: []WriteValue{{
+			NodeID: ItemNodeID("Test/Float"), AttributeID: AttributeValue,
+			Value: DataValue{Value: Variant{Type: BuiltInDouble, Value: float64(2.5)}},
+		}},
+	}, time.Now().UTC())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if response.Results[0] != StatusBadTypeMismatch {
+		t.Fatalf("a known type did not reject the wrong width: %s", response.Results[0].Hex())
+	}
+}

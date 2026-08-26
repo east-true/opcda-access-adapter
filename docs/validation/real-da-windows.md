@@ -81,6 +81,11 @@ defined by OPC 10000-7, which this project has not transcribed, so the probe
 checks only that the server publishes exactly what it was configured with and
 makes **no claim that those are the standard URIs**.
 
+A browsed node reports the abstract base type and no access rights, because OPC
+DA carries both in the `AddItems` result rather than in Browse, so the probe
+reads a candidate item before asking for its attributes — which is what a real
+client does too.
+
 The probe then creates a Subscription and a MonitoredItem over the fixture's
 read/write VT_R4 item, requires the server's initial snapshot to arrive through
 Publish, writes distinct values through the UA Write service, and requires each

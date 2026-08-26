@@ -172,52 +172,73 @@ func run(ctx context.Context, address, endpointURL, policyURI string, writeEnabl
 }
 
 // writableItem finds the node standing for the fixture's read/write VT_R4 item.
+//
+// A browsed node reports the abstract base type and no rights, because OPC DA
+// carries both in the AddItems result rather than in Browse. Reading an item is
+// what teaches the server, so the probe reads each candidate first and then
+// asks for its attributes — which is what a real client does too.
 func (c *client) writableItem(token opcua.ChannelSecurityToken, session opcua.NodeID, items []opcua.NodeID) (opcua.NodeID, error) {
 	for _, item := range items {
-		if item.Type != opcua.NodeIDTypeString {
+		if err := c.readItem(token, session, item); err != nil {
+			// An item the source refuses to read is simply not the target.
 			continue
 		}
-		encoder, err := opcua.NewEncoder(c.limits)
+		dataType, level, err := c.itemAttributes(token, session, item)
 		if err != nil {
 			return opcua.NodeID{}, err
 		}
-		encoder.WriteReadRequest(opcua.ReadRequest{
-			Header:             requestHeader(session, 50),
-			TimestampsToReturn: opcua.TimestampsBoth,
-			NodesToRead: []opcua.ReadValueID{
-				{NodeID: item, AttributeID: opcua.AttributeDataType},
-				{NodeID: item, AttributeID: opcua.AttributeAccessLevel},
-			},
-		})
-		body, err := encoder.Bytes()
-		if err != nil {
-			return opcua.NodeID{}, err
-		}
-		identifier, decoder, err := c.call(token, 50, body)
-		if err != nil {
-			return opcua.NodeID{}, err
-		}
-		if identifier != opcua.ReadResponseEncodingID {
-			return opcua.NodeID{}, fmt.Errorf("attribute read answered with service %d", identifier)
-		}
-		response, err := decoder.ReadReadResponse()
-		if err != nil {
-			return opcua.NodeID{}, err
-		}
-		if len(response.Results) != 2 {
-			return opcua.NodeID{}, fmt.Errorf("attribute read returned %d results", len(response.Results))
-		}
-		dataType, ok := response.Results[0].Value.Value.(opcua.NodeID)
-		if !ok || dataType.Numeric != opcua.NodeIDFloat {
+		if dataType.Numeric != opcua.NodeIDFloat {
 			continue
 		}
-		level, ok := response.Results[1].Value.Value.(byte)
-		if !ok || level&opcua.AccessLevelCurrentWrite == 0 {
+		if level&opcua.AccessLevelCurrentWrite == 0 {
 			continue
 		}
 		return item, nil
 	}
 	return opcua.NodeID{}, fmt.Errorf("the address space exposed no writable VT_R4 item")
+}
+
+// itemAttributes reads the DataType and AccessLevel a node reports.
+func (c *client) itemAttributes(token opcua.ChannelSecurityToken, session opcua.NodeID, node opcua.NodeID) (opcua.NodeID, byte, error) {
+	encoder, err := opcua.NewEncoder(c.limits)
+	if err != nil {
+		return opcua.NodeID{}, 0, err
+	}
+	encoder.WriteReadRequest(opcua.ReadRequest{
+		Header:             requestHeader(session, 50),
+		TimestampsToReturn: opcua.TimestampsBoth,
+		NodesToRead: []opcua.ReadValueID{
+			{NodeID: node, AttributeID: opcua.AttributeDataType},
+			{NodeID: node, AttributeID: opcua.AttributeAccessLevel},
+		},
+	})
+	body, err := encoder.Bytes()
+	if err != nil {
+		return opcua.NodeID{}, 0, err
+	}
+	identifier, decoder, err := c.call(token, 50, body)
+	if err != nil {
+		return opcua.NodeID{}, 0, err
+	}
+	if identifier != opcua.ReadResponseEncodingID {
+		return opcua.NodeID{}, 0, fmt.Errorf("attribute read answered with service %d", identifier)
+	}
+	response, err := decoder.ReadReadResponse()
+	if err != nil {
+		return opcua.NodeID{}, 0, err
+	}
+	if len(response.Results) != 2 {
+		return opcua.NodeID{}, 0, fmt.Errorf("attribute read returned %d results", len(response.Results))
+	}
+	dataType, ok := response.Results[0].Value.Value.(opcua.NodeID)
+	if !ok {
+		return opcua.NodeID{}, 0, fmt.Errorf("the DataType attribute was not a NodeId")
+	}
+	level, ok := response.Results[1].Value.Value.(byte)
+	if !ok {
+		return opcua.NodeID{}, 0, fmt.Errorf("the AccessLevel attribute was not a Byte")
+	}
+	return dataType, level, nil
 }
 
 // subscriptionScenario creates a subscription over the writable item, then

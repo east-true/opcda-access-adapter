@@ -389,6 +389,7 @@ func (s *DataAccessService) Read(ctx context.Context, request ReadRequest, now t
 	// per-item semantics; other attributes are answered from the address space.
 	itemIDs := make([]opcda.DAItemID, 0, len(request.NodesToRead))
 	positions := make([]int, 0, len(request.NodesToRead))
+	readNodes := make(map[int]NodeID, len(request.NodesToRead))
 
 	for index, target := range request.NodesToRead {
 		// Table 167: indexRange is for arrays, and this adapter exposes none.
@@ -418,10 +419,11 @@ func (s *DataAccessService) Read(ctx context.Context, request ReadRequest, now t
 		}
 		itemIDs = append(itemIDs, node.ItemID)
 		positions = append(positions, index)
+		readNodes[index] = node.ID
 	}
 
 	if len(itemIDs) > 0 {
-		s.readFromSource(ctx, itemIDs, positions, results, request.TimestampsToReturn, now)
+		s.readFromSource(ctx, itemIDs, positions, readNodes, results, request.TimestampsToReturn, now)
 	}
 	return ReadResponse{
 		Header: ResponseHeader{
@@ -441,7 +443,7 @@ func failedDataValue(status StatusCode) DataValue {
 // readFromSource performs one device Read and maps each result. A method-level
 // source failure gives every requested node the same status rather than
 // pretending some succeeded.
-func (s *DataAccessService) readFromSource(ctx context.Context, itemIDs []opcda.DAItemID, positions []int, results []DataValue, timestamps TimestampsToReturn, now time.Time) {
+func (s *DataAccessService) readFromSource(ctx context.Context, itemIDs []opcda.DAItemID, positions []int, nodes map[int]NodeID, results []DataValue, timestamps TimestampsToReturn, now time.Time) {
 	readCtx, cancel := context.WithTimeout(ctx, s.limits.RequestTimeout)
 	defer cancel()
 
@@ -462,7 +464,12 @@ func (s *DataAccessService) readFromSource(ctx context.Context, itemIDs []opcda.
 		return
 	}
 	for offset, index := range positions {
-		results[index] = dataValueForRead(sourceResults[offset], timestamps, now)
+		result := sourceResults[offset]
+		results[index] = dataValueForRead(result, timestamps, now)
+		// The source has just told us the item's canonical type and access
+		// rights, which a Browse never reports. Recording them makes the node
+		// accurate for every client that follows.
+		s.space.LearnFromRead(nodes[index], result.CanonicalType, result.AccessRights)
 	}
 }
 
@@ -686,22 +693,68 @@ func (s *DataAccessService) writeToSource(ctx context.Context, items []opcda.Wri
 	}
 }
 
-// writeItemForNode builds the strictly typed DA write. The node's canonical
-// DataType decides the VARTYPE, and the Variant must already carry exactly that
-// Go type: nothing is widened, narrowed, or converted, which matches the DA
-// core's strict typed write.
+// writeItemForNode builds the strictly typed DA write.
+//
+// When the node's canonical DataType is known, it decides the VARTYPE and the
+// Variant must already carry exactly that Go type: nothing is widened,
+// narrowed, or converted, which matches the DA core's strict typed write.
+//
+// OPC DA reports the canonical type in the AddItems result rather than in
+// Browse, so a browsed item that has never been read has no known type. There
+// the client's own Variant type decides the VARTYPE and the source is the
+// authority: the DA core still writes strictly, and a server whose canonical
+// type differs answers with a type-mismatch HRESULT that Table A.5 maps to
+// Bad_TypeMismatch. Refusing locally instead would make every browsed item
+// permanently unwritable over a restriction the adapter invented.
 func writeItemForNode(node *Node, variant Variant) (opcda.WriteItem, bool) {
 	if variant.IsNull() || variant.IsArray {
 		return opcda.WriteItem{}, false
 	}
-	varType, ok := varTypeForDataTypeNode(node.DataType)
+	if node.DataTypeKnown {
+		varType, ok := varTypeForDataTypeNode(node.DataType)
+		if !ok || !variantMatchesVarType(variant, varType) {
+			return opcda.WriteItem{}, false
+		}
+		return opcda.WriteItem{ItemID: node.ItemID, VarType: varType, Value: variant.Value}, true
+	}
+	varType, ok := varTypeForVariant(variant)
 	if !ok {
 		return opcda.WriteItem{}, false
 	}
-	if !variantMatchesVarType(variant, varType) {
-		return opcda.WriteItem{}, false
-	}
 	return opcda.WriteItem{ItemID: node.ItemID, VarType: varType, Value: variant.Value}, true
+}
+
+// varTypeForVariant maps a client's Variant onto the VARTYPE that represents
+// the same width, so nothing is widened or narrowed on the way to the source.
+func varTypeForVariant(variant Variant) (opcda.DAVarType, bool) {
+	switch variant.Type {
+	case BuiltInBoolean:
+		return opcda.VTBool, true
+	case BuiltInSByte:
+		return opcda.VTI1, true
+	case BuiltInByte:
+		return opcda.VTUI1, true
+	case BuiltInInt16:
+		return opcda.VTI2, true
+	case BuiltInUInt16:
+		return opcda.VTUI2, true
+	case BuiltInInt32:
+		return opcda.VTI4, true
+	case BuiltInUInt32:
+		return opcda.VTUI4, true
+	case BuiltInInt64:
+		return opcda.VTI8, true
+	case BuiltInUInt64:
+		return opcda.VTUI8, true
+	case BuiltInFloat:
+		return opcda.VTR4, true
+	case BuiltInDouble:
+		return opcda.VTR8, true
+	case BuiltInString:
+		return opcda.VTBSTR, true
+	default:
+		return 0, false
+	}
 }
 
 // varTypeForDataTypeNode inverts the Part 8 DataType mapping for the types this
