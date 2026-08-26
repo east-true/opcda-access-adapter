@@ -21,6 +21,8 @@ func main() {
 	address := flag.String("address", "127.0.0.1:4840", "OPC UA endpoint address")
 	endpointURL := flag.String("endpoint-url", "", "endpoint URL the server publishes")
 	policyURI := flag.String("security-policy-uri", "", "expected SecurityPolicy URI")
+	writeEnabled := flag.Bool("write-enabled", false,
+		"expect Write to be enabled and drive the subscription change scenario")
 	timeout := flag.Duration("timeout", time.Minute, "bounded scenario deadline")
 	flag.Parse()
 	if flag.NArg() != 0 || *endpointURL == "" || *policyURI == "" ||
@@ -32,7 +34,7 @@ func main() {
 
 	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
 	defer cancel()
-	if err := run(ctx, *address, *endpointURL, *policyURI); err != nil {
+	if err := run(ctx, *address, *endpointURL, *policyURI, *writeEnabled); err != nil {
 		fmt.Fprintf(os.Stderr, "OPCUA_REAL_DA_FAIL %v\n", err)
 		os.Exit(1)
 	}
@@ -66,7 +68,7 @@ type client struct {
 	buffer   uint32
 }
 
-func run(ctx context.Context, address, endpointURL, policyURI string) error {
+func run(ctx context.Context, address, endpointURL, policyURI string, writeEnabled bool) error {
 	deadline, _ := ctx.Deadline()
 	conn, err := dialWhenReady(ctx, address)
 	if err != nil {
@@ -150,8 +152,354 @@ func run(ctx context.Context, address, endpointURL, policyURI string) error {
 	if err := c.readItem(token, session, items[0]); err != nil {
 		return err
 	}
-	fmt.Printf("OPCUA_REAL_DA_PASS endpoint=verified session=activated items=%d read=ok valuesLogged=false\n",
-		len(items))
+
+	subscribed := false
+	if writeEnabled {
+		// The fixture's Test items are static, so a subscription would only
+		// ever see the server's initial snapshot. Writing through the UA Write
+		// service induces real changes, which is the only way to prove the
+		// notification path carries source-driven data rather than one
+		// snapshot.
+		if err := c.subscriptionScenario(ctx, token, session, items); err != nil {
+			return err
+		}
+		subscribed = true
+	}
+	fmt.Printf(
+		"OPCUA_REAL_DA_PASS endpoint=verified session=activated items=%d read=ok subscription=%t valuesLogged=false\n",
+		len(items), subscribed)
+	return nil
+}
+
+// writableItem finds the node standing for the fixture's read/write VT_R4 item.
+//
+// A browsed node reports the abstract base type and no rights, because OPC DA
+// carries both in the AddItems result rather than in Browse. Reading an item is
+// what teaches the server, so the probe reads each candidate first and then
+// asks for its attributes — which is what a real client does too.
+func (c *client) writableItem(token opcua.ChannelSecurityToken, session opcua.NodeID, items []opcua.NodeID) (opcua.NodeID, error) {
+	for _, item := range items {
+		if err := c.readItem(token, session, item); err != nil {
+			// An item the source refuses to read is simply not the target.
+			continue
+		}
+		dataType, level, err := c.itemAttributes(token, session, item)
+		if err != nil {
+			return opcua.NodeID{}, err
+		}
+		if dataType.Numeric != opcua.NodeIDFloat {
+			continue
+		}
+		if level&opcua.AccessLevelCurrentWrite == 0 {
+			continue
+		}
+		return item, nil
+	}
+	return opcua.NodeID{}, fmt.Errorf("the address space exposed no writable VT_R4 item")
+}
+
+// itemAttributes reads the DataType and AccessLevel a node reports.
+func (c *client) itemAttributes(token opcua.ChannelSecurityToken, session opcua.NodeID, node opcua.NodeID) (opcua.NodeID, byte, error) {
+	encoder, err := opcua.NewEncoder(c.limits)
+	if err != nil {
+		return opcua.NodeID{}, 0, err
+	}
+	encoder.WriteReadRequest(opcua.ReadRequest{
+		Header:             requestHeader(session, 50),
+		TimestampsToReturn: opcua.TimestampsBoth,
+		NodesToRead: []opcua.ReadValueID{
+			{NodeID: node, AttributeID: opcua.AttributeDataType},
+			{NodeID: node, AttributeID: opcua.AttributeAccessLevel},
+		},
+	})
+	body, err := encoder.Bytes()
+	if err != nil {
+		return opcua.NodeID{}, 0, err
+	}
+	identifier, decoder, err := c.call(token, 50, body)
+	if err != nil {
+		return opcua.NodeID{}, 0, err
+	}
+	if identifier != opcua.ReadResponseEncodingID {
+		return opcua.NodeID{}, 0, fmt.Errorf("attribute read answered with service %d", identifier)
+	}
+	response, err := decoder.ReadReadResponse()
+	if err != nil {
+		return opcua.NodeID{}, 0, err
+	}
+	if len(response.Results) != 2 {
+		return opcua.NodeID{}, 0, fmt.Errorf("attribute read returned %d results", len(response.Results))
+	}
+	dataType, ok := response.Results[0].Value.Value.(opcua.NodeID)
+	if !ok {
+		return opcua.NodeID{}, 0, fmt.Errorf("the DataType attribute was not a NodeId")
+	}
+	level, ok := response.Results[1].Value.Value.(byte)
+	if !ok {
+		return opcua.NodeID{}, 0, fmt.Errorf("the AccessLevel attribute was not a Byte")
+	}
+	return dataType, level, nil
+}
+
+// subscriptionScenario creates a subscription over the writable item, then
+// writes distinct values and requires each one to arrive through Publish.
+func (c *client) subscriptionScenario(ctx context.Context, token opcua.ChannelSecurityToken, session opcua.NodeID, items []opcua.NodeID) error {
+	target, err := c.writableItem(token, session, items)
+	if err != nil {
+		return err
+	}
+
+	subscription, err := c.createSubscription(token, session)
+	if err != nil {
+		return err
+	}
+	if subscription.SubscriptionID == 0 || subscription.RevisedPublishingInterval <= 0 {
+		return fmt.Errorf("the server returned an incomplete subscription")
+	}
+	// Table 82: the lifetime count is at least three times the keep-alive
+	// count.
+	if subscription.RevisedLifetimeCount < subscription.RevisedMaxKeepAliveCount*3 {
+		return fmt.Errorf("revised lifetime %d is below three times the keep-alive %d",
+			subscription.RevisedLifetimeCount, subscription.RevisedMaxKeepAliveCount)
+	}
+	fmt.Printf("opcua subscription created id=%d revisedInterval=%vms keepAlive=%d\n",
+		subscription.SubscriptionID, subscription.RevisedPublishingInterval,
+		subscription.RevisedMaxKeepAliveCount)
+
+	const clientHandle = uint32(4242)
+	created, err := c.createMonitoredItem(token, session, subscription.SubscriptionID, target, clientHandle)
+	if err != nil {
+		return err
+	}
+	if created.StatusCode != opcua.StatusGood {
+		return fmt.Errorf("the monitored item was refused with %s", created.StatusCode.Hex())
+	}
+	// The DA core coalesces per item, so the queue is one value per item.
+	if created.RevisedQueueSize != 1 {
+		return fmt.Errorf("the server revised the queue size to %d", created.RevisedQueueSize)
+	}
+	fmt.Printf("opcua monitored item created id=%d revisedSampling=%vms queue=%d\n",
+		created.MonitoredItemID, created.RevisedSamplingInterval, created.RevisedQueueSize)
+
+	// The server's initial snapshot proves the notification path is live.
+	if _, err := c.awaitNotification(ctx, token, session, clientHandle, nil); err != nil {
+		return fmt.Errorf("initial notification: %w", err)
+	}
+
+	const changes = 2
+	for change := 0; change < changes; change++ {
+		written := float32(change+1) + 0.75
+		if err := c.writeFloat(token, session, target, written); err != nil {
+			return fmt.Errorf("write to induce change %d: %w", change+1, err)
+		}
+		expected := written
+		if _, err := c.awaitNotification(ctx, token, session, clientHandle, &expected); err != nil {
+			return fmt.Errorf("change %d was not published: %w", change+1, err)
+		}
+	}
+	fmt.Printf("opcua change-driven notifications verified changes=%d\n", changes)
+
+	if err := c.deleteSubscription(token, session, subscription.SubscriptionID); err != nil {
+		return err
+	}
+	fmt.Print("opcua subscription deleted\n")
+	return nil
+}
+
+func (c *client) createSubscription(token opcua.ChannelSecurityToken, session opcua.NodeID) (opcua.CreateSubscriptionResponse, error) {
+	encoder, err := opcua.NewEncoder(c.limits)
+	if err != nil {
+		return opcua.CreateSubscriptionResponse{}, err
+	}
+	encoder.WriteCreateSubscriptionRequest(opcua.CreateSubscriptionRequest{
+		Header:                      requestHeader(session, 51),
+		RequestedPublishingInterval: 250,
+		RequestedMaxKeepAliveCount:  3,
+		RequestedLifetimeCount:      30,
+		PublishingEnabled:           true,
+	})
+	body, err := encoder.Bytes()
+	if err != nil {
+		return opcua.CreateSubscriptionResponse{}, err
+	}
+	identifier, decoder, err := c.call(token, 51, body)
+	if err != nil {
+		return opcua.CreateSubscriptionResponse{}, fmt.Errorf("create subscription: %w", err)
+	}
+	if identifier != opcua.CreateSubscriptionResponseEncodingID {
+		return opcua.CreateSubscriptionResponse{}, fmt.Errorf("create subscription answered with service %d", identifier)
+	}
+	return decoder.ReadCreateSubscriptionResponse()
+}
+
+func (c *client) createMonitoredItem(token opcua.ChannelSecurityToken, session opcua.NodeID, subscriptionID uint32, node opcua.NodeID, handle uint32) (opcua.MonitoredItemCreateResult, error) {
+	encoder, err := opcua.NewEncoder(c.limits)
+	if err != nil {
+		return opcua.MonitoredItemCreateResult{}, err
+	}
+	encoder.WriteCreateMonitoredItemsRequest(opcua.CreateMonitoredItemsRequest{
+		Header:             requestHeader(session, 52),
+		SubscriptionID:     subscriptionID,
+		TimestampsToReturn: opcua.TimestampsBoth,
+		ItemsToCreate: []opcua.MonitoredItemCreateRequest{{
+			ItemToMonitor:  opcua.ReadValueID{NodeID: node, AttributeID: opcua.AttributeValue},
+			MonitoringMode: opcua.MonitoringModeReporting,
+			RequestedParameters: opcua.MonitoringParameters{
+				ClientHandle: handle, SamplingInterval: 250, QueueSize: 1,
+				Filter: opcua.NullExtensionObject(),
+			},
+		}},
+	})
+	body, err := encoder.Bytes()
+	if err != nil {
+		return opcua.MonitoredItemCreateResult{}, err
+	}
+	identifier, decoder, err := c.call(token, 52, body)
+	if err != nil {
+		return opcua.MonitoredItemCreateResult{}, fmt.Errorf("create monitored items: %w", err)
+	}
+	if identifier != opcua.CreateMonitoredItemsResponseEncodingID {
+		return opcua.MonitoredItemCreateResult{}, fmt.Errorf("create monitored items answered with service %d", identifier)
+	}
+	response, err := decoder.ReadCreateMonitoredItemsResponse()
+	if err != nil {
+		return opcua.MonitoredItemCreateResult{}, err
+	}
+	if len(response.Results) != 1 {
+		return opcua.MonitoredItemCreateResult{}, fmt.Errorf("create monitored items returned %d results", len(response.Results))
+	}
+	return response.Results[0], nil
+}
+
+// awaitNotification polls Publish until a notification for the handle arrives.
+// Publish does not block on this server, so the client polls; the wait is
+// bounded by the scenario deadline. When expected is supplied the notification
+// must carry that value, which is how a change is told from the snapshot that
+// preceded it.
+func (c *client) awaitNotification(ctx context.Context, token opcua.ChannelSecurityToken, session opcua.NodeID, handle uint32, expected *float32) (opcua.DataValue, error) {
+	deadline := time.Now().Add(30 * time.Second)
+	handleFound := false
+	for time.Now().Before(deadline) {
+		select {
+		case <-ctx.Done():
+			return opcua.DataValue{}, ctx.Err()
+		default:
+		}
+		response, err := c.publish(token, session)
+		if err != nil {
+			return opcua.DataValue{}, err
+		}
+		for _, notification := range response.NotificationMessage.Notifications {
+			if notification.ClientHandle != handle {
+				continue
+			}
+			handleFound = true
+			if notification.Value.Status.IsBad() {
+				return opcua.DataValue{}, fmt.Errorf(
+					"the notification carried %s", notification.Value.Status.Hex())
+			}
+			if expected == nil {
+				return notification.Value, nil
+			}
+			value, ok := notification.Value.Value.Value.(float32)
+			if ok && value == *expected {
+				return notification.Value, nil
+			}
+			// An older coalesced value can still be in flight; keep polling.
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	if handleFound {
+		return opcua.DataValue{}, fmt.Errorf("the expected value never arrived for handle %d", handle)
+	}
+	return opcua.DataValue{}, fmt.Errorf("no notification arrived for handle %d", handle)
+}
+
+func (c *client) publish(token opcua.ChannelSecurityToken, session opcua.NodeID) (opcua.PublishResponse, error) {
+	encoder, err := opcua.NewEncoder(c.limits)
+	if err != nil {
+		return opcua.PublishResponse{}, err
+	}
+	encoder.WritePublishRequest(opcua.PublishRequest{Header: requestHeader(session, 53)})
+	body, err := encoder.Bytes()
+	if err != nil {
+		return opcua.PublishResponse{}, err
+	}
+	identifier, decoder, err := c.call(token, 53, body)
+	if err != nil {
+		return opcua.PublishResponse{}, fmt.Errorf("publish: %w", err)
+	}
+	if identifier != opcua.PublishResponseEncodingID {
+		return opcua.PublishResponse{}, fmt.Errorf("publish answered with service %d", identifier)
+	}
+	return decoder.ReadPublishResponse()
+}
+
+func (c *client) writeFloat(token opcua.ChannelSecurityToken, session opcua.NodeID, node opcua.NodeID, value float32) error {
+	encoder, err := opcua.NewEncoder(c.limits)
+	if err != nil {
+		return err
+	}
+	encoder.WriteWriteRequest(opcua.WriteRequest{
+		Header: requestHeader(session, 54),
+		NodesToWrite: []opcua.WriteValue{{
+			NodeID: node, AttributeID: opcua.AttributeValue,
+			Value: opcua.DataValue{
+				Value: opcua.Variant{Type: opcua.BuiltInFloat, Value: value},
+			},
+		}},
+	})
+	body, err := encoder.Bytes()
+	if err != nil {
+		return err
+	}
+	identifier, decoder, err := c.call(token, 54, body)
+	if err != nil {
+		return fmt.Errorf("write: %w", err)
+	}
+	if identifier != opcua.WriteResponseEncodingID {
+		return fmt.Errorf("write answered with service %d", identifier)
+	}
+	response, err := decoder.ReadWriteResponse()
+	if err != nil {
+		return err
+	}
+	if len(response.Results) != 1 {
+		return fmt.Errorf("write returned %d results", len(response.Results))
+	}
+	if response.Results[0] != opcua.StatusGood {
+		return fmt.Errorf("write returned %s", response.Results[0].Hex())
+	}
+	return nil
+}
+
+func (c *client) deleteSubscription(token opcua.ChannelSecurityToken, session opcua.NodeID, subscriptionID uint32) error {
+	encoder, err := opcua.NewEncoder(c.limits)
+	if err != nil {
+		return err
+	}
+	encoder.WriteDeleteSubscriptionsRequest(opcua.DeleteSubscriptionsRequest{
+		Header:          requestHeader(session, 55),
+		SubscriptionIDs: []uint32{subscriptionID},
+	})
+	body, err := encoder.Bytes()
+	if err != nil {
+		return err
+	}
+	identifier, decoder, err := c.call(token, 55, body)
+	if err != nil {
+		return fmt.Errorf("delete subscriptions: %w", err)
+	}
+	if identifier != opcua.DeleteSubscriptionsResponseEncodingID {
+		return fmt.Errorf("delete subscriptions answered with service %d", identifier)
+	}
+	response, err := decoder.ReadDeleteSubscriptionsResponse()
+	if err != nil {
+		return err
+	}
+	if len(response.Results) != 1 || response.Results[0] != opcua.StatusGood {
+		return fmt.Errorf("delete subscriptions returned %v", response.Results)
+	}
 	return nil
 }
 

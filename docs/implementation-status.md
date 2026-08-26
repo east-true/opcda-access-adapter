@@ -122,10 +122,6 @@ release-promotion gate.
 
 ## In progress
 
-- UA Subscriptions and MonitoredItems are on `feat/opcua-subscriptions`, which
-  makes the DA Subscribe core reachable over UA. One UA Subscription is one DA
-  subscription, which is one DA group. The services are exercised over a real
-  socket against a stubbed DA core; the real-DA probe does not yet drive them.
 
 - The local KVM/libvirt destructive-validation gate is paused. The dedicated
   `opcda-destructive-review` VM and all of its dedicated host resources were
@@ -151,6 +147,21 @@ release-promotion gate.
   bounded helper with a sixty-second deadline, so a pass means the record was
   written rather than that the runner happened to be fast. No product behavior
   and no assertion were weakened.
+- PR #53 real-DA run
+  [`32928909002`](https://github.com/east-true/opcda-access-adapter/actions/runs/32928909002)
+  passed on both x86/386 and x64/amd64. The UA probe created a Subscription and
+  MonitoredItem against the fixture, received the server's initial snapshot and
+  two change-driven notifications induced through UA Write, and deleted the
+  subscription. Exact figures are in `docs/compatibility.md`.
+- That run caught the same class of error a second time: OPC DA reports an
+  item's canonical type in the AddItems result rather than in Browse, just as it
+  does access rights, so every browsed node reported the abstract base type and
+  the write path refused it as unmapped. Where the source has not reported a
+  type, the client's Variant now decides the VARTYPE and the source answers;
+  where it has, the type is enforced locally. The address space also learns both
+  the canonical type and the access rights from Read results and subscription
+  notifications, since both come back through AddItems.
+
 - PR #51 CI run
   [`32921155729`](https://github.com/east-true/opcda-access-adapter/actions/runs/32921155729)
   passed quality, race/fuzz checks, release packaging, both Windows builds, and

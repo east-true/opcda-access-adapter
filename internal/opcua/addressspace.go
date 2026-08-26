@@ -145,6 +145,11 @@ type Node struct {
 	// AddItems, not in Browse, so a browsed item usually arrives without them.
 	AccessLevel       byte
 	AccessRightsKnown bool
+	// DataTypeKnown records whether the source told us the canonical type. OPC
+	// DA carries it in the AddItems result, not in Browse, so a browsed item
+	// arrives without it and the node reports the abstract base type until a
+	// Read teaches it otherwise.
+	DataTypeKnown bool
 
 	// ItemID is the exact DA ItemID a variable stands for. It is empty for a
 	// folder, because design §35.2 forbids inventing an ItemID for a branch.
@@ -392,6 +397,7 @@ func (s *AddressSpace) nodeForEntry(path []string, entry opcda.BrowseEntry) (*No
 			if dataType, ok := DataTypeFor(*entry.CanonicalType); ok {
 				if id, resolved := DataTypeNodeID(dataType); resolved {
 					node.DataType = id
+					node.DataTypeKnown = true
 				}
 			}
 		}
@@ -424,6 +430,36 @@ func accessLevelFor(rights *opcda.DAAccessRights) (byte, bool) {
 		level |= AccessLevelCurrentWrite
 	}
 	return level, true
+}
+
+// LearnFromRead records what a Read result taught about a variable.
+//
+// OPC DA reports an item's canonical type and access rights in the AddItems
+// result, which a Browse never produces, so a browsed node starts out knowing
+// neither. A Read goes through AddItems, so its result is the source telling us
+// — and recording it makes the node's attributes accurate for every client that
+// comes after, rather than leaving them permanently unknown.
+func (s *AddressSpace) LearnFromRead(id NodeID, canonicalType *opcda.DAVarType, rights *opcda.DAAccessRights) {
+	if canonicalType == nil && rights == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	node, ok := s.nodes[nodeKey(id)]
+	if !ok || node.Class != NodeClassVariable {
+		return
+	}
+	if canonicalType != nil && !node.DataTypeKnown {
+		if dataType, mapped := DataTypeFor(*canonicalType); mapped {
+			if resolved, ok := DataTypeNodeID(dataType); ok {
+				node.DataType = resolved
+				node.DataTypeKnown = true
+			}
+		}
+	}
+	if rights != nil && !node.AccessRightsKnown {
+		node.AccessLevel, node.AccessRightsKnown = accessLevelFor(rights)
+	}
 }
 
 // NodeCount reports how many nodes the space holds, for bounds and diagnostics.
