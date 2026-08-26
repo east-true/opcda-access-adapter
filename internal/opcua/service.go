@@ -252,7 +252,7 @@ func (s *ChannelService) OpenSecureChannel(request OpenSecureChannelRequest, exi
 		if err != nil {
 			return OpenSecureChannelResponse{}, err
 		}
-		token = channel.Token()
+		token = channel.Token
 	case TokenRequestRenew:
 		if existingChannelID == 0 {
 			return OpenSecureChannelResponse{}, uacpError(StatusBadSecureChannelIDInvalid,
@@ -264,10 +264,10 @@ func (s *ChannelService) OpenSecureChannel(request OpenSecureChannelRequest, exi
 		}
 		// A renew must not change the channel's security mode; the clause ties
 		// renewal to the channel that already exists.
-		if request.SecurityMode != channel.SecurityMode() {
+		if request.SecurityMode != channel.SecurityMode {
 			return OpenSecureChannelResponse{}, uacpError(StatusBadSecurityModeRejected,
 				"a renew request changed the security mode from %s to %s",
-				channel.SecurityMode(), request.SecurityMode)
+				channel.SecurityMode, request.SecurityMode)
 		}
 		if token, err = s.registry.Renew(existingChannelID, request.RequestedLifetime, now); err != nil {
 			return OpenSecureChannelResponse{}, err

@@ -42,16 +42,16 @@ func TestIssueAssignsIdentifiersEvenWithoutSecurity(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if channel.ID() == 0 || channel.Token().TokenID == 0 {
-		t.Fatalf("channel %d token %d: zero is not a valid identifier", channel.ID(), channel.Token().TokenID)
+	if channel.ID == 0 || channel.Token.TokenID == 0 {
+		t.Fatalf("channel %d token %d: zero is not a valid identifier", channel.ID, channel.Token.TokenID)
 	}
-	if channel.Token().SecureChannelID != channel.ID() {
+	if channel.Token.SecureChannelID != channel.ID {
 		t.Fatal("the token does not carry its channel id")
 	}
-	if channel.Token().RevisedLifetime == 0 {
+	if channel.Token.RevisedLifetime == 0 {
 		t.Fatal("the server provided a zero lifetime")
 	}
-	if got := channel.Token().ExpiresAt(); !got.Equal(channelEpoch.Add(60 * time.Second)) {
+	if got := channel.Token.ExpiresAt(); !got.Equal(channelEpoch.Add(60 * time.Second)) {
 		t.Fatalf("expiry = %s", got)
 	}
 }
@@ -79,24 +79,24 @@ func TestLifetimeIsRevisedIntoRange(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if tooShort.Token().RevisedLifetime != 10_000 {
-		t.Fatalf("revised lifetime = %d, want the floor", tooShort.Token().RevisedLifetime)
+	if tooShort.Token.RevisedLifetime != 10_000 {
+		t.Fatalf("revised lifetime = %d, want the floor", tooShort.Token.RevisedLifetime)
 	}
 
 	tooLong, err := registry.Issue(SecurityModeNone, 3_600_000, channelEpoch)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if tooLong.Token().RevisedLifetime != 60_000 {
-		t.Fatalf("revised lifetime = %d, want the ceiling", tooLong.Token().RevisedLifetime)
+	if tooLong.Token.RevisedLifetime != 60_000 {
+		t.Fatalf("revised lifetime = %d, want the ceiling", tooLong.Token.RevisedLifetime)
 	}
 
 	inRange, err := registry.Issue(SecurityModeNone, 30_000, channelEpoch)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if inRange.Token().RevisedLifetime != 30_000 {
-		t.Fatalf("revised lifetime = %d, want the request honoured", inRange.Token().RevisedLifetime)
+	if inRange.Token.RevisedLifetime != 30_000 {
+		t.Fatalf("revised lifetime = %d, want the request honoured", inRange.Token.RevisedLifetime)
 	}
 }
 
@@ -108,34 +108,43 @@ func TestRenewKeepsTheOldTokenAcceptableUntilTheNewOneIsUsed(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	oldToken := channel.Token()
+	oldToken := channel.Token
 
-	renewed, err := registry.Renew(channel.ID(), 60_000, channelEpoch.Add(30*time.Second))
+	renewed, err := registry.Renew(channel.ID, 60_000, channelEpoch.Add(30*time.Second))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if renewed.TokenID == oldToken.TokenID {
 		t.Fatal("renewal reused the token id")
 	}
-	if renewed.SecureChannelID != channel.ID() {
+	if renewed.SecureChannelID != channel.ID {
 		t.Fatal("renewal changed the channel id")
 	}
-	if _, ok := channel.PreviousToken(); !ok {
+	// Every step goes through the registry: the channel itself never leaves
+	// it, so a token can only be accepted where the lock is held.
+	after, err := registry.Lookup(channel.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !after.HasPreviousToken {
 		t.Fatal("the superseded token was discarded immediately")
 	}
 
 	// The old token still works while it is unexpired.
-	if err := channel.AcceptToken(oldToken.TokenID, channelEpoch.Add(31*time.Second)); err != nil {
+	if _, err := registry.Accept(channel.ID, oldToken.TokenID, channelEpoch.Add(31*time.Second)); err != nil {
 		t.Fatalf("the old token was refused before expiry: %v", err)
 	}
 	// Using the new token retires the old one.
-	if err := channel.AcceptToken(renewed.TokenID, channelEpoch.Add(32*time.Second)); err != nil {
+	if _, err := registry.Accept(channel.ID, renewed.TokenID, channelEpoch.Add(32*time.Second)); err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := channel.PreviousToken(); ok {
+	if after, err = registry.Lookup(channel.ID); err != nil {
+		t.Fatal(err)
+	}
+	if after.HasPreviousToken {
 		t.Fatal("the superseded token survived use of the new one")
 	}
-	if err := channel.AcceptToken(oldToken.TokenID, channelEpoch.Add(33*time.Second)); err == nil {
+	if _, err := registry.Accept(channel.ID, oldToken.TokenID, channelEpoch.Add(33*time.Second)); err == nil {
 		t.Fatal("the retired token was still accepted")
 	}
 }
@@ -146,11 +155,11 @@ func TestSupersededTokenIsRefusedOnceItExpires(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	oldToken := channel.Token()
-	if _, err := registry.Renew(channel.ID(), 60_000, channelEpoch.Add(10*time.Second)); err != nil {
+	oldToken := channel.Token
+	if _, err := registry.Renew(channel.ID, 60_000, channelEpoch.Add(10*time.Second)); err != nil {
 		t.Fatal(err)
 	}
-	err = channel.AcceptToken(oldToken.TokenID, channelEpoch.Add(21*time.Second))
+	_, err = registry.Accept(channel.ID, oldToken.TokenID, channelEpoch.Add(21*time.Second))
 	if err == nil {
 		t.Fatal("an expired superseded token was accepted")
 	}
@@ -167,11 +176,11 @@ func TestUnknownAndExpiredTokensAreRefused(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := channel.AcceptToken(channel.Token().TokenID+999, channelEpoch); err == nil {
+	if _, err := registry.Accept(channel.ID, channel.Token.TokenID+999, channelEpoch); err == nil {
 		t.Fatal("an unknown token was accepted")
 	}
 	// Exactly at the expiry instant the token is already gone.
-	err = channel.AcceptToken(channel.Token().TokenID, channel.Token().ExpiresAt())
+	_, err = registry.Accept(channel.ID, channel.Token.TokenID, channel.Token.ExpiresAt())
 	if err == nil {
 		t.Fatal("a token was accepted at its expiry instant")
 	}
@@ -186,11 +195,11 @@ func TestRegistryAcceptResolvesChannelAndToken(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := registry.Accept(channel.ID(), channel.Token().TokenID, channelEpoch); err != nil {
+	if _, err := registry.Accept(channel.ID, channel.Token.TokenID, channelEpoch); err != nil {
 		t.Fatal(err)
 	}
 	// An unrecognised channel id is a transport error, per Table 57.
-	_, err = registry.Accept(channel.ID()+999, channel.Token().TokenID, channelEpoch)
+	_, err = registry.Accept(channel.ID+999, channel.Token.TokenID, channelEpoch)
 	if err == nil {
 		t.Fatal("an unknown channel was accepted")
 	}
@@ -205,24 +214,24 @@ func TestCloseRemovesTheChannel(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := registry.Close(channel.ID()); err != nil {
+	if err := registry.Close(channel.ID); err != nil {
 		t.Fatal(err)
 	}
 	if registry.Count() != 0 {
 		t.Fatalf("registry holds %d channels after close", registry.Count())
 	}
-	if !channel.Closed() {
-		t.Fatal("the channel was not marked closed")
-	}
-	if err := channel.AcceptToken(channel.Token().TokenID, channelEpoch); err == nil {
+	// A closed channel is gone from the registry, and the registry is the only
+	// way to reach it, so both routes report it closed.
+	if _, err := registry.Accept(channel.ID, channel.Token.TokenID, channelEpoch); err == nil {
 		t.Fatal("a closed channel accepted a token")
-	} else if got := codecStatus(t, err); got != StatusBadSecureChannelClosed {
-		t.Fatalf("status = %s, want Bad_SecureChannelClosed", got.Hex())
+	} else if got := codecStatus(t, err); got != StatusBadTcpSecureChannelUnknown &&
+		got != StatusBadSecureChannelClosed {
+		t.Fatalf("status = %s, want the channel reported closed or unknown", got.Hex())
 	}
-	if _, err := channel.Renew(1, 60_000, channelEpoch); err == nil {
+	if _, err := registry.Renew(channel.ID, 60_000, channelEpoch); err == nil {
 		t.Fatal("a closed channel was renewed")
 	}
-	if err := registry.Close(channel.ID()); err == nil {
+	if err := registry.Close(channel.ID); err == nil {
 		t.Fatal("closing an unknown channel succeeded")
 	}
 }
@@ -244,24 +253,21 @@ func TestStaleChannelsAreReclaimed(t *testing.T) {
 	if removed := registry.ExpireStale(channelEpoch.Add(11 * time.Second)); removed != 1 {
 		t.Fatalf("reclaimed %d channels, want 1", removed)
 	}
-	if _, err := registry.Lookup(short.ID()); err == nil {
+	if _, err := registry.Lookup(short.ID); err == nil {
 		t.Fatal("the expired channel is still resolvable")
 	}
-	if _, err := registry.Lookup(long.ID()); err != nil {
+	if _, err := registry.Lookup(long.ID); err != nil {
 		t.Fatalf("the live channel was reclaimed: %v", err)
 	}
 }
 
 // A channel is only stale once every token it holds has expired.
 func TestAChannelWithALiveSupersededTokenIsNotStale(t *testing.T) {
-	registry := newTestRegistry(t, DefaultChannelLimits())
-	channel, err := registry.Issue(SecurityModeNone, 600_000, channelEpoch)
-	if err != nil {
-		t.Fatal(err)
-	}
+	// This exercises the token rules of the channel type, so it uses a channel
+	// no registry owns.
+	channel := standaloneChannel(t, DefaultChannelLimits(), 1, 1, 600_000, channelEpoch)
 	// Renew to a much shorter lifetime so the current token expires first.
-	limitsShort := ChannelLimits{MinLifetime: time.Second, MaxLifetime: time.Minute, MaxChannels: 4}
-	channel.limits = limitsShort
+	channel.limits = ChannelLimits{MinLifetime: time.Second, MaxLifetime: time.Minute, MaxChannels: 4}
 	if _, err := channel.Renew(99, 1000, channelEpoch); err != nil {
 		t.Fatal(err)
 	}
@@ -305,17 +311,17 @@ func TestIdentifiersAreUniqueAndNeverZero(t *testing.T) {
 		if issueErr != nil {
 			t.Fatal(issueErr)
 		}
-		if channel.ID() == 0 || channel.Token().TokenID == 0 {
+		if channel.ID == 0 || channel.Token.TokenID == 0 {
 			t.Fatal("an identifier wrapped to zero")
 		}
-		if _, duplicate := seenChannels[channel.ID()]; duplicate {
-			t.Fatalf("channel id %d was reused", channel.ID())
+		if _, duplicate := seenChannels[channel.ID]; duplicate {
+			t.Fatalf("channel id %d was reused", channel.ID)
 		}
-		if _, duplicate := seenTokens[channel.Token().TokenID]; duplicate {
-			t.Fatalf("token id %d was reused", channel.Token().TokenID)
+		if _, duplicate := seenTokens[channel.Token.TokenID]; duplicate {
+			t.Fatalf("token id %d was reused", channel.Token.TokenID)
 		}
-		seenChannels[channel.ID()] = struct{}{}
-		seenTokens[channel.Token().TokenID] = struct{}{}
+		seenChannels[channel.ID] = struct{}{}
+		seenTokens[channel.Token.TokenID] = struct{}{}
 	}
 }
 
@@ -361,4 +367,20 @@ func TestTokenRequestTypeNames(t *testing.T) {
 	if TokenRequestIssue.String() != "Issue" || TokenRequestRenew.String() != "Renew" {
 		t.Fatal("token request types are misnamed")
 	}
+}
+
+// standaloneChannel builds a SecureChannel that no registry owns, for tests
+// that exercise the token rules of the type itself rather than the registry
+// around it. A channel a registry owns must only be reached through registry
+// methods, because that is where the lock is.
+func standaloneChannel(t *testing.T, limits ChannelLimits, id, tokenID uint32, requestedLifetime uint32, now time.Time) *SecureChannel {
+	t.Helper()
+	channel := &SecureChannel{id: id, securityMode: SecurityModeNone, limits: limits}
+	channel.current = ChannelSecurityToken{
+		SecureChannelID: id,
+		TokenID:         tokenID,
+		CreatedAt:       now,
+		RevisedLifetime: limits.reviseLifetime(requestedLifetime),
+	}
+	return channel
 }

@@ -122,33 +122,37 @@ release-promotion gate.
 
 ## In progress
 
-- Third-party OPC UA client interoperability is on
-  `fix/opcua-client-interop-clients`. **Three** independent clients now run
-  against the UA frontend over a scripted DA source, via
-  `scripts/interop/run.sh`: asyncua (Python, 142 checks), open62541 1.5.7 (C,
-  128 checks), and the OPC Foundation's own .NET stack 1.5.378.156 (131
-  checks). All are interop clients only, as design §5.2 permits; nothing in the
-  adapter links against any of them. See
-  `docs/validation/ua-client-interop.md`.
+- OPC UA listener concurrency and session lifetime are on
+  `fix/opcua-listener-lifecycle`. Auditing the listener after the interop work
+  found three defects, all reachable in ordinary use and none caught by the
+  suite:
 
-  Two further defects surfaced from the second and third clients **against a
-  server the first already passed**:
+  1. **Two clients connecting at the same time faulted the process** with a Go
+     runtime `concurrent map read and map write`, which no `recover` catches.
+     The channel and session registries held mutable maps with no
+     synchronisation, behind a comment asserting a single-goroutine owner the
+     listener has never provided. Reproduced in 11 ms with 12 clients.
+  2. **A session that timed out left its DA groups open on the source.** The
+     release lived at the `CloseSession` call site rather than in session
+     termination, so the ordinary ways a client goes away — a crash, a lost
+     network — leaked groups on a real DA server permanently.
+  3. **A quiet subscription could outlive its own session.** The limits allow a
+     legitimate silence of up to 1h40m against a session timeout of at most 10
+     minutes. Holding `Publish` open, which is required, made this reachable;
+     before that the client's busy loop kept its session alive by accident.
 
-  1. Unspecified endpoint strings were written as zero-length rather than null.
-     A null String and a zero-length String are distinct in the UA binary
-     encoding, and Table 192 says `issuedTokenType` may only be specified when
-     the token type is ISSUEDTOKEN — so an empty one on an ANONYMOUS policy
-     specifies a field the clause forbids. The Foundation's stack refused the
-     endpoint with `Bad_IdentityTokenInvalid`; the other two tolerated it.
-  2. `CreateSession` refused open62541, which deliberately sends no nonce on an
-     unsecured channel. Recorded as a **deliberate deviation**: an absent nonce
-     is accepted only under `SecurityMode None`, where the clause's own stated
-     rationale for the field (proving possession of a certificate that the same
-     clause says is ignored under None) does not apply. A present nonce is
-     still checked, and under any other mode the rule is enforced as written.
+  The fixes are structural rather than local. The listener now states one
+  concurrency rule and the registries follow it, handing out `ChannelInfo` and
+  `SessionInfo` value snapshots so no caller can hold or mutate state a service
+  owns. Session termination is one operation every route goes through, which
+  releases subscriptions through a hook the listener registers once and wakes
+  outstanding requests. A request in flight holds its session open, which is
+  what OPC 10000-4 5.7.2 says when it terminates a session whose client "fails
+  to issue a Service request".
 
-  UA Expert remains untested: Unified Automation distributes it only to
-  registered users, so it could not be obtained without creating an account.
+  Each fix has a test that fails against the original code, and
+  `internal/opcua/concurrency_test.go` drives concurrent clients against a live
+  listener while expiry runs — the test whose absence let all three through.
 
 - The local KVM/libvirt destructive-validation gate is paused. The dedicated
   `opcda-destructive-review` VM and all of its dedicated host resources were
@@ -499,6 +503,13 @@ release-promotion gate.
   rechecked against code and tests.
 
 ## Known issues
+
+- The OPC UA listener's shared services were audited for concurrency on
+  2026-08-26 after two clients connecting at the same time were found to fault
+  the process. The rule is now stated once on the `Listener` type and exercised
+  by `internal/opcua/concurrency_test.go`. Any new service the listener holds
+  must either be immutable after construction or synchronise itself, and must
+  not hand out pointers to state it owns.
 
 - DA 2.x Browse enumeration does not directly supply canonical VARTYPE/access
   rights. Browse omits those fields rather than inferring them or performing an

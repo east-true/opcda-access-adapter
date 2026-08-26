@@ -320,7 +320,7 @@ func TestActivateAcceptsAnonymousIdentities(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	nonce, err := registry.Activate(session, ActivateSessionRequest{
+	nonce, err := registry.Activate(session.AuthenticationToken, session.ChannelID, ActivateSessionRequest{
 		UserIdentityToken: NullExtensionObject(),
 	}, "", channelEpoch)
 	if err != nil {
@@ -329,7 +329,14 @@ func TestActivateAcceptsAnonymousIdentities(t *testing.T) {
 	if len(nonce) < MinNonceBytes {
 		t.Fatalf("server nonce is %d bytes", len(nonce))
 	}
-	if !session.Activated {
+	// The snapshot taken at Create does not change when the session does, so
+	// the registry is asked again. That is the point of handing out values:
+	// nothing outside the registry can observe a half-written session.
+	activated, err := registry.Lookup(session.AuthenticationToken, session.ChannelID, channelEpoch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !activated.Activated {
 		t.Fatal("the session was not activated")
 	}
 
@@ -345,7 +352,7 @@ func TestActivateAcceptsAnonymousIdentities(t *testing.T) {
 		Encoding: ExtensionObjectByteString,
 		Body:     body,
 	}
-	if _, err := registry.Activate(session, ActivateSessionRequest{UserIdentityToken: token}, "anon", channelEpoch); err != nil {
+	if _, err := registry.Activate(session.AuthenticationToken, session.ChannelID, ActivateSessionRequest{UserIdentityToken: token}, "anon", channelEpoch); err != nil {
 		t.Fatalf("a matching anonymous token was refused: %v", err)
 	}
 }
@@ -359,7 +366,7 @@ func TestActivateRejectsOtherIdentityTypes(t *testing.T) {
 	// A UserNameIdentityToken is not accepted, because no such policy is
 	// published.
 	other := ExtensionObject{TypeID: NumericNodeID(0, 324), Encoding: ExtensionObjectNoBody}
-	_, err = registry.Activate(session, ActivateSessionRequest{UserIdentityToken: other}, "", channelEpoch)
+	_, err = registry.Activate(session.AuthenticationToken, session.ChannelID, ActivateSessionRequest{UserIdentityToken: other}, "", channelEpoch)
 	if err == nil {
 		t.Fatal("a non-anonymous identity token was accepted")
 	}
@@ -379,7 +386,7 @@ func TestActivateRejectsOtherIdentityTypes(t *testing.T) {
 		Encoding: ExtensionObjectByteString,
 		Body:     body,
 	}
-	_, err = registry.Activate(session, ActivateSessionRequest{UserIdentityToken: mismatched}, "anon", channelEpoch)
+	_, err = registry.Activate(session.AuthenticationToken, session.ChannelID, ActivateSessionRequest{UserIdentityToken: mismatched}, "anon", channelEpoch)
 	if err == nil {
 		t.Fatal("a mismatched policy id was accepted")
 	}
@@ -454,5 +461,69 @@ func TestSessionLimitsValidation(t *testing.T) {
 				t.Fatal("a registry was built from invalid limits")
 			}
 		})
+	}
+}
+
+// OPC 10000-4 5.7.2 terminates a session when "the Client fails to issue a
+// Service request… within the timeout period". A request the server is still
+// serving is one the client did issue, so the idle clock must not run against
+// it.
+//
+// This matters because the server itself can be the reason no further request
+// arrives: Publish is held until the subscription has something to say, and a
+// subscription may legitimately be silent for publishing interval times
+// keep-alive count — which the limits allow to exceed the session timeout by a
+// wide margin. Before Publish was held the client re-sent constantly and kept
+// its own session alive by accident.
+func TestARequestInFlightHoldsItsSessionOpen(t *testing.T) {
+	registry := newTestSessionRegistry(t, DefaultSessionLimits())
+	session, _, err := registry.Create(1, testSessionSecurity(), testCreateSessionRequest(), channelEpoch)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	release, live := registry.BeginRequest(session.AuthenticationToken)
+	if !live {
+		t.Fatal("a live session refused a request")
+	}
+
+	// Well past the timeout, but the server owes this session an answer.
+	if removed := registry.ExpireStale(channelEpoch.Add(24 * time.Hour)); removed != 0 {
+		t.Fatalf("a session with a request in flight was expired (%d removed)", removed)
+	}
+
+	// Once answered, the idle clock starts again and the session can expire.
+	release()
+	if removed := registry.ExpireStale(time.Now().UTC().Add(24 * time.Hour)); removed != 1 {
+		t.Fatalf("sessions expired = %d, want the answered session to age out", removed)
+	}
+}
+
+// Terminating a session wakes whatever is still serving a request for it, so
+// the request aborts instead of outliving the session. The clause requires
+// exactly that: "all outstanding requests on the Session are aborted".
+func TestTerminatingASessionWakesItsOutstandingRequests(t *testing.T) {
+	registry := newTestSessionRegistry(t, DefaultSessionLimits())
+	session, _, err := registry.Create(1, testSessionSecurity(), testCreateSessionRequest(), channelEpoch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ended, ok := registry.Ended(session.AuthenticationToken)
+	if !ok {
+		t.Fatal("a live session reported no termination signal")
+	}
+	select {
+	case <-ended:
+		t.Fatal("a live session was already reported ended")
+	default:
+	}
+
+	if err := registry.Close(session.AuthenticationToken, session.ChannelID, channelEpoch); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-ended:
+	case <-time.After(5 * time.Second):
+		t.Fatal("terminating the session did not wake its outstanding requests")
 	}
 }

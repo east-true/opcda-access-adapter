@@ -134,7 +134,14 @@ func testSubscriptionService(t *testing.T, runtime opcda.Runtime) (*Subscription
 
 func createSubscription(t *testing.T, service *SubscriptionService) uint32 {
 	t.Helper()
-	response, err := service.CreateSubscription(testSession, CreateSubscriptionRequest{
+	return createSubscriptionFor(t, service, testSession)
+}
+
+// createSubscriptionFor names the session the subscription belongs to, so a
+// test can tie one to a session it created itself.
+func createSubscriptionFor(t *testing.T, service *SubscriptionService, session string) uint32 {
+	t.Helper()
+	response, err := service.CreateSubscription(session, CreateSubscriptionRequest{
 		Header:                      RequestHeader{RequestHandle: 1, AdditionalHeader: NullExtensionObject()},
 		RequestedPublishingInterval: 250,
 		RequestedMaxKeepAliveCount:  3,
@@ -148,7 +155,13 @@ func createSubscription(t *testing.T, service *SubscriptionService) uint32 {
 
 func monitorItem(t *testing.T, service *SubscriptionService, id uint32, node NodeID, handle uint32) MonitoredItemCreateResult {
 	t.Helper()
-	response, err := service.CreateMonitoredItems(context.Background(), testSession, CreateMonitoredItemsRequest{
+	return monitorItemFor(t, service, testSession, id, node, handle)
+}
+
+// monitorItemFor names the session, for the same reason.
+func monitorItemFor(t *testing.T, service *SubscriptionService, session string, id uint32, node NodeID, handle uint32) MonitoredItemCreateResult {
+	t.Helper()
+	response, err := service.CreateMonitoredItems(context.Background(), session, CreateMonitoredItemsRequest{
 		Header:             RequestHeader{RequestHandle: 2, AdditionalHeader: NullExtensionObject()},
 		SubscriptionID:     id,
 		TimestampsToReturn: TimestampsBoth,

@@ -131,6 +131,30 @@ func (config ListenerConfig) ValidateForConfiguration() error { return config.va
 
 // Listener serves UA-TCP connections. It owns one channel registry, so the
 // SecureChannels it issues are scoped to this listener.
+// Listener holds the services a server shares across every connection.
+//
+// # Concurrency
+//
+// The listener serves each connection on its own goroutine, and the owning
+// application calls ExpireStaleChannels and InvalidateAddressSpace from
+// another. So every field below is reached from several goroutines at once,
+// and the rule for this package follows from that:
+//
+//   - A service that holds mutable state is responsible for its own
+//     synchronisation. It does not assume a caller serialises access, because
+//     no caller does.
+//   - A service that is immutable after construction needs nothing, and
+//     EndpointService and DataAccessService are exactly that.
+//   - A service never hands out a pointer to state it owns. Callers get value
+//     snapshots, so there is no way to read a field while another connection
+//     writes it, and no way to hold a stale object across two calls.
+//
+// The rule is not new; six of these services already followed it. Two — the
+// channel and session registries — carried a comment asserting a
+// single-goroutine owner that the listener has never provided, and nothing
+// checked, so two clients connecting at the same time faulted the process with
+// a Go runtime "concurrent map read and map write". concurrency_test.go now
+// exercises the rule, so a service that opts out of it fails there.
 type Listener struct {
 	config    ListenerConfig
 	registry  *ChannelRegistry
@@ -211,7 +235,7 @@ func NewListenerWithRuntime(config ListenerConfig, runtime opcda.Runtime, channe
 			return nil, err
 		}
 	}
-	return &Listener{
+	listener := &Listener{
 		config:    config,
 		registry:  registry,
 		endpoints: endpoints,
@@ -223,7 +247,17 @@ func NewListenerWithRuntime(config ListenerConfig, runtime opcda.Runtime, channe
 		subs:      subs,
 		slots:     make(chan struct{}, config.MaxConnections),
 		conns:     make(map[net.Conn]struct{}),
-	}, nil
+	}
+	if subs != nil {
+		// A session's subscriptions hold DA groups open on the source, so
+		// ending a session must release them — whichever route ended it. This
+		// is registered once rather than repeated at each call site, because a
+		// call site that forgets is a leak on a real DA server.
+		sessions.OnSessionEnd(func(session SessionInfo) {
+			subs.ReleaseSession(context.Background(), session.Key())
+		})
+	}
+	return listener, nil
 }
 
 func (l *Listener) Listening() bool { return l.listening.Load() }
@@ -597,7 +631,7 @@ func (l *Listener) splitSecureMessage(state *connectionState, body []byte, asymm
 		if acceptErr != nil {
 			return parts, acceptErr
 		}
-		parts.Token = channel.Token()
+		parts.Token = channel.Token
 		consumed += 4
 	}
 	if len(body) < consumed+SequenceHeaderSize {
@@ -689,7 +723,7 @@ func (l *Listener) activatedSession(header RequestHeader, channelID uint32, now 
 	if !session.Activated {
 		return "", uacpError(StatusBadSessionNotActivated, "the session has not been activated")
 	}
-	return string(session.AuthenticationToken.Opaque), nil
+	return session.Key(), nil
 }
 
 // AddressSpace exposes the served address space. With a DA runtime attached the
@@ -745,7 +779,7 @@ func (l *Listener) dispatchService(channelID uint32, identifier uint32, decoder 
 			return nil, request.Header.RequestHandle, channelErr, nil
 		}
 		session, serverNonce, createErr := l.sessions.Create(channelID, SessionSecurity{
-			Mode:                  channel.SecurityMode(),
+			Mode:                  channel.SecurityMode,
 			AnonymousIdentityOnly: l.endpoints.AnonymousIdentityOnly(),
 		}, request, now)
 		if createErr != nil {
@@ -771,11 +805,8 @@ func (l *Listener) dispatchService(channelID uint32, identifier uint32, decoder 
 		if requestErr != nil {
 			return nil, 0, nil, requestErr
 		}
-		session, lookupErr := l.sessions.Lookup(request.Header.AuthenticationToken, channelID, now)
-		if lookupErr != nil {
-			return nil, request.Header.RequestHandle, lookupErr, nil
-		}
-		serverNonce, activateErr := l.sessions.Activate(session, request, l.config.Endpoint.AnonymousPolicyID, now)
+		serverNonce, activateErr := l.sessions.Activate(request.Header.AuthenticationToken,
+			channelID, request, l.config.Endpoint.AnonymousPolicyID, now)
 		if activateErr != nil {
 			return nil, request.Header.RequestHandle, activateErr, nil
 		}
@@ -794,11 +825,8 @@ func (l *Listener) dispatchService(channelID uint32, identifier uint32, decoder 
 		if requestErr != nil {
 			return nil, 0, nil, requestErr
 		}
-		if l.subs != nil {
-			// A closed session must not leave DA groups open on the source.
-			l.subs.ReleaseSession(context.Background(),
-				string(request.Header.AuthenticationToken.Opaque))
-		}
+		// The subscriptions are released by the session-end hook rather than
+		// here, so every route that ends a session releases them.
 		if closeErr := l.sessions.Close(request.Header.AuthenticationToken, channelID, now); closeErr != nil {
 			return nil, request.Header.RequestHandle, closeErr, nil
 		}
@@ -1122,16 +1150,38 @@ func (l *Listener) handlePublish(conn net.Conn, state *connectionState, parts se
 				maxOutstandingPublishesPerConnection))
 	}
 
+	// The session stays alive for as long as this request is being served.
+	// OPC 10000-4 5.7.2 terminates a session when the client "fails to issue a
+	// Service request" within the timeout; a request the server is still
+	// holding is one the client did issue, so the idle clock must not run
+	// against it. The clock restarts when the request is answered.
+	releaseRequest, live := l.sessions.BeginRequest(request.Header.AuthenticationToken)
+	if !live {
+		state.publishing.Add(-1)
+		return l.writeServiceFault(conn, state, parts, request.Header.RequestHandle,
+			uacpError(StatusBadSessionIDInvalid, "the session is not known"))
+	}
+	// The same clause aborts outstanding requests when a session is
+	// terminated, so a Publish held for a session that ends is answered with
+	// Bad_SessionClosed rather than waiting on a session that is gone.
+	sessionEnded, _ := l.sessions.Ended(request.Header.AuthenticationToken)
+
 	go func() {
 		defer state.publishing.Add(-1)
+		defer releaseRequest()
 
-		// The wait ends with the connection, so a client that disappears does
-		// not leave a goroutine holding a request nobody will read.
+		// The wait ends with the connection or with the session, so neither a
+		// client that disappears nor a session that is terminated leaves a
+		// goroutine holding a request nobody will read.
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
+		terminated := make(chan struct{})
 		go func() {
 			select {
 			case <-state.done:
+				cancel()
+			case <-sessionEnded:
+				close(terminated)
 				cancel()
 			case <-ctx.Done():
 			}
@@ -1139,6 +1189,13 @@ func (l *Listener) handlePublish(conn net.Conn, state *connectionState, parts se
 
 		response, publishErr := l.subs.Publish(ctx, session, request, now)
 		if publishErr != nil {
+			select {
+			case <-terminated:
+				_ = l.writeServiceFault(conn, state, parts, request.Header.RequestHandle,
+					uacpError(StatusBadSessionClosed, "the session was terminated"))
+				return
+			default:
+			}
 			if ctx.Err() != nil {
 				// The connection is gone; there is nobody to tell.
 				return
