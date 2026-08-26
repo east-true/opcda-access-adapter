@@ -6,6 +6,8 @@ import (
 	"net"
 	"testing"
 	"time"
+
+	"github.com/east-true/opcda-access-adapter/internal/opcda"
 )
 
 // testClient is a minimal UA-TCP client: just enough to drive the connection
@@ -33,6 +35,10 @@ func testEndpointConfig() EndpointConfig {
 func testListenerConfig() ListenerConfig {
 	config := DefaultListenerConfig()
 	config.Endpoint = testEndpointConfig()
+	config.AddressSpace = AddressSpaceConfig{
+		NamespaceURI:     "urn:example:opcda-access-adapter",
+		SourceFolderName: "Source",
+	}
 	return config
 }
 
@@ -532,13 +538,15 @@ func TestListenerFaultsOnAnUnimplementedService(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Browse is not implemented yet; its encoding id comes from the OPC
-	// Foundation NodeIds table.
+	// An identifier the OPC Foundation NodeIds table does not assign to any
+	// service encoding. Using a real-but-unimplemented service here would make
+	// this test move every time another service is added.
+	const unassignedServiceEncodingID = 0x7FFFFFFF
 	encoder, err := NewEncoder(client.limits)
 	if err != nil {
 		t.Fatal(err)
 	}
-	encoder.WriteServiceTypeID(527)
+	encoder.WriteServiceTypeID(unassignedServiceEncodingID)
 	serviceBody, err := encoder.Bytes()
 	if err != nil {
 		t.Fatal(err)
@@ -817,6 +825,132 @@ func TestListenerBindsSessionsToTheirChannel(t *testing.T) {
 	var codecErr *CodecError
 	if !errors.As(err, &codecErr) || codecErr.Status != StatusBadSecureChannelIDInvalid {
 		t.Fatalf("error = %v", err)
+	}
+}
+
+func (c *testClient) browse(token ChannelSecurityToken, requestID uint32, authToken NodeID, node NodeID) (uint32, *Decoder, error) {
+	c.t.Helper()
+	encoder, err := NewEncoder(c.limits)
+	if err != nil {
+		c.t.Fatal(err)
+	}
+	encoder.WriteBrowseRequest(BrowseRequest{
+		Header: RequestHeader{
+			AuthenticationToken: authToken,
+			RequestHandle:       requestID,
+			AdditionalHeader:    NullExtensionObject(),
+		},
+		NodesToBrowse: []BrowseDescription{{
+			NodeID:          node,
+			BrowseDirection: BrowseDirectionForward,
+			ResultMask:      ResultMaskAll,
+		}},
+	})
+	serviceBody, err := encoder.Bytes()
+	if err != nil {
+		c.t.Fatal(err)
+	}
+	return c.callService(token, requestID, serviceBody)
+}
+
+// Browse over a real socket, after a full Hello/OPN/CreateSession/Activate.
+func TestListenerServesBrowse(t *testing.T) {
+	listener, address := startTestListener(t, testListenerConfig())
+	if err := listener.AddressSpace().PopulateBranch(nil, []opcda.BrowseEntry{
+		{Kind: opcda.BrowseEntryBranch, Name: "Test"},
+		{Kind: opcda.BrowseEntryItem, Name: "Top", ItemID: itemID("Top")},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	client := dialTestClient(t, address)
+	client.hello()
+	opened, err := client.openChannel(0, TokenRequestIssue, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	created, err := client.createSession(opened.SecurityToken, 2, testClientNonce())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.activateSession(opened.SecurityToken, 3, created.AuthenticationToken, NullExtensionObject()); err != nil {
+		t.Fatal(err)
+	}
+
+	identifier, decoder, err := client.browse(
+		opened.SecurityToken, 4, created.AuthenticationToken, listener.AddressSpace().SourceFolderID())
+	if err != nil {
+		t.Fatalf("Browse: %v", err)
+	}
+	if identifier != BrowseResponseEncodingID {
+		t.Fatalf("service = %d", identifier)
+	}
+	response, err := decoder.ReadBrowseResponse()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if response.Header.ServiceResult != StatusGood || len(response.Results) != 1 {
+		t.Fatalf("response = %+v", response.Header)
+	}
+	if len(response.Results[0].References) != 2 {
+		t.Fatalf("references = %d, want 2", len(response.Results[0].References))
+	}
+	// The exact DA ItemID survives all the way to the client.
+	found := false
+	for _, reference := range response.Results[0].References {
+		if reference.NodeID.NodeID.StringID == "item:Top" {
+			found = true
+			if reference.BrowseName.Name != "Top" {
+				t.Fatalf("browse name = %q", reference.BrowseName.Name)
+			}
+		}
+	}
+	if !found {
+		t.Fatal("the item node did not reach the client")
+	}
+}
+
+// A session that was created but never activated cannot read the address space.
+func TestListenerRefusesBrowseWithoutAnActivatedSession(t *testing.T) {
+	listener, address := startTestListener(t, testListenerConfig())
+	client := dialTestClient(t, address)
+	client.hello()
+	opened, err := client.openChannel(0, TokenRequestIssue, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	created, err := client.createSession(opened.SecurityToken, 2, testClientNonce())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	identifier, decoder, err := client.browse(
+		opened.SecurityToken, 3, created.AuthenticationToken, listener.AddressSpace().SourceFolderID())
+	if err != nil {
+		t.Fatalf("the channel closed instead of faulting: %v", err)
+	}
+	if identifier != ServiceFaultEncodingID {
+		t.Fatalf("service = %d, want a ServiceFault", identifier)
+	}
+	header, err := decoder.ReadResponseHeader()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if header.ServiceResult != StatusBadSessionNotActivated {
+		t.Fatalf("service result = %s, want Bad_SessionNotActivated", header.ServiceResult.Hex())
+	}
+
+	// After activation the same browse succeeds.
+	if _, err := client.activateSession(opened.SecurityToken, 4, created.AuthenticationToken, NullExtensionObject()); err != nil {
+		t.Fatal(err)
+	}
+	identifier, _, err = client.browse(
+		opened.SecurityToken, 5, created.AuthenticationToken, listener.AddressSpace().SourceFolderID())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if identifier != BrowseResponseEncodingID {
+		t.Fatalf("service = %d after activation", identifier)
 	}
 }
 

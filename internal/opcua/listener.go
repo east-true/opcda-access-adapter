@@ -42,6 +42,10 @@ type ListenerConfig struct {
 	Binary         BinaryLimits
 	Channels       ChannelLimits
 	Sessions       SessionLimits
+	Browse         BrowseLimits
+	// AddressSpace describes the namespace and folder the DA source appears
+	// under.
+	AddressSpace AddressSpaceConfig
 	// Endpoint is the single endpoint this listener publishes through
 	// GetEndpoints.
 	Endpoint EndpointConfig
@@ -60,6 +64,7 @@ func DefaultListenerConfig() ListenerConfig {
 		Binary:            DefaultBinaryLimits(),
 		Channels:          DefaultChannelLimits(),
 		Sessions:          DefaultSessionLimits(),
+		Browse:            DefaultBrowseLimits(),
 		// The endpoint has no default: its URLs identify a deployment and its
 		// security policy URI is defined by OPC 10000-7, so both are supplied
 		// rather than assumed.
@@ -96,6 +101,12 @@ func (config ListenerConfig) validate() error {
 	if err := config.Sessions.validate(); err != nil {
 		return err
 	}
+	if err := config.Browse.validate(); err != nil {
+		return err
+	}
+	if err := config.AddressSpace.validate(); err != nil {
+		return err
+	}
 	return config.Endpoint.validate()
 }
 
@@ -108,6 +119,8 @@ type Listener struct {
 	registry  *ChannelRegistry
 	endpoints *EndpointService
 	sessions  *SessionRegistry
+	space     *AddressSpace
+	browse    *BrowseService
 
 	listening atomic.Bool
 	slots     chan struct{}
@@ -134,11 +147,21 @@ func NewListener(config ListenerConfig, channelIDSeed, tokenIDSeed uint32) (*Lis
 	if err != nil {
 		return nil, err
 	}
+	space, err := NewAddressSpace(config.AddressSpace)
+	if err != nil {
+		return nil, err
+	}
+	browse, err := NewBrowseService(space, config.Browse)
+	if err != nil {
+		return nil, err
+	}
 	return &Listener{
 		config:    config,
 		registry:  registry,
 		endpoints: endpoints,
 		sessions:  sessions,
+		space:     space,
+		browse:    browse,
 		slots:     make(chan struct{}, config.MaxConnections),
 		conns:     make(map[net.Conn]struct{}),
 	}, nil
@@ -221,6 +244,10 @@ func (l *Listener) Close() error {
 		return nil
 	}
 	l.closed = true
+	// Marked here rather than only in Serve's deferred call: once Close returns
+	// the listener is no longer accepting, and a caller must not observe it as
+	// listening while the accept goroutine is still unwinding.
+	l.listening.Store(false)
 	listener := l.listener
 	conns := make([]net.Conn, 0, len(l.conns))
 	for conn := range l.conns {
@@ -518,6 +545,25 @@ func (l *Listener) handleSecureMessage(conn net.Conn, state *connectionState, bo
 	return l.writeSecureMessage(conn, state, MessageTypeSecure, token, sequence.RequestID, serviceBody, false)
 }
 
+// requireActivatedSession resolves the session a request claims and refuses one
+// that was created but never activated. OPC 10000-4 defines
+// Bad_SessionNotActivated for exactly that state, so a client cannot skip
+// ActivateSession and still read the address space.
+func (l *Listener) requireActivatedSession(header RequestHeader, channelID uint32, now time.Time) error {
+	session, err := l.sessions.Lookup(header.AuthenticationToken, channelID, now)
+	if err != nil {
+		return err
+	}
+	if !session.Activated {
+		return uacpError(StatusBadSessionNotActivated, "the session has not been activated")
+	}
+	return nil
+}
+
+// AddressSpace exposes the served address space so the owning application can
+// populate it from the DA source.
+func (l *Listener) AddressSpace() *AddressSpace { return l.space }
+
 // StatusBadInternalError is from the OPC Foundation StatusCode list.
 const StatusBadInternalError StatusCode = 0x80020000
 
@@ -597,6 +643,34 @@ func (l *Listener) dispatchService(channelID uint32, identifier uint32, decoder 
 			Timestamp: now, RequestHandle: request.Header.RequestHandle,
 			ServiceResult: StatusGood, AdditionalHeader: NullExtensionObject(),
 		}})
+
+	case BrowseRequestEncodingID:
+		request, requestErr := decoder.ReadBrowseRequest()
+		if requestErr != nil {
+			return nil, 0, nil, requestErr
+		}
+		if sessionErr := l.requireActivatedSession(request.Header, channelID, now); sessionErr != nil {
+			return nil, request.Header.RequestHandle, sessionErr, nil
+		}
+		response, browseErr := l.browse.Browse(request, now)
+		if browseErr != nil {
+			return nil, request.Header.RequestHandle, browseErr, nil
+		}
+		encoder.WriteBrowseResponse(response)
+
+	case BrowseNextRequestEncodingID:
+		request, requestErr := decoder.ReadBrowseNextRequest()
+		if requestErr != nil {
+			return nil, 0, nil, requestErr
+		}
+		if sessionErr := l.requireActivatedSession(request.Header, channelID, now); sessionErr != nil {
+			return nil, request.Header.RequestHandle, sessionErr, nil
+		}
+		response, browseErr := l.browse.BrowseNext(request, now)
+		if browseErr != nil {
+			return nil, request.Header.RequestHandle, browseErr, nil
+		}
+		encoder.WriteBrowseNextResponse(response)
 
 	default:
 		// The request handle cannot be trusted from an unparsed body, so the
@@ -684,7 +758,9 @@ func (l *Listener) writeProtocolError(conn net.Conn, cause error) {
 // periodically; it is exposed rather than run on an internal timer so the
 // owning application keeps control of its own scheduling.
 func (l *Listener) ExpireStaleChannels(now time.Time) int {
-	return l.registry.ExpireStale(now) + l.sessions.ExpireStale(now)
+	return l.registry.ExpireStale(now) +
+		l.sessions.ExpireStale(now) +
+		l.browse.ExpireContinuationPoints(now)
 }
 
 // Shutdown closes the listener and waits for the context.

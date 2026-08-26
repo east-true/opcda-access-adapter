@@ -263,6 +263,14 @@ func FuzzDecodeStructuredTypes(f *testing.F) {
 			func(d *Decoder) error { _, err := d.ReadActivateSessionRequest(); return err },
 			func(d *Decoder) error { _, err := d.ReadActivateSessionResponse(); return err },
 			func(d *Decoder) error { _, err := d.ReadCloseSessionRequest(); return err },
+			func(d *Decoder) error { _, err := d.ReadViewDescription(); return err },
+			func(d *Decoder) error { _, err := d.ReadBrowseDescription(); return err },
+			func(d *Decoder) error { _, err := d.ReadReferenceDescription(); return err },
+			func(d *Decoder) error { _, err := d.ReadBrowseResult(); return err },
+			func(d *Decoder) error { _, err := d.ReadBrowseRequest(); return err },
+			func(d *Decoder) error { _, err := d.ReadBrowseResponse(); return err },
+			func(d *Decoder) error { _, err := d.ReadBrowseNextRequest(); return err },
+			func(d *Decoder) error { _, err := d.ReadBrowseNextResponse(); return err },
 		} {
 			decoder, err := NewDecoder(data, limits)
 			if err != nil {
