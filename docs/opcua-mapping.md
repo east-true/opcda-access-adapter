@@ -497,6 +497,48 @@ Sessions are bounded in count and reclaimed when they go quiet past their
 revised timeout, which is clamped into a configured range and is always greater
 than zero as Table 15 requires.
 
+## The address space
+
+`internal/opcua/addressspace.go` maps the DA source onto UA nodes. The standard
+nodes — Root, Objects, Types, and the folder that holds the source — use the
+identifiers from the OPC Foundation NodeIds table, and the attribute and
+`AccessLevel` values come from the AttributeIds table and OPC 10000-3.
+
+`NodeClass` is a **bit mask** (1, 2, 4, 8, …), not an ordinal. That is why
+Browse filters node classes with a mask, and treating it as an ordinal would
+make every such filter wrong.
+
+### Identity follows the design, not convenience
+
+Design §35.2 governs this, and the mapping implements it literally:
+
+- **An item's node carries the exact DA ItemID**, with no trimming, case
+  conversion, or delimiter rewriting. Tests pin awkward identifiers — embedded
+  spaces, mixed case, a trailing space, an embedded tab — through the round
+  trip.
+- **A branch has no ItemID.** The design forbids reconstructing one from a
+  browse path, so a branch's identity is the navigation path itself, marked so
+  it can never collide with an item's identifier. A branch never resolves to an
+  ItemID.
+- **BrowseName and DisplayName are what DA Browse returned**, unmodified.
+- The namespace **URI** is the durable name; the index is not treated as
+  identity.
+
+A nested branch keeps its full path, so two branches with the same name under
+different parents stay distinct nodes.
+
+### Types and access
+
+A variable's DataType comes from the Part 8 mapping. A VARTYPE with no Table A.2
+row falls back to the **abstract base type** rather than borrowing a
+numerically similar one, and every variable is a scalar because the DA core
+decodes no arrays. Access rights the source did not report leave the access
+level empty rather than being assumed readable.
+
+Re-browsing a branch replaces its forward references, so the space reflects the
+source instead of accumulating nodes the source no longer has, while the
+inverse references that walk back up survive.
+
 ## What is not decided here
 
 Certificate handling and the signed and encrypted security policies, address

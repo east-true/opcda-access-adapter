@@ -114,15 +114,16 @@ release-promotion gate.
 
 ## In progress
 
-- Phase 8 OPC UA continues on `feat/opcua-session-services` with
-  `CreateSession`, `ActivateSession`, and `CloseSession`, served by the listener
-  over a real socket. Merged so far: the DA-to-UA mapping (PR #37), the UA
-  Binary codec (PR #38), the connection protocol framing (PR #39), the secure
-  conversation framing (PR #40), the SecureChannel token lifecycle (PR #41), the
-  structured types and service headers (PR #42), the SecureChannel service
-  bodies (PR #43), the UA-TCP listener (PR #44), and GetEndpoints (PR #45). No
-  address space and no UA dependency yet. The listener is still not wired into
-  the application, and only the anonymous user identity is accepted. No
+- Phase 8 OPC UA continues on `feat/opcua-address-space` with the DA-backed
+  address space: standard nodes, DA branches as folders, DA items as variables
+  carrying their exact ItemID, and the Part 8 DataType and access-level mapping.
+  Merged so far: the DA-to-UA mapping (PR #37), the UA Binary codec (PR #38),
+  the connection protocol framing (PR #39), the secure conversation framing
+  (PR #40), the SecureChannel token lifecycle (PR #41), the structured types and
+  service headers (PR #42), the SecureChannel service bodies (PR #43), the
+  UA-TCP listener (PR #44), GetEndpoints (PR #45), and the session services
+  (PR #46). The Browse, Read, and Write services are not implemented, the
+  listener is not wired into the application, and there is no UA dependency. No
   conformance or interoperability claim is made.
 
 - The local KVM/libvirt destructive-validation gate is paused. The dedicated
