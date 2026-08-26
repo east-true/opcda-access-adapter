@@ -122,18 +122,35 @@ release-promotion gate.
 
 ## In progress
 
-- Third-party vendor compatibility work is on `fix/opcua-vendor-variations`. No
-  vendor DA server was available, so nothing is claimed as a vendor result; the
-  branch fixes defects that reviewing the UA layer against vendor-shaped sources
-  exposed. `IOPCBrowseServerAddressSpace` is optional in DA 2.05a, and against a
-  source lacking it the UA address space could never be populated and nothing
-  was reachable. A UA node identifier carries the exact ItemID, so an item can
-  now be read, written and monitored without having been browsed, bounded by the
-  same node budget. A MonitoredItem's `revisedSamplingInterval` now reports the
-  rate the DA server settled on rather than the subscription's publishing
-  interval. `BROWSE_UNSUPPORTED` and `SUBSCRIBE_UNSUPPORTED` map to
-  `Bad_ServiceUnsupported` rather than `Bad_InternalError`, since both
-  interfaces are optional.
+- Third-party OPC UA client interoperability is on
+  `fix/opcua-client-interop`. Every UA test before it ran this project's
+  encoder against its own decoder, which agree by construction. A third-party
+  client ([asyncua](https://github.com/FreeOpcUa/opcua-asyncio), used as an
+  interop client only, as design §5.2 permits) now runs against the UA frontend
+  over a scripted DA source, via `scripts/interop/run.sh`; see
+  `docs/validation/ua-client-interop.md`.
+
+  It found four defects the Go suite could not see, each of which made the
+  adapter unusable with a conforming client:
+
+  1. The `OpenSecureChannel` reply named no security policy. OPC 10000-6 6.7.7
+     requires the response to name the policy the request named, so **no
+     third-party client could connect at all**. The same clause's requirement
+     to verify that the requested policy is supported was also not checked.
+  2. `Browse` decoded `includeSubtypes` and ignored it, so a generic
+     hierarchical walk found nothing.
+  3. `Publish` answered immediately rather than holding the request. OPC
+     10000-4 5.14.5.1 has Publish requests queued in the server; answering at
+     once produced 3,874 exchanges in 40 seconds against one notification
+     delivered, and starved the sampling the subscription existed to deliver.
+  4. The standard `Server` object was missing, so the client's liveness probe
+     failed and it tore the connection down after the first notification.
+
+  All four are fixed with regression tests. The address space now publishes the
+  `Server` object with `ServerArray`, `NamespaceArray`, the `ServerStatus`
+  subtree, `ServiceLevel` and `Auditing`; the node budget counts only
+  source-derived nodes, so a fixed node the specification requires does not
+  reduce how many DA items an operator's limit allows.
 
 
 - The local KVM/libvirt destructive-validation gate is paused. The dedicated
@@ -538,6 +555,10 @@ release-promotion gate.
    Treat vendor callback behavior as untested: a server may refuse connection
    points, revise update rates differently, or report Quality and timestamps
    differently. Record any such observation before changing source semantics.
+8. One third-party UA client is not conformance. Run `scripts/interop/run.sh`
+   before any change to the UA wire format, and treat other clients — UA
+   Expert, open62541, the OPC Foundation .NET stack — as untested. Do not make
+   an "OPC UA Certified" or "OPC UA Compliant" claim; ADR-0016 forbids it.
 
 ## Decisions
 

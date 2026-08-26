@@ -3,6 +3,7 @@ package opcua
 import (
 	"fmt"
 	"sync"
+	"time"
 
 	"github.com/east-true/opcda-access-adapter/internal/opcda"
 )
@@ -56,8 +57,11 @@ const ValueRankScalar int32 = -1
 // Standard node identifiers from the OPC Foundation NodeIds table.
 const (
 	NodeIDReferences           uint32 = 31
+	NodeIDNonHierarchicalRefs  uint32 = 32
 	NodeIDHierarchicalRefs     uint32 = 33
+	NodeIDHasChild             uint32 = 34
 	NodeIDOrganizes            uint32 = 35
+	NodeIDAggregates           uint32 = 44
 	NodeIDHasTypeDefinition    uint32 = 40
 	NodeIDHasProperty          uint32 = 46
 	NodeIDHasComponent         uint32 = 47
@@ -67,7 +71,16 @@ const (
 	NodeIDRootFolder           uint32 = 84
 	NodeIDObjectsFolder        uint32 = 85
 	NodeIDTypesFolder          uint32 = 86
+	NodeIDPropertyType         uint32 = 68
+	NodeIDServerType           uint32 = 2004
+	NodeIDServer               uint32 = 2253
+	NodeIDServerArray          uint32 = 2254
+	NodeIDNamespaceArray       uint32 = 2255
 )
+
+// ValueRankOneDimension is the ValueRank of the standard Server properties.
+// Nothing the DA source supplies is an array.
+const ValueRankOneDimension int32 = 1
 
 // Built-in DataType identifiers from the same table.
 const (
@@ -155,7 +168,26 @@ type Node struct {
 	// folder, because design §35.2 forbids inventing an ItemID for a branch.
 	ItemID opcda.DAItemID
 
+	// LocalValue answers a variable the server reports about itself, such as
+	// the standard NamespaceArray or ServerStatus. It is nil for every
+	// variable that stands for a DA item, and the two are mutually exclusive:
+	// a DA process value is never held in the address space, only passed
+	// through from a source read. It is a function because some of these
+	// values, CurrentTime above all, have to be answered as of the read.
+	LocalValue func(now time.Time) Variant
+
 	References []Reference
+}
+
+// IsLocalVariable reports a variable the server answers from its own address
+// space rather than from the DA source.
+func (n *Node) IsLocalVariable() bool {
+	return n != nil && n.Class == NodeClassVariable && n.LocalValue != nil
+}
+
+// staticLocalValue holds a value that does not change between reads.
+func staticLocalValue(value Variant) func(time.Time) Variant {
+	return func(time.Time) Variant { return value }
 }
 
 // AddressSpaceConfig carries what the adapter cannot derive from the source.
@@ -167,6 +199,18 @@ type AddressSpaceConfig struct {
 	// SourceFolderName is the browse name of the folder that holds the source's
 	// address space.
 	SourceFolderName string
+	// ApplicationURI is this server's own URI, which the standard ServerArray
+	// property reports. It is the endpoint's ApplicationUri; OPC 10000-5 8.3.2
+	// has index 0 of the array name the local server.
+	ApplicationURI string
+	// The remaining fields describe the adapter itself and are reported by the
+	// standard Server BuildInfo. None of them comes from the DA source.
+	ProductURI       string
+	ManufacturerName string
+	ProductName      string
+	SoftwareVersion  string
+	BuildNumber      string
+	BuildDate        time.Time
 }
 
 func (config AddressSpaceConfig) validate() error {
@@ -195,6 +239,13 @@ type AddressSpace struct {
 	nodes map[string]*Node
 	// sourceFolder is the node DA branches and items hang from.
 	sourceFolder NodeID
+	// binaryLimits bounds the encoder used for the server's own structures.
+	binaryLimits BinaryLimits
+	// standardNodeCount is how many of the nodes are this server's own, fixed
+	// from construction, so the budget can count only what the source added.
+	standardNodeCount int
+	// startTime is what the standard ServerStatus reports as StartTime.
+	startTime time.Time
 }
 
 // nodeKey renders a NodeId as a map key. NodeID carries a byte slice, so it is
@@ -209,6 +260,10 @@ func NewAddressSpace(config AddressSpaceConfig) (*AddressSpace, error) {
 		config:       config,
 		nodes:        make(map[string]*Node),
 		sourceFolder: StringNodeID(AdapterNamespaceIndex, config.SourceFolderName),
+		binaryLimits: DefaultBinaryLimits(),
+		// The start time is when the address space was built, which is when
+		// this server began answering.
+		startTime: time.Now().UTC(),
 	}
 	space.addStandardNodes()
 	return space, nil
@@ -244,17 +299,65 @@ func (s *AddressSpace) addStandardNodes() {
 		TypeDefinition: NumericNodeID(0, NodeIDFolderType),
 	}
 
+	// OPC 10000-5 8.3.2 places a Server object in every server's address
+	// space. A UA client reads its NamespaceArray before it does anything
+	// else, because a namespace index means nothing on its own: only the URI
+	// it stands for is stable, which is the same reason design §35.2 keeps the
+	// URI rather than the index as this adapter's durable name. Without these
+	// nodes a conforming client cannot get past connecting.
+	server := &Node{
+		ID:             NumericNodeID(0, NodeIDServer),
+		Class:          NodeClassObject,
+		BrowseName:     QualifiedName{Namespace: 0, Name: "Server"},
+		DisplayName:    LocalizedText{Text: "Server"},
+		TypeDefinition: NumericNodeID(0, NodeIDServerType),
+	}
+	// The ServerArray names the servers this endpoint knows about. This
+	// adapter aggregates nothing, so it holds exactly one entry: itself.
+	serverArray := standardProperty(NodeIDServerArray, "ServerArray", []string{s.config.ApplicationURI})
+	namespaceArray := standardProperty(NodeIDNamespaceArray, "NamespaceArray", s.NamespaceURIs())
+
 	organizes := NumericNodeID(0, NodeIDOrganizes)
+	hasProperty := NumericNodeID(0, NodeIDHasProperty)
 	addForward(root, organizes, objects)
 	addForward(root, organizes, types)
 	addForward(objects, organizes, source)
+	addForward(objects, organizes, server)
+	addForward(server, hasProperty, serverArray)
+	addForward(server, hasProperty, namespaceArray)
 	// The inverse reference lets a client walk back up the hierarchy.
 	addInverse(objects, organizes, root)
 	addInverse(types, organizes, root)
 	addInverse(source, organizes, objects)
+	addInverse(server, organizes, objects)
+	addInverse(serverArray, hasProperty, server)
+	addInverse(namespaceArray, hasProperty, server)
 
-	for _, node := range []*Node{root, objects, types, source} {
+	standard := []*Node{root, objects, types, source, server, serverArray, namespaceArray}
+	standard = append(standard, s.addServerStatusNodes(server)...)
+	for _, node := range standard {
 		s.nodes[nodeKey(node.ID)] = node
+	}
+	s.standardNodeCount = len(s.nodes)
+}
+
+// standardProperty builds one of the Server object's String array properties.
+func standardProperty(identifier uint32, name string, values []string) *Node {
+	value := Variant{Type: BuiltInString, IsArray: true, Value: values}
+	return &Node{
+		ID:             NumericNodeID(0, identifier),
+		Class:          NodeClassVariable,
+		BrowseName:     QualifiedName{Namespace: 0, Name: name},
+		DisplayName:    LocalizedText{Text: name},
+		TypeDefinition: NumericNodeID(0, NodeIDPropertyType),
+		DataType:       NumericNodeID(0, NodeIDString),
+		DataTypeKnown:  true,
+		ValueRank:      ValueRankOneDimension,
+		// The server knows its own properties exactly, so unlike a DA item
+		// these carry a genuine access level rather than an assumed one.
+		AccessLevel:       AccessLevelCurrentRead,
+		AccessRightsKnown: true,
+		LocalValue:        staticLocalValue(value),
 	}
 }
 
@@ -373,7 +476,7 @@ func (s *AddressSpace) ResolveVariable(id NodeID, maxNodes int) (*Node, bool) {
 	}
 	// Addressing items directly must not let a client grow the space without
 	// limit, so the same node budget applies.
-	if maxNodes > 0 && len(s.nodes) >= maxNodes {
+	if maxNodes > 0 && len(s.nodes)-s.standardNodeCount >= maxNodes {
 		return nil, false
 	}
 	node := &Node{
@@ -533,9 +636,22 @@ func (s *AddressSpace) LearnFromRead(id NodeID, canonicalType *opcda.DAVarType, 
 	}
 }
 
-// NodeCount reports how many nodes the space holds, for bounds and diagnostics.
+// NodeCount reports how many nodes the space holds, for diagnostics.
 func (s *AddressSpace) NodeCount() int {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return len(s.nodes)
+}
+
+// SourceNodeCount reports how many nodes came from the DA source. The node
+// budget counts these and not the server's own standard nodes: the budget
+// exists to stop a source with a very large or hostile address space from
+// exhausting memory, and the standard nodes are a fixed set this server always
+// publishes. Counting them would mean that adding a node the specification
+// requires silently reduced how many DA items an operator's configured limit
+// allows.
+func (s *AddressSpace) SourceNodeCount() int {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return len(s.nodes) - s.standardNodeCount
 }

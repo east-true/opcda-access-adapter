@@ -66,7 +66,7 @@ func (v Variant) IsNull() bool { return v.Type == BuiltInNull }
 
 func (e *Encoder) WriteVariant(value Variant) {
 	if value.IsArray {
-		e.fail(encodingError("this adapter does not encode array Variants"))
+		e.writeVariantArray(value)
 		return
 	}
 	if value.Type == BuiltInNull {
@@ -122,8 +122,34 @@ func (e *Encoder) writeVariantScalar(value Variant) {
 		writeVariantValue(e, value, e.WriteQualifiedName)
 	case BuiltInLocalizedText:
 		writeVariantValue(e, value, e.WriteLocalizedText)
+	case BuiltInExtensionObject:
+		// A structure reaches a client inside a Variant as an ExtensionObject.
+		// The only structures this adapter produces are its own ServerStatus
+		// and BuildInfo; a DA process value is a scalar and never a structure.
+		writeVariantValue(e, value, e.WriteExtensionObject)
 	default:
 		e.fail(encodingError("this adapter does not encode built-in type %d", value.Type))
+	}
+}
+
+// writeVariantArray writes a one dimensional array Variant. The only arrays
+// this adapter produces are the address space's own standard properties, so
+// String is the only element type encoded; a DA process value is always a
+// scalar, because the DA core decodes no VT_ARRAY variant. An unsupported
+// element type fails loudly rather than being written as something it is not.
+func (e *Encoder) writeVariantArray(value Variant) {
+	elements, ok := value.Value.([]string)
+	if !ok || value.Type != BuiltInString {
+		e.fail(encodingError("this adapter encodes only String array Variants"))
+		return
+	}
+	// Table 25: the array bit is set in the encoding mask alongside the type
+	// id, and the elements follow a length prefix. No ArrayDimensions are
+	// written, because the array is one dimensional.
+	e.WriteByteValue(byte(value.Type) | variantArrayValues)
+	e.WriteInt32(int32(len(elements)))
+	for _, element := range elements {
+		e.WriteString(element)
 	}
 }
 

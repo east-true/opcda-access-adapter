@@ -273,6 +273,11 @@ const opcuaMaxConnections = 256
 //
 // Only SecurityMode None is implemented. ADR-0016 forbids describing that as
 // production ready, and the guided setup says so where an operator will see it.
+// opcuaManufacturerName is what the standard Server BuildInfo reports as the
+// manufacturer. It names the project, not a vendor: this adapter is not a
+// product of any OPC vendor and must not appear to be one.
+const opcuaManufacturerName = "opcda-access-adapter"
+
 func newOPCUAListener(config Config, runtime opcda.Runtime) (*opcua.Listener, error) {
 	listenerConfig := opcua.DefaultListenerConfig()
 	listenerConfig.Endpoint = opcua.EndpointConfig{
@@ -287,6 +292,9 @@ func newOPCUAListener(config Config, runtime opcda.Runtime) (*opcua.Listener, er
 	listenerConfig.AddressSpace = opcua.AddressSpaceConfig{
 		NamespaceURI:     config.OPCUA.NamespaceURI,
 		SourceFolderName: config.OPCUA.SourceFolderName,
+		ManufacturerName: opcuaManufacturerName,
+		SoftwareVersion:  config.OPCUA.SoftwareVersion,
+		BuildNumber:      config.OPCUA.BuildNumber,
 	}
 	listenerConfig.DataAccess.MaxNodesPerRead = config.Runtime.Limits.MaxReadItems
 	listenerConfig.DataAccess.MaxNodesPerWrite = config.Runtime.Limits.MaxWriteItems

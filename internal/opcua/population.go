@@ -154,7 +154,7 @@ func (p *Populator) browse(ctx context.Context, path []string, key string, now t
 	}
 	// The node budget is checked before the entries are added, so a large
 	// branch cannot push the space past its bound and then be trimmed.
-	if p.space.NodeCount()+len(result.Entries) > p.limits.MaxNodes {
+	if p.space.SourceNodeCount()+len(result.Entries) > p.limits.MaxNodes {
 		return uacpError(StatusBadTooManyOperations,
 			"the address space would exceed its %d node limit", p.limits.MaxNodes)
 	}

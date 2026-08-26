@@ -393,6 +393,12 @@ type OPCUAFrontendConfig struct {
 	NamespaceURI        string
 	SourceFolderName    string
 	AnonymousPolicyID   string
+	// SoftwareVersion and BuildNumber are what the standard Server BuildInfo
+	// reports. They describe the adapter, so they come from the build rather
+	// than from configuration, and stay empty on a build that does not set
+	// them: an invented version is worse than no version.
+	SoftwareVersion string
+	BuildNumber     string
 }
 
 // validate checks what the operator must supply. Only SecurityMode None is
