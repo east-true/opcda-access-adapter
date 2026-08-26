@@ -468,3 +468,16 @@ func matchesProfile(requested []string, transportProfileURI string) bool {
 	}
 	return false
 }
+
+// AnonymousIdentityOnly reports that every UserTokenPolicy this endpoint
+// publishes is Anonymous. It is what tells the session layer that no
+// UserTokenSignature can ever be computed against this server, which OPC
+// 10000-4 Table 101 shows is possible even with SecurityMode None.
+func (s *EndpointService) AnonymousIdentityOnly() bool {
+	for _, policy := range s.endpoint.UserIdentityTokens {
+		if policy.TokenType != UserTokenTypeAnonymous {
+			return false
+		}
+	}
+	return true
+}

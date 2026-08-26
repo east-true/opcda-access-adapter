@@ -167,14 +167,27 @@ by a comment in its own source. So a literal reading of the clause makes this
 server unusable with a reference implementation. The Foundation's .NET stack,
 by contrast, sends a full nonce even under `None`.
 
-The adapter accepts an absent nonce **only when the SecurityMode is None**. The
-clause's own stated purpose for the field is to "prove possession of its
-ApplicationInstanceCertificate in the response", and the same clause says a
-server shall ignore that certificate when the `securityPolicyUri` is `None`.
-Under `None` nothing is signed, so there is nothing for the nonce to take part
-in and accepting its absence costs no security. A nonce that *is* present is
-still checked, and under any other security mode the rule is enforced exactly
-as written — which is where the nonce does real work.
+The adapter accepts an absent nonce **only when the SecurityMode is None and
+this endpoint publishes nothing but the anonymous user token policy**.
+
+The obvious half of the reasoning is that 5.7.2 gives the ClientNonce one job —
+the server proves possession of its ApplicationInstanceCertificate in the
+response — and the same clause says the server ignores certificates when the
+`securityPolicyUri` is `None`.
+
+**That half alone is not sufficient, and it is worth stating why.** Table 101's
+last row defines a `UserTokenSignature` *specifically for `SecurityMode None`*,
+computed over `ServerNonce | HASH(ServerCertificate) | ClientNonce`. A client
+authenticating with a certificate signs the nonce even on an unsecured channel,
+so "the channel is unsecured" does not by itself make the nonce inert. What
+makes it inert here is that this endpoint offers only the anonymous policy and
+`ActivateSession` refuses every other token, so no `UserTokenSignature` exists.
+
+The acceptance is therefore conditioned on both facts. Publishing any
+non-anonymous user token policy restores the rule automatically, rather than
+leaving the deviation in place under a justification that has quietly stopped
+being true. A nonce that *is* present is always checked, and under any other
+security mode the rule is enforced exactly as written.
 
 This is the one place the adapter knowingly departs from a literal reading, and
 it is recorded here so it can be reversed by a decision rather than discovered

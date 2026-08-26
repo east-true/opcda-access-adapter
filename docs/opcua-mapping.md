@@ -500,16 +500,30 @@ serves all three over a real socket.
 `Bad_NonceInvalid` outside 32 to 128 bytes, and Table 16 repeats it. Neither
 statement is conditioned on the security mode.
 
-**An absent nonce is accepted under `None`, and only there.** This is the one
-place the adapter knowingly departs from a literal reading. open62541 sends no
-nonce at all on an unsecured channel — deliberately, per a comment in its own
-source — so enforcing the clause literally makes this server unusable with a
-reference implementation. The clause's own stated purpose for the field is to
-prove possession of the client's ApplicationInstanceCertificate, and the same
-clause says a server shall ignore that certificate when the `securityPolicyUri`
-is `None`: nothing is signed, so there is nothing for the nonce to take part in
-and its absence costs no security. Under any other security mode — where the
-nonce does real work — the rule is enforced exactly as written. The
+**An absent nonce is accepted when the mode is `None` *and* the endpoint
+publishes only the anonymous user token policy.** This is the one place the
+adapter knowingly departs from a literal reading. open62541 sends no nonce at
+all on an unsecured channel — deliberately, per a comment in its own source —
+so enforcing the clause literally makes this server unusable with a reference
+implementation.
+
+**Both conditions are needed, and the second is easy to miss.** 5.7.2 gives the
+ClientNonce one job: the server proves possession of its
+ApplicationInstanceCertificate in the response, and the same clause says the
+server ignores certificates when the `securityPolicyUri` is `None`. That alone
+looks like enough — but **Table 101's last row defines a `UserTokenSignature`
+specifically for `SecurityMode None`**, over
+`ServerNonce | HASH(ServerCertificate) | ClientNonce`. A client authenticating
+with a certificate therefore signs the nonce even on an unsecured channel. An
+unsecured channel on its own does *not* make the nonce inert.
+
+What makes it inert here is that this endpoint publishes only the anonymous
+policy and `ActivateSession` refuses every other token, so no
+`UserTokenSignature` can ever be computed. The acceptance is conditioned on
+that fact rather than on the security mode alone, so publishing any
+non-anonymous policy restores the rule automatically instead of silently
+inheriting a justification that no longer holds. A nonce that is present is
+always checked. The
 [interop validation doc](validation/ua-client-interop.md) records the deviation
 so it can be reversed by decision rather than found by accident.
 
