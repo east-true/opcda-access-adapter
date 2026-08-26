@@ -244,6 +244,10 @@ func (l *Listener) Close() error {
 		return nil
 	}
 	l.closed = true
+	// Marked here rather than only in Serve's deferred call: once Close returns
+	// the listener is no longer accepting, and a caller must not observe it as
+	// listening while the accept goroutine is still unwinding.
+	l.listening.Store(false)
 	listener := l.listener
 	conns := make([]net.Conn, 0, len(l.conns))
 	for conn := range l.conns {
