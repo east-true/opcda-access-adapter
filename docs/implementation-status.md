@@ -114,17 +114,19 @@ release-promotion gate.
 
 ## In progress
 
-- Phase 8 OPC UA continues on `feat/opcua-address-space-population`, which fills
-  the address space from DA Browse on demand and completes the UA server's
-  service surface. Merged so far: the DA-to-UA mapping (PR #37), the UA Binary
-  codec (PR #38), the connection protocol framing (PR #39), the secure
-  conversation framing (PR #40), the SecureChannel token lifecycle (PR #41), the
-  structured types and service headers (PR #42), the SecureChannel service
-  bodies (PR #43), the UA-TCP listener (PR #44), GetEndpoints (PR #45), the
-  session services (PR #46), the address space (PR #47), Browse (PR #48), and
-  Read/Write (PR #49). The listener is still not wired into the application, so
-  no configuration can select a UA frontend yet, and there is no UA dependency.
-  No conformance or interoperability claim is made.
+- Phase 8 OPC UA is on `feat/opcua-application-wiring`, which makes the UA
+  frontend selectable: configuration version 3, guided setup, service lifecycle,
+  and address space invalidation after a DA reconnect. Merged so far: the
+  DA-to-UA mapping (PR #37), the UA Binary codec (PR #38), the connection
+  protocol framing (PR #39), the secure conversation framing (PR #40), the
+  SecureChannel token lifecycle (PR #41), the structured types and service
+  headers (PR #42), the SecureChannel service bodies (PR #43), the UA-TCP
+  listener (PR #44), GetEndpoints (PR #45), the session services (PR #46), the
+  address space (PR #47), Browse (PR #48), Read/Write (PR #49), and on-demand
+  population (PR #50). Only SecurityMode None is implemented and it is not
+  production ready. Subscriptions and MonitoredItems are not implemented, so the
+  DA Subscribe core is not reachable over UA. No real UA client has been tested
+  against this server, and no conformance or interoperability claim is made.
 
 - The local KVM/libvirt destructive-validation gate is paused. The dedicated
   `opcda-destructive-review` VM and all of its dedicated host resources were

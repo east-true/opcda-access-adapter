@@ -61,6 +61,12 @@ real server result in `docs/compatibility.md`.
 The completed v0 is HTTP-only and targets OPC DA 2.05a. Phase 6 adds an
 explicitly selected typed unary gRPC frontend for Status, Browse, device Read,
 and strict typed value Write. It does not add simultaneous frontend listeners.
+Phase 8 adds a hand-written OPC UA server frontend for `SecurityPolicy None`:
+UA-TCP framing, SecureChannel, sessions, an address space filled from DA Browse
+on demand, and Browse/Read/Write. It is selectable in configuration version 3,
+is for local interoperability work only, and is never described as production
+ready. UA Subscriptions and MonitoredItems are not implemented.
+
 Phase 7 adds a DA-native Subscribe core plus its gRPC frontend: one
 subscription is one DA group advised through `IOPCDataCallback`, exposed as a
 server-streaming `Subscribe` RPC. The core is validated against the OPC

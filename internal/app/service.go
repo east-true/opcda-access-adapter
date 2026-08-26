@@ -2,6 +2,8 @@ package app
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"net"
@@ -13,6 +15,7 @@ import (
 	grpcfrontend "github.com/east-true/opcda-access-adapter/internal/frontend/grpc"
 	frontend "github.com/east-true/opcda-access-adapter/internal/frontend/http"
 	"github.com/east-true/opcda-access-adapter/internal/opcda"
+	"github.com/east-true/opcda-access-adapter/internal/opcua"
 )
 
 type Service struct {
@@ -21,11 +24,17 @@ type Service struct {
 	http    *frontend.Server
 	server  *stdhttp.Server
 	grpc    *grpcfrontend.Server
+	opcua   *opcua.Listener
 	errors  chan error
 
 	mu       sync.Mutex
 	listener net.Listener
 	terminal bool
+
+	// stopWatch ends the connection-generation watch that invalidates the UA
+	// address space after a reconnect.
+	stopWatch chan struct{}
+	watchDone chan struct{}
 }
 
 const startupCleanupTimeout = 10 * time.Second
@@ -47,6 +56,12 @@ func New(config Config, runtime opcda.Runtime) (*Service, error) {
 		errors:  make(chan error, 1),
 	}
 	switch config.Frontend {
+	case FrontendOPCUA:
+		listener, err := newOPCUAListener(config, runtime)
+		if err != nil {
+			return nil, err
+		}
+		service.opcua = listener
 	case FrontendHTTP:
 		httpServer := frontend.New(runtime, frontend.Config{
 			MaxBodyBytes:        config.MaxHTTPBodyBytes,
@@ -119,9 +134,16 @@ func (s *Service) Start() error {
 	}
 	listenAddress := s.config.HTTPListenAddress
 	maximumConnections := s.config.MaxHTTPConnections
-	if s.config.Frontend == FrontendGRPC {
+	switch s.config.Frontend {
+	case FrontendGRPC:
 		listenAddress = s.config.GRPCListenAddress
 		maximumConnections = s.config.MaxGRPCConnections
+	case FrontendOPCUA:
+		listenAddress = s.config.OPCUAListenAddress
+		// The UA listener enforces its own connection bound, so the shared
+		// bounded listener is given the same ceiling rather than a tighter one
+		// that would silently override it.
+		maximumConnections = opcuaMaxConnections
 	}
 	listener, err := net.Listen("tcp", listenAddress)
 	if err != nil {
@@ -133,7 +155,8 @@ func (s *Service) Start() error {
 	}
 	listener = newBoundedListener(listener, maximumConnections)
 	s.listener = listener
-	if s.config.Frontend == FrontendHTTP {
+	switch s.config.Frontend {
+	case FrontendHTTP:
 		s.http.SetListening(true)
 		go func() {
 			err := s.server.Serve(listener)
@@ -142,12 +165,19 @@ func (s *Service) Start() error {
 				s.reportListenerError(fmt.Errorf("serve HTTP: %w", err))
 			}
 		}()
-	} else {
+	case FrontendGRPC:
 		go func() {
 			if err := s.grpc.Serve(listener); err != nil {
 				s.reportListenerError(fmt.Errorf("serve gRPC: %w", err))
 			}
 		}()
+	case FrontendOPCUA:
+		go func() {
+			if err := s.opcua.Serve(listener); err != nil {
+				s.reportListenerError(fmt.Errorf("serve OPC UA: %w", err))
+			}
+		}()
+		s.startAddressSpaceWatch()
 	}
 	return nil
 }
@@ -220,12 +250,129 @@ func (s *Service) Shutdown(ctx context.Context) error {
 	s.terminal = true
 	s.mu.Unlock()
 	var frontendErr error
-	if s.config.Frontend == FrontendHTTP {
+	switch s.config.Frontend {
+	case FrontendHTTP:
 		s.http.SetListening(false)
 		frontendErr = s.server.Shutdown(ctx)
-	} else {
+	case FrontendGRPC:
 		frontendErr = s.grpc.GracefulStop(ctx)
+	case FrontendOPCUA:
+		s.stopAddressSpaceWatch()
+		frontendErr = s.opcua.Shutdown(ctx)
 	}
 	runtimeErr := s.runtime.Shutdown(ctx)
 	return errors.Join(frontendErr, runtimeErr)
+}
+
+// opcuaMaxConnections is the ceiling the shared bounded listener applies to the
+// UA frontend. The UA listener enforces its own, tighter bound; this only stops
+// the accept loop from growing without limit.
+const opcuaMaxConnections = 256
+
+// newOPCUAListener builds the UA listener from the reviewed configuration.
+//
+// Only SecurityMode None is implemented. ADR-0016 forbids describing that as
+// production ready, and the guided setup says so where an operator will see it.
+func newOPCUAListener(config Config, runtime opcda.Runtime) (*opcua.Listener, error) {
+	listenerConfig := opcua.DefaultListenerConfig()
+	listenerConfig.Endpoint = opcua.EndpointConfig{
+		EndpointURL:         config.OPCUA.EndpointURL,
+		ApplicationURI:      config.OPCUA.ApplicationURI,
+		ProductURI:          config.OPCUA.ProductURI,
+		ApplicationName:     config.OPCUA.ApplicationName,
+		SecurityPolicyURI:   config.OPCUA.SecurityPolicyURI,
+		TransportProfileURI: config.OPCUA.TransportProfileURI,
+		AnonymousPolicyID:   config.OPCUA.AnonymousPolicyID,
+	}
+	listenerConfig.AddressSpace = opcua.AddressSpaceConfig{
+		NamespaceURI:     config.OPCUA.NamespaceURI,
+		SourceFolderName: config.OPCUA.SourceFolderName,
+	}
+	listenerConfig.DataAccess.MaxNodesPerRead = config.Runtime.Limits.MaxReadItems
+	listenerConfig.DataAccess.MaxNodesPerWrite = config.Runtime.Limits.MaxWriteItems
+	listenerConfig.DataAccess.RequestTimeout = config.RequestDeadline
+	listenerConfig.Browse.MaxReferencesPerNode = config.Runtime.Limits.MaxBrowseEntries
+	listenerConfig.Population.MaxDepth = config.Runtime.Limits.MaxBrowseDepth
+
+	// OPC 10000-6 Table 57 advises that the first SecureChannelId after a
+	// restart should be unlikely to collide with one a previously connected
+	// client still holds, so the counters are seeded rather than starting at a
+	// fixed value.
+	channelSeed, err := randomSeed()
+	if err != nil {
+		return nil, err
+	}
+	tokenSeed, err := randomSeed()
+	if err != nil {
+		return nil, err
+	}
+	listener, err := opcua.NewListenerWithRuntime(listenerConfig, runtime, channelSeed, tokenSeed)
+	if err != nil {
+		return nil, fmt.Errorf("create OPC UA listener: %w", err)
+	}
+	return listener, nil
+}
+
+func randomSeed() (uint32, error) {
+	var raw [4]byte
+	if _, err := rand.Read(raw[:]); err != nil {
+		return 0, fmt.Errorf("seed OPC UA identifiers: %w", err)
+	}
+	return binary.LittleEndian.Uint32(raw[:]), nil
+}
+
+// addressSpaceWatchInterval is how often the connection generation is checked.
+// A reconnect is not urgent to observe: until the address space is invalidated
+// a client sees the previous generation's nodes, which the DA runtime will
+// refuse to read anyway.
+const addressSpaceWatchInterval = 2 * time.Second
+
+// startAddressSpaceWatch is called from Start with s.mu held, so it assigns the
+// watch fields directly.
+//
+// startAddressSpaceWatch invalidates the UA address space when the DA runtime
+// reconnects. A new connection generation may expose a different address space,
+// and item registrations from the previous generation are already invalid, so
+// the cached nodes must not be served as if they were current.
+//
+// It also expires stale secure channels, sessions, and continuation points on
+// the same tick, which keeps that housekeeping on one owned goroutine rather
+// than an internal timer inside the listener.
+func (s *Service) startAddressSpaceWatch() {
+	stop := make(chan struct{})
+	done := make(chan struct{})
+	s.stopWatch = stop
+	s.watchDone = done
+
+	lastGeneration := s.runtime.Status(context.Background()).ConnectionGeneration
+	go func() {
+		defer close(done)
+		ticker := time.NewTicker(addressSpaceWatchInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-stop:
+				return
+			case <-ticker.C:
+				status := s.runtime.Status(context.Background())
+				if status.ConnectionGeneration != lastGeneration {
+					lastGeneration = status.ConnectionGeneration
+					s.opcua.InvalidateAddressSpace()
+				}
+				s.opcua.ExpireStaleChannels(time.Now().UTC())
+			}
+		}
+	}()
+}
+
+func (s *Service) stopAddressSpaceWatch() {
+	s.mu.Lock()
+	stop, done := s.stopWatch, s.watchDone
+	s.stopWatch, s.watchDone = nil, nil
+	s.mu.Unlock()
+	if stop == nil {
+		return
+	}
+	close(stop)
+	<-done
 }

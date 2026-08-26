@@ -671,6 +671,43 @@ all.
 the source. The application calls it after a reconnect, because a new connection
 generation may expose a different address space.
 
+## Selecting the OPC UA frontend
+
+The adapter can now be configured to serve OPC UA. It remains **one process, one
+source, one frontend**: selecting OPC UA means HTTP and gRPC are not served,
+exactly as choosing between HTTP and gRPC already worked.
+
+Configuration file **version 3** adds the frontend. Versions 1 and 2 still load,
+so an installed adapter keeps running after an upgrade, and a version below 3
+that names the OPC UA frontend is refused rather than half-understood. Only the
+selected frontend's listener is written, and a non-UA frontend may not carry OPC
+UA settings.
+
+### What the operator must supply
+
+The endpoint settings have **no defaults**:
+
+| Setting | Why it is not defaulted |
+|---|---|
+| `securityPolicyUri` | Defined by OPC 10000-7. A wrong URI makes the server unusable by a real client. |
+| `transportProfileUri` | Same. |
+| `endpointUrl`, `applicationUri`, `namespaceUri` | These identify a deployment, and the namespace URI must stay stable across restarts because design §35.2 forbids treating a namespace index as identity. |
+
+Guided setup lists OPC UA as a third frontend and labels it plainly:
+`SecurityPolicy None; local interoperability only, not production ready`. The
+review screen repeats that the mode is None — no signing, no encryption,
+anonymous users — before the operator confirms. ADR-0016 requires that language
+and forbids describing this path as production ready.
+
+### After a reconnect
+
+The service watches the DA connection generation and invalidates the UA address
+space when it changes. A new generation may expose a different address space,
+and item registrations from the previous one are already invalid, so the cached
+nodes must not be served as if they were current. The same tick expires stale
+secure channels, sessions, and continuation points, which keeps that
+housekeeping on one owned goroutine rather than a timer inside the listener.
+
 ## What is not decided here
 
 Certificate handling and the signed and encrypted security policies, address

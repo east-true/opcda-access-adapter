@@ -12,7 +12,10 @@ import (
 )
 
 const (
-	ConfigFileVersion       = 2
+	// ConfigFileVersion 3 adds the OPC UA frontend. Versions 1 and 2 are still
+	// read so an installed adapter keeps running after an upgrade.
+	ConfigFileVersion       = 3
+	grpcConfigFileVersion   = 2
 	legacyConfigFileVersion = 1
 	MaximumConfigFileBytes  = 64 << 10
 	maximumConfigPathBytes  = 4096
@@ -33,9 +36,27 @@ type persistedSource struct {
 }
 
 type persistedFrontend struct {
-	Type       string `json:"type"`
-	HTTPListen string `json:"httpListen,omitempty"`
-	GRPCListen string `json:"grpcListen,omitempty"`
+	Type        string          `json:"type"`
+	HTTPListen  string          `json:"httpListen,omitempty"`
+	GRPCListen  string          `json:"grpcListen,omitempty"`
+	OPCUAListen string          `json:"opcuaListen,omitempty"`
+	OPCUA       *persistedOPCUA `json:"opcua,omitempty"`
+}
+
+// persistedOPCUA carries the endpoint the OPC UA frontend publishes. The
+// security policy and transport profile URIs are stored rather than defaulted,
+// because the known URIs are defined by OPC 10000-7 and a wrong one would make
+// the server unusable by a real client.
+type persistedOPCUA struct {
+	EndpointURL         string `json:"endpointUrl"`
+	ApplicationURI      string `json:"applicationUri"`
+	ProductURI          string `json:"productUri,omitempty"`
+	ApplicationName     string `json:"applicationName,omitempty"`
+	SecurityPolicyURI   string `json:"securityPolicyUri"`
+	TransportProfileURI string `json:"transportProfileUri"`
+	NamespaceURI        string `json:"namespaceUri"`
+	SourceFolderName    string `json:"sourceFolderName"`
+	AnonymousPolicyID   string `json:"anonymousPolicyId,omitempty"`
 }
 
 // GuidedSetupConfig returns the conservative v0 defaults with exactly one
@@ -48,6 +69,20 @@ func GuidedSetupConfig(source opcda.SourceConfig, httpListen string, writeEnable
 // GuidedSetupFrontendConfig returns conservative settings for one explicitly
 // selected DA source and one explicitly selected access frontend.
 func GuidedSetupFrontendConfig(source opcda.SourceConfig, frontend FrontendType, listen string, writeEnabled bool) (Config, error) {
+	if frontend == FrontendOPCUA {
+		return Config{}, fmt.Errorf("the OPC UA frontend needs its endpoint settings; use GuidedSetupOPCUAConfig")
+	}
+	return guidedSetupConfig(source, frontend, listen, writeEnabled, OPCUAFrontendConfig{})
+}
+
+// GuidedSetupOPCUAConfig returns conservative settings for the OPC UA frontend.
+// The endpoint settings are supplied rather than defaulted; see
+// OPCUAFrontendConfig.
+func GuidedSetupOPCUAConfig(source opcda.SourceConfig, listen string, endpoint OPCUAFrontendConfig, writeEnabled bool) (Config, error) {
+	return guidedSetupConfig(source, FrontendOPCUA, listen, writeEnabled, endpoint)
+}
+
+func guidedSetupConfig(source opcda.SourceConfig, frontend FrontendType, listen string, writeEnabled bool, endpoint OPCUAFrontendConfig) (Config, error) {
 	config := DefaultConfig()
 	config.Source = source
 	config.Frontend = frontend
@@ -56,8 +91,11 @@ func GuidedSetupFrontendConfig(source opcda.SourceConfig, frontend FrontendType,
 		config.HTTPListenAddress = listen
 	case FrontendGRPC:
 		config.GRPCListenAddress = listen
+	case FrontendOPCUA:
+		config.OPCUAListenAddress = listen
+		config.OPCUA = endpoint
 	default:
-		return Config{}, fmt.Errorf("guided setup frontend must be http or grpc")
+		return Config{}, fmt.Errorf("guided setup frontend must be http, grpc, or opcua")
 	}
 	config.WriteEnabled = writeEnabled
 	if source.ProgID == "" && source.CLSID == "" {
@@ -102,7 +140,9 @@ func LoadConfigFile(path string) (Config, error) {
 	if err := requireJSONEOF(decoder); err != nil {
 		return Config{}, err
 	}
-	if stored.Version != legacyConfigFileVersion && stored.Version != ConfigFileVersion {
+	switch stored.Version {
+	case legacyConfigFileVersion, grpcConfigFileVersion, ConfigFileVersion:
+	default:
 		return Config{}, fmt.Errorf("unsupported configuration version %d", stored.Version)
 	}
 	frontend := FrontendType(stored.Frontend.Type)
@@ -121,8 +161,37 @@ func LoadConfigFile(path string) (Config, error) {
 			return Config{}, fmt.Errorf("gRPC frontend requires only grpcListen")
 		}
 		listen = stored.Frontend.GRPCListen
+	case FrontendOPCUA:
+		if stored.Version < ConfigFileVersion {
+			return Config{}, fmt.Errorf("configuration version %d does not support the OPC UA frontend", stored.Version)
+		}
+		if stored.Frontend.OPCUAListen == "" || stored.Frontend.HTTPListen != "" || stored.Frontend.GRPCListen != "" {
+			return Config{}, fmt.Errorf("OPC UA frontend requires only opcuaListen")
+		}
+		if stored.Frontend.OPCUA == nil {
+			return Config{}, fmt.Errorf("OPC UA frontend requires its endpoint settings")
+		}
+		endpoint := OPCUAFrontendConfig{
+			EndpointURL:         stored.Frontend.OPCUA.EndpointURL,
+			ApplicationURI:      stored.Frontend.OPCUA.ApplicationURI,
+			ProductURI:          stored.Frontend.OPCUA.ProductURI,
+			ApplicationName:     stored.Frontend.OPCUA.ApplicationName,
+			SecurityPolicyURI:   stored.Frontend.OPCUA.SecurityPolicyURI,
+			TransportProfileURI: stored.Frontend.OPCUA.TransportProfileURI,
+			NamespaceURI:        stored.Frontend.OPCUA.NamespaceURI,
+			SourceFolderName:    stored.Frontend.OPCUA.SourceFolderName,
+			AnonymousPolicyID:   stored.Frontend.OPCUA.AnonymousPolicyID,
+		}
+		return GuidedSetupOPCUAConfig(
+			opcda.SourceConfig{ProgID: stored.Source.ProgID, CLSID: stored.Source.CLSID},
+			stored.Frontend.OPCUAListen, endpoint, stored.WriteEnabled,
+		)
 	default:
 		return Config{}, fmt.Errorf("unsupported frontend %q", stored.Frontend.Type)
+	}
+	// A version 2 file may not carry OPC UA settings even for another frontend.
+	if stored.Frontend.OPCUA != nil || stored.Frontend.OPCUAListen != "" {
+		return Config{}, fmt.Errorf("only the OPC UA frontend may carry OPC UA settings")
 	}
 	return GuidedSetupFrontendConfig(
 		opcda.SourceConfig{ProgID: stored.Source.ProgID, CLSID: stored.Source.CLSID},
@@ -239,6 +308,19 @@ func WriteConfigFileExclusive(path string, config Config) error {
 		stored.Frontend.HTTPListen = config.HTTPListenAddress
 	case FrontendGRPC:
 		stored.Frontend.GRPCListen = config.GRPCListenAddress
+	case FrontendOPCUA:
+		stored.Frontend.OPCUAListen = config.OPCUAListenAddress
+		stored.Frontend.OPCUA = &persistedOPCUA{
+			EndpointURL:         config.OPCUA.EndpointURL,
+			ApplicationURI:      config.OPCUA.ApplicationURI,
+			ProductURI:          config.OPCUA.ProductURI,
+			ApplicationName:     config.OPCUA.ApplicationName,
+			SecurityPolicyURI:   config.OPCUA.SecurityPolicyURI,
+			TransportProfileURI: config.OPCUA.TransportProfileURI,
+			NamespaceURI:        config.OPCUA.NamespaceURI,
+			SourceFolderName:    config.OPCUA.SourceFolderName,
+			AnonymousPolicyID:   config.OPCUA.AnonymousPolicyID,
+		}
 	default:
 		return fmt.Errorf("unsupported frontend %q", config.Frontend)
 	}

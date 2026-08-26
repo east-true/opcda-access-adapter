@@ -53,6 +53,16 @@ func runSetup(
 	configPath := flags.String("config", defaultSetupConfigPath, "new configuration file path (must not already exist)")
 	listenAddress := flags.String("listen", "127.0.0.1:8080", "HTTP listen address")
 	grpcListenAddress := flags.String("grpc-listen", "127.0.0.1:50051", "gRPC listen address")
+	opcuaListenAddress := flags.String("opcua-listen", "127.0.0.1:4840", "OPC UA listen address")
+	opcuaEndpointURL := flags.String("opcua-endpoint-url", "", "OPC UA endpoint URL published to clients")
+	opcuaApplicationURI := flags.String("opcua-application-uri", "", "OPC UA application URI (stable across restarts)")
+	opcuaNamespaceURI := flags.String("opcua-namespace-uri", "", "OPC UA namespace URI for this adapter (stable across restarts)")
+	// The known security policy and transport profile URIs are defined by
+	// OPC 10000-7. They are not defaulted, because a server publishing a wrong
+	// one would be unusable by a real client.
+	opcuaSecurityPolicyURI := flags.String("opcua-security-policy-uri", "", "OPC UA SecurityPolicy URI (see OPC 10000-7)")
+	opcuaTransportProfileURI := flags.String("opcua-transport-profile-uri", "", "OPC UA transport profile URI (see OPC 10000-7)")
+	opcuaSourceFolder := flags.String("opcua-source-folder", "Source", "OPC UA folder name for the DA source")
 	writeEnabled := flags.Bool("enable-write", false, "explicitly enable strict typed value Write")
 	serviceName := flags.String("service-name", defaultServiceName, "Windows Service name")
 	timeout := flags.Duration("timeout", defaultDetectionTimeout, "local registration detection deadline")
@@ -138,26 +148,54 @@ func runSetup(
 	fmt.Fprintln(output, "\nAvailable frontends:")
 	fmt.Fprintln(output, "  1) HTTP/JSON (v0)")
 	fmt.Fprintln(output, "  2) gRPC (typed DA-native unary API)")
-	frontendChoice, err := prompt.selectNumber("Select one frontend", 2)
+	fmt.Fprintln(output, "  3) OPC UA (SecurityPolicy None; local interoperability only, not production ready)")
+	frontendChoice, err := prompt.selectNumber("Select one frontend", 3)
 	if err != nil {
 		fmt.Fprintf(errorOutput, "select frontend: %v\n", err)
 		return 1
 	}
-	frontend := app.FrontendHTTP
-	frontendLabel := "HTTP/JSON"
-	selectedListenAddress := *listenAddress
-	if frontendChoice == 2 {
-		frontend = app.FrontendGRPC
+
+	var (
+		config                app.Config
+		frontendLabel         string
+		selectedListenAddress string
+	)
+	switch frontendChoice {
+	case 2:
 		frontendLabel = "gRPC"
 		selectedListenAddress = *grpcListenAddress
+		config, err = app.GuidedSetupFrontendConfig(
+			opcda.SourceConfig{CLSID: selected.CLSID}, app.FrontendGRPC, selectedListenAddress, *writeEnabled)
+	case 3:
+		frontendLabel = "OPC UA"
+		selectedListenAddress = *opcuaListenAddress
+		endpoint := app.OPCUAFrontendConfig{
+			EndpointURL:         *opcuaEndpointURL,
+			ApplicationURI:      *opcuaApplicationURI,
+			ProductURI:          *opcuaApplicationURI,
+			ApplicationName:     "OPC DA Access Adapter",
+			SecurityPolicyURI:   *opcuaSecurityPolicyURI,
+			TransportProfileURI: *opcuaTransportProfileURI,
+			NamespaceURI:        *opcuaNamespaceURI,
+			SourceFolderName:    *opcuaSourceFolder,
+		}
+		config, err = app.GuidedSetupOPCUAConfig(
+			opcda.SourceConfig{CLSID: selected.CLSID}, selectedListenAddress, endpoint, *writeEnabled)
+		if err != nil {
+			// These values identify a deployment and are defined by
+			// OPC 10000-7; the operator supplies them rather than the adapter
+			// inventing them.
+			fmt.Fprintf(errorOutput,
+				"build guided configuration: %v\nsupply -opcua-endpoint-url, -opcua-application-uri, -opcua-namespace-uri, -opcua-security-policy-uri and -opcua-transport-profile-uri\n",
+				err)
+			return 2
+		}
+	default:
+		frontendLabel = "HTTP/JSON"
+		selectedListenAddress = *listenAddress
+		config, err = app.GuidedSetupFrontendConfig(
+			opcda.SourceConfig{CLSID: selected.CLSID}, app.FrontendHTTP, selectedListenAddress, *writeEnabled)
 	}
-
-	config, err := app.GuidedSetupFrontendConfig(
-		opcda.SourceConfig{CLSID: selected.CLSID},
-		frontend,
-		selectedListenAddress,
-		*writeEnabled,
-	)
 	if err != nil {
 		fmt.Fprintf(errorOutput, "build guided configuration: %v\n", err)
 		return 2
@@ -180,6 +218,12 @@ func runSetup(
 	fmt.Fprintf(output, "  frontend: %s\n", frontendLabel)
 	fmt.Fprintf(output, "  listen: %s\n", selectedListenAddress)
 	fmt.Fprintf(output, "  typed value Write enabled: %t\n", config.WriteEnabled)
+	if config.Frontend == app.FrontendOPCUA {
+		fmt.Fprintf(output, "  OPC UA endpoint: %s\n", config.OPCUA.EndpointURL)
+		fmt.Fprintf(output, "  OPC UA security policy: %s\n", config.OPCUA.SecurityPolicyURI)
+		fmt.Fprintln(output, "  OPC UA security mode: None (no signing, no encryption, anonymous users)")
+		fmt.Fprintln(output, "  This endpoint is for local interoperability work and is not production ready.")
+	}
 	fmt.Fprintf(output, "  configuration: %s\n", *configPath)
 	if execution == setupInstallService {
 		fmt.Fprintf(output, "  Windows Service: %s (LocalService account)\n", *serviceName)

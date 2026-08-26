@@ -105,14 +105,21 @@ func TestConfigFileConcurrentCreateHasOneWinner(t *testing.T) {
 
 func TestLoadConfigFileRejectsInvalidInput(t *testing.T) {
 	tests := map[string]string{
-		"unknown field":         `{"version":1,"source":{"clsid":"{A}"},"frontend":{"type":"http","httpListen":"127.0.0.1:8080"},"writeEnabled":false,"extra":true}`,
-		"duplicate field":       `{"version":1,"version":1,"source":{"clsid":"{A}"},"frontend":{"type":"http","httpListen":"127.0.0.1:8080"},"writeEnabled":false}`,
-		"trailing value":        `{"version":1,"source":{"clsid":"{A}"},"frontend":{"type":"http","httpListen":"127.0.0.1:8080"},"writeEnabled":false} {}`,
-		"future version":        `{"version":3,"source":{"clsid":"{A}"},"frontend":{"type":"http","httpListen":"127.0.0.1:8080"},"writeEnabled":false}`,
-		"wrong frontend":        `{"version":1,"source":{"clsid":"{A}"},"frontend":{"type":"grpc","httpListen":"127.0.0.1:8080"},"writeEnabled":false}`,
-		"two sources":           `{"version":1,"source":{"progId":"A","clsid":"{A}"},"frontend":{"type":"http","httpListen":"127.0.0.1:8080"},"writeEnabled":false}`,
-		"missing source":        `{"version":1,"source":{},"frontend":{"type":"http","httpListen":"127.0.0.1:8080"},"writeEnabled":false}`,
-		"external missing port": `{"version":1,"source":{"progId":"A"},"frontend":{"type":"http","httpListen":"0.0.0.0"},"writeEnabled":false}`,
+		"unknown field":   `{"version":1,"source":{"clsid":"{A}"},"frontend":{"type":"http","httpListen":"127.0.0.1:8080"},"writeEnabled":false,"extra":true}`,
+		"duplicate field": `{"version":1,"version":1,"source":{"clsid":"{A}"},"frontend":{"type":"http","httpListen":"127.0.0.1:8080"},"writeEnabled":false}`,
+		"trailing value":  `{"version":1,"source":{"clsid":"{A}"},"frontend":{"type":"http","httpListen":"127.0.0.1:8080"},"writeEnabled":false} {}`,
+		"future version":  `{"version":4,"source":{"clsid":"{A}"},"frontend":{"type":"http","httpListen":"127.0.0.1:8080"},"writeEnabled":false}`,
+		// An older version may not carry OPC UA settings, and a non-UA frontend
+		// may not carry them at any version.
+		"opcua before version 3": `{"version":2,"source":{"clsid":"{A}"},"frontend":{"type":"opcua","opcuaListen":"127.0.0.1:4840"},"writeEnabled":false}`,
+		"opcua without endpoint": `{"version":3,"source":{"clsid":"{A}"},"frontend":{"type":"opcua","opcuaListen":"127.0.0.1:4840"},"writeEnabled":false}`,
+		"opcua settings on http": `{"version":3,"source":{"clsid":"{A}"},"frontend":{"type":"http","httpListen":"127.0.0.1:8080","opcuaListen":"127.0.0.1:4840"},"writeEnabled":false}`,
+		"opcua with grpc listen": `{"version":3,"source":{"clsid":"{A}"},"frontend":{"type":"opcua","opcuaListen":"127.0.0.1:4840","grpcListen":"127.0.0.1:50051","opcua":{"endpointUrl":"opc.tcp://127.0.0.1:4840","applicationUri":"urn:a","securityPolicyUri":"urn:p","transportProfileUri":"urn:t","namespaceUri":"urn:n","sourceFolderName":"Source"}},"writeEnabled":false}`,
+		"opcua without policy":   `{"version":3,"source":{"clsid":"{A}"},"frontend":{"type":"opcua","opcuaListen":"127.0.0.1:4840","opcua":{"endpointUrl":"opc.tcp://127.0.0.1:4840","applicationUri":"urn:a","transportProfileUri":"urn:t","namespaceUri":"urn:n","sourceFolderName":"Source"}},"writeEnabled":false}`,
+		"wrong frontend":         `{"version":1,"source":{"clsid":"{A}"},"frontend":{"type":"grpc","httpListen":"127.0.0.1:8080"},"writeEnabled":false}`,
+		"two sources":            `{"version":1,"source":{"progId":"A","clsid":"{A}"},"frontend":{"type":"http","httpListen":"127.0.0.1:8080"},"writeEnabled":false}`,
+		"missing source":         `{"version":1,"source":{},"frontend":{"type":"http","httpListen":"127.0.0.1:8080"},"writeEnabled":false}`,
+		"external missing port":  `{"version":1,"source":{"progId":"A"},"frontend":{"type":"http","httpListen":"0.0.0.0"},"writeEnabled":false}`,
 	}
 	for name, contents := range tests {
 		t.Run(name, func(t *testing.T) {
