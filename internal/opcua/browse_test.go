@@ -1,6 +1,7 @@
 package opcua
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -74,7 +75,7 @@ func TestBrowseWalksTheAddressSpace(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	response, err := service.Browse(browseRequest(browseAll(space.SourceFolderID())), channelEpoch)
+	response, err := service.Browse(context.Background(), browseRequest(browseAll(space.SourceFolderID())), channelEpoch)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -110,7 +111,7 @@ func TestBrowseWalksTheAddressSpace(t *testing.T) {
 func TestBrowseResultsKeepRequestOrderIncludingFailures(t *testing.T) {
 	service, space := testBrowseService(t, DefaultBrowseLimits())
 	unknown := StringNodeID(AdapterNamespaceIndex, "item:missing")
-	response, err := service.Browse(browseRequest(
+	response, err := service.Browse(context.Background(), browseRequest(
 		browseAll(space.SourceFolderID()),
 		browseAll(unknown),
 		browseAll(NumericNodeID(0, NodeIDObjectsFolder)),
@@ -150,7 +151,7 @@ func TestBrowseDirectionSelectsReferences(t *testing.T) {
 	} {
 		description := browseAll(space.SourceFolderID())
 		description.BrowseDirection = direction
-		response, err := service.Browse(browseRequest(description), channelEpoch)
+		response, err := service.Browse(context.Background(), browseRequest(description), channelEpoch)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -169,7 +170,7 @@ func TestBrowseDirectionSelectsReferences(t *testing.T) {
 	// The invalid direction is refused per node.
 	description := browseAll(space.SourceFolderID())
 	description.BrowseDirection = BrowseDirectionInvalid
-	response, err := service.Browse(browseRequest(description), channelEpoch)
+	response, err := service.Browse(context.Background(), browseRequest(description), channelEpoch)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -203,7 +204,7 @@ func TestBrowseNodeClassMaskIsAMask(t *testing.T) {
 		t.Run(testCase.name, func(t *testing.T) {
 			description := browseAll(space.SourceFolderID())
 			description.NodeClassMask = testCase.mask
-			response, err := service.Browse(browseRequest(description), channelEpoch)
+			response, err := service.Browse(context.Background(), browseRequest(description), channelEpoch)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -225,7 +226,7 @@ func TestBrowseReferenceTypeFilter(t *testing.T) {
 	// Organizes matches the hierarchy this space builds.
 	description := browseAll(space.SourceFolderID())
 	description.ReferenceTypeID = NumericNodeID(0, NodeIDOrganizes)
-	response, err := service.Browse(browseRequest(description), channelEpoch)
+	response, err := service.Browse(context.Background(), browseRequest(description), channelEpoch)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -235,7 +236,7 @@ func TestBrowseReferenceTypeFilter(t *testing.T) {
 
 	// A different known type matches nothing here.
 	description.ReferenceTypeID = NumericNodeID(0, NodeIDHasComponent)
-	response, err = service.Browse(browseRequest(description), channelEpoch)
+	response, err = service.Browse(context.Background(), browseRequest(description), channelEpoch)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -246,7 +247,7 @@ func TestBrowseReferenceTypeFilter(t *testing.T) {
 	// A reference type that names nothing is an error, not a filter that
 	// silently matches nothing.
 	description.ReferenceTypeID = NumericNodeID(0, 999_999)
-	response, err = service.Browse(browseRequest(description), channelEpoch)
+	response, err = service.Browse(context.Background(), browseRequest(description), channelEpoch)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -267,7 +268,7 @@ func TestBrowseResultMaskOmitsUnrequestedFields(t *testing.T) {
 
 	description := browseAll(space.SourceFolderID())
 	description.ResultMask = ResultMaskBrowseName
-	response, err := service.Browse(browseRequest(description), channelEpoch)
+	response, err := service.Browse(context.Background(), browseRequest(description), channelEpoch)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -331,7 +332,7 @@ func TestBrowseContinuationPoints(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	response, err := service.Browse(browseRequest(browseAll(space.SourceFolderID())), channelEpoch)
+	response, err := service.Browse(context.Background(), browseRequest(browseAll(space.SourceFolderID())), channelEpoch)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -376,7 +377,7 @@ func TestContinuationPointIsConsumedAndValidated(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	response, err := service.Browse(browseRequest(browseAll(space.SourceFolderID())), channelEpoch)
+	response, err := service.Browse(context.Background(), browseRequest(browseAll(space.SourceFolderID())), channelEpoch)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -423,7 +424,7 @@ func TestBrowseNextReleasesContinuationPoints(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	response, err := service.Browse(browseRequest(browseAll(space.SourceFolderID())), channelEpoch)
+	response, err := service.Browse(context.Background(), browseRequest(browseAll(space.SourceFolderID())), channelEpoch)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -459,7 +460,7 @@ func TestContinuationPointsExpire(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := service.Browse(browseRequest(browseAll(space.SourceFolderID())), channelEpoch); err != nil {
+	if _, err := service.Browse(context.Background(), browseRequest(browseAll(space.SourceFolderID())), channelEpoch); err != nil {
 		t.Fatal(err)
 	}
 	if removed := service.ExpireContinuationPoints(channelEpoch.Add(30 * time.Second)); removed != 0 {
@@ -475,7 +476,7 @@ func TestBrowseRefusesOversizedAndEmptyRequests(t *testing.T) {
 	limits.MaxNodesPerBrowse = 2
 	service, space := testBrowseService(t, limits)
 
-	_, err := service.Browse(browseRequest(), channelEpoch)
+	_, err := service.Browse(context.Background(), browseRequest(), channelEpoch)
 	if err == nil {
 		t.Fatal("an empty browse request was accepted")
 	}
@@ -487,7 +488,7 @@ func TestBrowseRefusesOversizedAndEmptyRequests(t *testing.T) {
 	for index := range descriptions {
 		descriptions[index] = browseAll(space.SourceFolderID())
 	}
-	_, err = service.Browse(browseRequest(descriptions...), channelEpoch)
+	_, err = service.Browse(context.Background(), browseRequest(descriptions...), channelEpoch)
 	if err == nil {
 		t.Fatal("an oversized browse request was accepted")
 	}
@@ -501,7 +502,7 @@ func TestBrowseRefusesAnUnknownView(t *testing.T) {
 	service, space := testBrowseService(t, DefaultBrowseLimits())
 	request := browseRequest(browseAll(space.SourceFolderID()))
 	request.View.ViewID = NumericNodeID(0, 999)
-	_, err := service.Browse(request, channelEpoch)
+	_, err := service.Browse(context.Background(), request, channelEpoch)
 	if err == nil {
 		t.Fatal("an unknown view was accepted")
 	}
@@ -527,7 +528,7 @@ func TestRequestedMaxReferencesIsHonoured(t *testing.T) {
 	}
 
 	request := browseRequest(browseAll(space.SourceFolderID()))
-	response, err := service.Browse(request, channelEpoch)
+	response, err := service.Browse(context.Background(), request, channelEpoch)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -536,7 +537,7 @@ func TestRequestedMaxReferencesIsHonoured(t *testing.T) {
 	}
 
 	request.RequestedMaxReferencesPerNode = 2
-	response, err = service.Browse(request, channelEpoch)
+	response, err = service.Browse(context.Background(), request, channelEpoch)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -546,7 +547,7 @@ func TestRequestedMaxReferencesIsHonoured(t *testing.T) {
 
 	// A client asking for more than the server allows does not raise the bound.
 	request.RequestedMaxReferencesPerNode = 1000
-	response, err = service.Browse(request, channelEpoch)
+	response, err = service.Browse(context.Background(), request, channelEpoch)
 	if err != nil {
 		t.Fatal(err)
 	}

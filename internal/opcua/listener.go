@@ -46,6 +46,7 @@ type ListenerConfig struct {
 	Sessions       SessionLimits
 	Browse         BrowseLimits
 	DataAccess     DataAccessLimits
+	Population     PopulationLimits
 	// AddressSpace describes the namespace and folder the DA source appears
 	// under.
 	AddressSpace AddressSpaceConfig
@@ -69,6 +70,7 @@ func DefaultListenerConfig() ListenerConfig {
 		Sessions:          DefaultSessionLimits(),
 		Browse:            DefaultBrowseLimits(),
 		DataAccess:        DefaultDataAccessLimits(),
+		Population:        DefaultPopulationLimits(),
 		// The endpoint has no default: its URLs identify a deployment and its
 		// security policy URI is defined by OPC 10000-7, so both are supplied
 		// rather than assumed.
@@ -111,6 +113,9 @@ func (config ListenerConfig) validate() error {
 	if err := config.DataAccess.validate(); err != nil {
 		return err
 	}
+	if err := config.Population.validate(); err != nil {
+		return err
+	}
 	if err := config.AddressSpace.validate(); err != nil {
 		return err
 	}
@@ -129,6 +134,7 @@ type Listener struct {
 	space     *AddressSpace
 	browse    *BrowseService
 	data      *DataAccessService
+	populator *Populator
 
 	listening atomic.Bool
 	slots     chan struct{}
@@ -171,10 +177,15 @@ func NewListenerWithRuntime(config ListenerConfig, runtime opcda.Runtime, channe
 		return nil, err
 	}
 	var data *DataAccessService
+	var populator *Populator
 	if runtime != nil {
 		if data, err = NewDataAccessService(space, runtime, config.DataAccess); err != nil {
 			return nil, err
 		}
+		if populator, err = NewPopulator(space, runtime, config.Population); err != nil {
+			return nil, err
+		}
+		browse.AttachPopulator(populator)
 	}
 	return &Listener{
 		config:    config,
@@ -184,6 +195,7 @@ func NewListenerWithRuntime(config ListenerConfig, runtime opcda.Runtime, channe
 		space:     space,
 		browse:    browse,
 		data:      data,
+		populator: populator,
 		slots:     make(chan struct{}, config.MaxConnections),
 		conns:     make(map[net.Conn]struct{}),
 	}, nil
@@ -582,9 +594,19 @@ func (l *Listener) requireActivatedSession(header RequestHeader, channelID uint3
 	return nil
 }
 
-// AddressSpace exposes the served address space so the owning application can
-// populate it from the DA source.
+// AddressSpace exposes the served address space. With a DA runtime attached the
+// listener fills it from the source on demand; without one the application may
+// populate it directly.
 func (l *Listener) AddressSpace() *AddressSpace { return l.space }
+
+// InvalidateAddressSpace makes the next browse of each branch go back to the
+// source. The application calls it after a reconnect, because a new connection
+// generation may expose a different address space.
+func (l *Listener) InvalidateAddressSpace() {
+	if l.populator != nil {
+		l.populator.Invalidate()
+	}
+}
 
 // errNoDataSource is reported when the listener has no DA runtime attached, so
 // a client is told the source is unavailable rather than given empty values.
@@ -681,7 +703,7 @@ func (l *Listener) dispatchService(channelID uint32, identifier uint32, decoder 
 		if sessionErr := l.requireActivatedSession(request.Header, channelID, now); sessionErr != nil {
 			return nil, request.Header.RequestHandle, sessionErr, nil
 		}
-		response, browseErr := l.browse.Browse(request, now)
+		response, browseErr := l.browse.Browse(context.Background(), request, now)
 		if browseErr != nil {
 			return nil, request.Header.RequestHandle, browseErr, nil
 		}
