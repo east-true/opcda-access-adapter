@@ -178,6 +178,11 @@ func runSetup(
 			TransportProfileURI: *opcuaTransportProfileURI,
 			NamespaceURI:        *opcuaNamespaceURI,
 			SourceFolderName:    *opcuaSourceFolder,
+			// The standard Server BuildInfo reports the build this binary was
+			// made from, which is what a client sees when it asks the server
+			// what it is talking to.
+			SoftwareVersion: version,
+			BuildNumber:     commit,
 		}
 		config, err = app.GuidedSetupOPCUAConfig(
 			opcda.SourceConfig{CLSID: selected.CLSID}, selectedListenAddress, endpoint, *writeEnabled)

@@ -55,7 +55,7 @@ func runForegroundConfig(path string) error {
 	if err != nil {
 		return err
 	}
-	return runForeground(config)
+	return runForeground(withBuildInfo(config))
 }
 
 func runForeground(config app.Config) error {

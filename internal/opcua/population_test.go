@@ -193,7 +193,8 @@ func TestPopulationIsBounded(t *testing.T) {
 	runtime.setEntries(nil, entries)
 
 	limits := DefaultPopulationLimits()
-	// Four standard nodes plus twenty entries exceeds this.
+	// Twenty entries exceeds this. The budget counts what the source added,
+	// not the server's own standard nodes.
 	limits.MaxNodes = 10
 	populator, space := newTestPopulator(t, runtime, limits)
 
@@ -206,8 +207,9 @@ func TestPopulationIsBounded(t *testing.T) {
 	}
 	// The budget is checked before the entries are added, so nothing partial
 	// was left behind.
-	if space.NodeCount() > limits.MaxNodes {
-		t.Fatalf("the space holds %d nodes past its %d limit", space.NodeCount(), limits.MaxNodes)
+	if space.SourceNodeCount() > limits.MaxNodes {
+		t.Fatalf("the space holds %d source nodes past its %d limit",
+			space.SourceNodeCount(), limits.MaxNodes)
 	}
 
 	// Depth is bounded too, so a client cannot drive the adapter arbitrarily

@@ -1248,7 +1248,51 @@ func (s *SubscriptionService) SetPublishingMode(sessionToken string, request Set
 // when there is nothing to report: holding the request would occupy the
 // connection's single request path, and the UA-TCP listener here serves one
 // request at a time per connection.
+// Publish holds the request until the subscription has something to report or
+// a keep-alive is due, which is what OPC 10000-4 5.14.5.1 means by a Publish
+// request being queued in the server. Answering immediately instead turns a
+// conforming client into a busy loop: it issues the next Publish as soon as the
+// last response arrives, so an empty response returned at once is answered at
+// once, thousands of times a second. That was measured against a third-party
+// client before this was fixed, and it starved the very sampling the
+// subscription existed to deliver.
+//
+// The caller must not hold the connection's read loop while this runs, because
+// a client sends other requests on the same channel while a Publish is
+// outstanding.
 func (s *SubscriptionService) Publish(ctx context.Context, sessionToken string, request PublishRequest, now time.Time) (PublishResponse, error) {
+	acknowledgements, err := s.acknowledge(sessionToken, request)
+	if err != nil {
+		return PublishResponse{}, err
+	}
+
+	// The publishing interval is how often the subscription looks for
+	// something to say, so it is also how often this waits.
+	interval := s.publishPollInterval(sessionToken)
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
+	for {
+		response, ready, err := s.tryPublish(ctx, sessionToken, request, acknowledgements, time.Now().UTC())
+		if err != nil {
+			return PublishResponse{}, err
+		}
+		if ready {
+			return response, nil
+		}
+		select {
+		case <-ctx.Done():
+			// The connection is gone or the server is stopping. Nothing is
+			// sent, which is what a client that has disconnected expects.
+			return PublishResponse{}, ctx.Err()
+		case <-ticker.C:
+		}
+	}
+}
+
+// acknowledge applies the request's acknowledgements, which happen as soon as
+// the request arrives rather than when its response is finally sent.
+func (s *SubscriptionService) acknowledge(sessionToken string, request PublishRequest) ([]StatusCode, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -1266,15 +1310,49 @@ func (s *SubscriptionService) Publish(ctx context.Context, sessionToken string, 
 		delete(subscription.retransmit, acknowledgement.SequenceNumber)
 		acknowledgements[index] = StatusGood
 	}
+	return acknowledgements, nil
+}
+
+// publishPollInterval is how often a waiting Publish looks for something to
+// send: the shortest publishing interval this session asked for.
+func (s *SubscriptionService) publishPollInterval(sessionToken string) time.Duration {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	interval := s.limits.MaxPublishingInterval
+	for _, subscription := range s.subscriptions {
+		if subscription.sessionToken != sessionToken {
+			continue
+		}
+		candidate := time.Duration(subscription.publishingInterval) * time.Millisecond
+		if candidate > 0 && candidate < interval {
+			interval = candidate
+		}
+	}
+	if interval < s.limits.MinPublishingInterval {
+		interval = s.limits.MinPublishingInterval
+	}
+	return interval
+}
+
+// tryPublish performs one publishing cycle. It reports ready when it has a
+// response to send: either notifications, or a keep-alive that has come due.
+func (s *SubscriptionService) tryPublish(ctx context.Context, sessionToken string, request PublishRequest, acknowledgements []StatusCode, now time.Time) (PublishResponse, bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 
 	subscription := s.nextPublishable(sessionToken)
 	if subscription == nil {
-		return PublishResponse{}, uacpError(StatusBadNoSubscription,
+		return PublishResponse{}, false, uacpError(StatusBadNoSubscription,
 			"this session has no subscription to publish")
 	}
 
 	s.collect(ctx, subscription, now)
-	message := s.buildMessage(subscription, now)
+	message, ready := s.buildMessage(subscription, now)
+	if !ready {
+		return PublishResponse{}, false, nil
+	}
+
 	available := make([]uint32, 0, len(subscription.retransmit))
 	for sequence := range subscription.retransmit {
 		available = append(available, sequence)
@@ -1290,7 +1368,7 @@ func (s *SubscriptionService) Publish(ctx context.Context, sessionToken string, 
 		NotificationMessage:      message,
 		Results:                  acknowledgements,
 		Diagnostics:              []DiagnosticInfo{},
-	}, nil
+	}, true, nil
 }
 
 // nextPublishable picks the session's highest-priority subscription that has
@@ -1404,13 +1482,21 @@ func dataValueForSubscription(value opcda.SubscriptionValue, timestamps Timestam
 }
 
 // buildMessage takes up to the negotiated maximum from the pending set. With
-// nothing pending it returns a keep-alive, which carries no NotificationData.
-func (s *SubscriptionService) buildMessage(subscription *uaSubscription, now time.Time) NotificationMessage {
+// nothing pending it counts one publishing cycle towards the keep-alive, and
+// reports ready only once maxKeepAliveCount cycles have passed with nothing to
+// say. Reporting ready on every empty cycle would answer the client's Publish
+// immediately and let it ask again at once, which is the busy loop this holds
+// back.
+func (s *SubscriptionService) buildMessage(subscription *uaSubscription, now time.Time) (NotificationMessage, bool) {
 	if !subscription.publishingEnabled || len(subscription.pending) == 0 {
 		subscription.keepAliveTicks++
+		if subscription.keepAliveTicks < subscription.keepAliveCount {
+			return NotificationMessage{}, false
+		}
+		subscription.keepAliveTicks = 0
 		// A keep-alive reuses the last sequence number, because Table 164's
 		// sequence numbers count notifications rather than responses.
-		return NotificationMessage{SequenceNumber: subscription.sequenceNumber, PublishTime: now}
+		return NotificationMessage{SequenceNumber: subscription.sequenceNumber, PublishTime: now}, true
 	}
 
 	maximum := s.limits.MaxNotificationsPerPublish
@@ -1435,7 +1521,7 @@ func (s *SubscriptionService) buildMessage(subscription *uaSubscription, now tim
 		HasData:        true,
 	}
 	subscription.retransmit[message.SequenceNumber] = message
-	return message
+	return message, true
 }
 
 // ReleaseSession removes every subscription a session owned, releasing their DA

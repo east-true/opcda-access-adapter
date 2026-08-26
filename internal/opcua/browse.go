@@ -571,7 +571,7 @@ func (s *BrowseService) browseNode(description BrowseDescription, maximum int, n
 			continue
 		}
 		if !description.ReferenceTypeID.IsNull() &&
-			!description.ReferenceTypeID.Equal(reference.ReferenceTypeID) {
+			!referenceTypeMatches(description.ReferenceTypeID, reference.ReferenceTypeID, description.IncludeSubtypes) {
 			continue
 		}
 		// Table 34: a zero nodeClassMask returns all node classes; otherwise it
@@ -595,13 +595,50 @@ func (s *BrowseService) browseNode(description BrowseDescription, maximum int, n
 	return BrowseResult{StatusCode: StatusGood, ContinuationPoint: point, References: matched[:maximum]}
 }
 
+// referenceSupertypes gives each reference type this address space uses the
+// chain of types it inherits from, taken from the OPC Foundation NodeSet. It
+// is what makes Table 34's includeSubtypes work: a client that browses for
+// HierarchicalReferences with subtypes included expects the Organizes and
+// HasProperty references below to match, and gets an empty result if they do
+// not. Only the types the address space actually emits need an entry, because
+// a type nothing references can never be on the right-hand side of a match.
+var referenceSupertypes = map[uint32][]uint32{
+	NodeIDOrganizes:         {NodeIDHierarchicalRefs, NodeIDReferences},
+	NodeIDHasProperty:       {NodeIDAggregates, NodeIDHasChild, NodeIDHierarchicalRefs, NodeIDReferences},
+	NodeIDHasComponent:      {NodeIDAggregates, NodeIDHasChild, NodeIDHierarchicalRefs, NodeIDReferences},
+	NodeIDHasTypeDefinition: {NodeIDNonHierarchicalRefs, NodeIDReferences},
+}
+
+// referenceTypeMatches applies Table 34's referenceTypeId filter. Without
+// includeSubtypes it is an equality test; with it, a reference also matches
+// when the requested type is one of its supertypes.
+func referenceTypeMatches(requested, actual NodeID, includeSubtypes bool) bool {
+	if requested.Equal(actual) {
+		return true
+	}
+	if !includeSubtypes {
+		return false
+	}
+	if requested.Namespace != 0 || requested.Type != NodeIDTypeNumeric ||
+		actual.Namespace != 0 || actual.Type != NodeIDTypeNumeric {
+		return false
+	}
+	for _, supertype := range referenceSupertypes[actual.Numeric] {
+		if supertype == requested.Numeric {
+			return true
+		}
+	}
+	return false
+}
+
 // isKnownReferenceType recognises the reference types this address space uses.
 func (s *BrowseService) isKnownReferenceType(id NodeID) bool {
 	if id.Namespace != 0 || id.Type != NodeIDTypeNumeric {
 		return false
 	}
 	switch id.Numeric {
-	case NodeIDReferences, NodeIDHierarchicalRefs, NodeIDOrganizes,
+	case NodeIDReferences, NodeIDNonHierarchicalRefs, NodeIDHierarchicalRefs,
+		NodeIDHasChild, NodeIDOrganizes, NodeIDAggregates,
 		NodeIDHasTypeDefinition, NodeIDHasProperty, NodeIDHasComponent:
 		return true
 	default:

@@ -943,14 +943,29 @@ func TestDirectlyAddressedItemsAreBounded(t *testing.T) {
 	runtime := &stubRuntime{}
 	space := testAddressSpace(t)
 	limits := DefaultDataAccessLimits()
-	// The standard nodes already occupy the space, so nothing new fits.
-	limits.MaxNodes = space.NodeCount()
+	// One directly addressed item fits; the next must not. The budget counts
+	// what the source contributed, so the server's own standard nodes leave it
+	// untouched.
+	limits.MaxNodes = 1
 	service, err := NewDataAccessService(space, runtime, limits)
 	if err != nil {
 		t.Fatal(err)
 	}
 	response, err := service.Read(context.Background(),
-		readRequestFor(readValue(ItemNodeID("Vendor/Tag"))), time.Now().UTC())
+		readRequestFor(readValue(ItemNodeID("Vendor/First"))), time.Now().UTC())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if response.Results[0].Status == StatusBadNodeIdUnknown {
+		t.Fatal("the first directly addressed item was refused")
+	}
+	if len(runtime.readRequest.Items) != 1 {
+		t.Fatalf("the source saw %d items, want the first one", len(runtime.readRequest.Items))
+	}
+
+	runtime.readRequest = opcda.ReadRequest{}
+	response, err = service.Read(context.Background(),
+		readRequestFor(readValue(ItemNodeID("Vendor/Second"))), time.Now().UTC())
 	if err != nil {
 		t.Fatal(err)
 	}

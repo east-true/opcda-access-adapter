@@ -663,3 +663,78 @@ func TestBrowseLimitsValidation(t *testing.T) {
 		})
 	}
 }
+
+// Table 34's includeSubtypes was decoded and then ignored, so a client that
+// browsed for HierarchicalReferences with subtypes included — which is how a
+// generic client walks an address space — saw nothing at all. This project's
+// own probe browsed with an unspecified reference type and never noticed; a
+// third-party client did, immediately.
+func TestBrowseHonoursIncludeSubtypes(t *testing.T) {
+	service, space := testBrowseService(t, DefaultBrowseLimits())
+	if err := space.PopulateBranch(nil, []opcda.BrowseEntry{
+		{Kind: opcda.BrowseEntryItem, Name: "Int32", ItemID: itemID("Test/Int32")},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	hierarchical := browseAll(space.SourceFolderID())
+	hierarchical.ReferenceTypeID = NumericNodeID(0, NodeIDHierarchicalRefs)
+
+	// Without subtypes an Organizes reference does not match, because the
+	// filter is then an equality test.
+	response, err := service.Browse(context.Background(), browseRequest(hierarchical), time.Now().UTC())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := len(response.Results[0].References); got != 0 {
+		t.Fatalf("references without subtypes = %d, want none", got)
+	}
+
+	// With subtypes the Organizes reference matches, because Organizes is a
+	// subtype of HierarchicalReferences.
+	hierarchical.IncludeSubtypes = true
+	response, err = service.Browse(context.Background(), browseRequest(hierarchical), time.Now().UTC())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := len(response.Results[0].References); got != 1 {
+		t.Fatalf("references with subtypes = %d, want the item", got)
+	}
+}
+
+// The subtype relation is the NodeSet's, not an invented one: a reference type
+// matches its own supertypes and nothing else.
+func TestReferenceTypeSubtypeRelation(t *testing.T) {
+	organizes := NumericNodeID(0, NodeIDOrganizes)
+	hasProperty := NumericNodeID(0, NodeIDHasProperty)
+	hasTypeDefinition := NumericNodeID(0, NodeIDHasTypeDefinition)
+	references := NumericNodeID(0, NodeIDReferences)
+	hierarchical := NumericNodeID(0, NodeIDHierarchicalRefs)
+	nonHierarchical := NumericNodeID(0, NodeIDNonHierarchicalRefs)
+	aggregates := NumericNodeID(0, NodeIDAggregates)
+
+	for _, testCase := range []struct {
+		name      string
+		requested NodeID
+		actual    NodeID
+		want      bool
+	}{
+		{"Organizes is hierarchical", hierarchical, organizes, true},
+		{"HasProperty aggregates", aggregates, hasProperty, true},
+		{"HasProperty is hierarchical", hierarchical, hasProperty, true},
+		{"everything is a Reference", references, hasTypeDefinition, true},
+		{"HasTypeDefinition is not hierarchical", hierarchical, hasTypeDefinition, false},
+		{"HasTypeDefinition is non-hierarchical", nonHierarchical, hasTypeDefinition, true},
+		{"Organizes does not aggregate", aggregates, organizes, false},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			if got := referenceTypeMatches(testCase.requested, testCase.actual, true); got != testCase.want {
+				t.Fatalf("match = %v, want %v", got, testCase.want)
+			}
+			// Without includeSubtypes only an exact match counts.
+			if referenceTypeMatches(testCase.requested, testCase.actual, false) {
+				t.Fatal("a subtype matched without includeSubtypes")
+			}
+		})
+	}
+}

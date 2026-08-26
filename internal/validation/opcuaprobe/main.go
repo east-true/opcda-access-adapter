@@ -66,6 +66,12 @@ type client struct {
 	limits   opcua.BinaryLimits
 	sequence uint32
 	buffer   uint32
+	// policyURI is the SecurityPolicy this client asks for. OPC 10000-6 6.7.7
+	// has the receiver verify that it supports the requested policy and has
+	// the response name the same one, so a client that names none is refused.
+	// This probe sent an empty field until a third-party client showed that no
+	// conforming client does.
+	policyURI string
 }
 
 func run(ctx context.Context, address, endpointURL, policyURI string, writeEnabled bool) error {
@@ -78,7 +84,10 @@ func run(ctx context.Context, address, endpointURL, policyURI string, writeEnabl
 	if err := conn.SetDeadline(deadline); err != nil {
 		return err
 	}
-	c := &client{conn: conn, limits: opcua.DefaultBinaryLimits(), buffer: 65536}
+	c := &client{
+		conn: conn, limits: opcua.DefaultBinaryLimits(), buffer: 65536,
+		policyURI: policyURI,
+	}
 
 	ack, err := c.hello(endpointURL)
 	if err != nil {
@@ -582,7 +591,9 @@ func (c *client) openChannel() (opcua.ChannelSecurityToken, error) {
 	if err != nil {
 		return opcua.ChannelSecurityToken{}, err
 	}
-	security, err := opcua.EncodeAsymmetricSecurityHeader(opcua.AsymmetricSecurityHeader{}, 0, c.limits)
+	security, err := opcua.EncodeAsymmetricSecurityHeader(opcua.AsymmetricSecurityHeader{
+		SecurityPolicyURI: c.policyURI,
+	}, 0, c.limits)
 	if err != nil {
 		return opcua.ChannelSecurityToken{}, err
 	}
@@ -611,9 +622,17 @@ func (c *client) openChannel() (opcua.ChannelSecurityToken, error) {
 	if err != nil {
 		return opcua.ChannelSecurityToken{}, fmt.Errorf("open secure channel: %w", err)
 	}
-	_, used, err := opcua.DecodeAsymmetricSecurityHeader(response[4:], 4096, c.limits)
+	responseSecurity, used, err := opcua.DecodeAsymmetricSecurityHeader(response[4:], 4096, c.limits)
 	if err != nil {
 		return opcua.ChannelSecurityToken{}, err
+	}
+	// OPC 10000-6 6.7.7: the response names the same policy the request did.
+	// The asymmetric header is the only place an OPN chunk carries it, so a
+	// client that is not told cannot know which policy secured the reply.
+	if responseSecurity.SecurityPolicyURI != c.policyURI {
+		return opcua.ChannelSecurityToken{}, fmt.Errorf(
+			"the response named security policy %q, want the requested %q",
+			responseSecurity.SecurityPolicyURI, c.policyURI)
 	}
 	decoder, err := opcua.NewDecoder(response[4+used+opcua.SequenceHeaderSize:], c.limits)
 	if err != nil {

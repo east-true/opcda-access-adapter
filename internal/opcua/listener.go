@@ -174,7 +174,17 @@ func NewListenerWithRuntime(config ListenerConfig, runtime opcda.Runtime, channe
 	if err != nil {
 		return nil, err
 	}
-	space, err := NewAddressSpace(config.AddressSpace)
+	// The address space's ServerArray names this server, and the endpoint is
+	// where that URI is configured.
+	addressSpaceConfig := config.AddressSpace
+	addressSpaceConfig.ApplicationURI = config.Endpoint.ApplicationURI
+	if addressSpaceConfig.ProductURI == "" {
+		addressSpaceConfig.ProductURI = config.Endpoint.ProductURI
+	}
+	if addressSpaceConfig.ProductName == "" {
+		addressSpaceConfig.ProductName = config.Endpoint.ApplicationName
+	}
+	space, err := NewAddressSpace(addressSpaceConfig)
 	if err != nil {
 		return nil, err
 	}
@@ -324,6 +334,18 @@ type connectionState struct {
 	receiveSequence *SequenceValidator
 	sendSequence    *SequenceValidator
 	channelID       uint32
+
+	// writeMu serialises writes to the socket. A held Publish is answered from
+	// its own goroutine, so a response can now be written while the read loop
+	// is answering something else, and two interleaved chunks would corrupt
+	// the stream. The send sequence number is assigned under the same lock so
+	// the numbers a client sees stay in the order they were written.
+	writeMu sync.Mutex
+	// done is closed when the connection is finished, releasing any Publish
+	// still waiting for something to report.
+	done chan struct{}
+	// publishing counts the Publish requests being held for this connection.
+	publishing atomic.Int32
 }
 
 func (l *Listener) serveConnection(conn net.Conn) {
@@ -331,7 +353,9 @@ func (l *Listener) serveConnection(conn net.Conn) {
 		// Before negotiation the server's own receive buffer bounds a header.
 		receiveSize: l.config.ReceiveBufferSize,
 		sendSize:    l.config.SendBufferSize,
+		done:        make(chan struct{}),
 	}
+	defer close(state.done)
 	// 7.1.3: close a connection that never sends a Hello.
 	deadline := l.config.HelloTimeout
 	for {
@@ -348,6 +372,14 @@ func (l *Listener) serveConnection(conn net.Conn) {
 			return
 		}
 		deadline = l.config.ReadTimeout
+		if state.publishing.Load() > 0 {
+			// The connection is idle because the server owes this client a
+			// Publish response, not because the client has gone away. Closing
+			// it here would break the one exchange a subscription depends on,
+			// so the read deadline waits for the keep-alive that is already
+			// bounded by the subscription's own interval.
+			deadline = l.publishIdleTimeout()
+		}
 	}
 }
 
@@ -424,11 +456,11 @@ func (l *Listener) handleOpenChannel(conn net.Conn, state *connectionState, body
 	if !state.negotiated {
 		return uacpError(StatusBadTcpMessageTypeInvalid, "OpenSecureChannel arrived before the Hello")
 	}
-	channelID, _, sequence, payload, err := l.splitSecureMessage(state, body, true)
+	parts, err := l.splitSecureMessage(state, body, true)
 	if err != nil {
 		return err
 	}
-	decoder, err := NewDecoder(payload, l.config.Binary)
+	decoder, err := NewDecoder(parts.Payload, l.config.Binary)
 	if err != nil {
 		return err
 	}
@@ -443,7 +475,7 @@ func (l *Listener) handleOpenChannel(conn net.Conn, state *connectionState, body
 	if err != nil {
 		return err
 	}
-	response, err := state.service.OpenSecureChannel(request, channelID, time.Now().UTC())
+	response, err := state.service.OpenSecureChannel(request, parts.ChannelID, time.Now().UTC())
 	if err != nil {
 		return err
 	}
@@ -459,18 +491,18 @@ func (l *Listener) handleOpenChannel(conn net.Conn, state *connectionState, body
 		return err
 	}
 	return l.writeSecureMessage(conn, state, MessageTypeOpenChannel,
-		response.SecurityToken, sequence.RequestID, serviceBody, true)
+		response.SecurityToken, parts.Sequence.RequestID, serviceBody, parts.SecurityPolicyURI, true)
 }
 
 func (l *Listener) handleCloseChannel(conn net.Conn, state *connectionState, body []byte) error {
 	if !state.negotiated {
 		return uacpError(StatusBadTcpMessageTypeInvalid, "CloseSecureChannel arrived before the Hello")
 	}
-	channelID, _, _, payload, err := l.splitSecureMessage(state, body, false)
+	parts, err := l.splitSecureMessage(state, body, false)
 	if err != nil {
 		return err
 	}
-	decoder, err := NewDecoder(payload, l.config.Binary)
+	decoder, err := NewDecoder(parts.Payload, l.config.Binary)
 	if err != nil {
 		return err
 	}
@@ -485,7 +517,7 @@ func (l *Listener) handleCloseChannel(conn net.Conn, state *connectionState, bod
 	if err != nil {
 		return err
 	}
-	if _, err := state.service.CloseSecureChannel(request, channelID, time.Now().UTC()); err != nil {
+	if _, err := state.service.CloseSecureChannel(request, parts.ChannelID, time.Now().UTC()); err != nil {
 		return err
 	}
 	// The clause has the socket closed after a CloseSecureChannel; returning an
@@ -495,57 +527,92 @@ func (l *Listener) handleCloseChannel(conn net.Conn, state *connectionState, bod
 
 var errConnectionFinished = errors.New("secure channel closed by the client")
 
+// secureMessageParts is what one secure conversation chunk carries ahead of its
+// service body.
+type secureMessageParts struct {
+	ChannelID uint32
+	Token     ChannelSecurityToken
+	Sequence  SequenceHeader
+	Payload   []byte
+	// SecurityPolicyURI is the policy the sender named in an OPN chunk's
+	// asymmetric security header. OPC 10000-6 6.7.7 requires the response to
+	// name the same policy the request did, so it has to survive as far as the
+	// reply. It is empty for a symmetric chunk, which carries a TokenId
+	// instead.
+	SecurityPolicyURI string
+}
+
 // splitSecureMessage reads the 12 byte secure conversation header, the security
 // header, and the sequence header, and returns the remaining service payload.
 // The message header itself has already been consumed by readMessage, so the
 // body here starts at the SecureChannelId.
-func (l *Listener) splitSecureMessage(state *connectionState, body []byte, asymmetric bool) (uint32, ChannelSecurityToken, SequenceHeader, []byte, error) {
-	var token ChannelSecurityToken
+func (l *Listener) splitSecureMessage(state *connectionState, body []byte, asymmetric bool) (secureMessageParts, error) {
+	var parts secureMessageParts
 	decoder, err := NewDecoder(body, l.config.Binary)
 	if err != nil {
-		return 0, token, SequenceHeader{}, nil, err
+		return parts, err
 	}
 	channelID, err := decoder.ReadUInt32()
 	if err != nil {
-		return 0, token, SequenceHeader{}, nil, err
+		return parts, err
 	}
+	parts.ChannelID = channelID
 	consumed := 4
 	if asymmetric {
 		maxCertificate := MaxSenderCertificateSize(int(state.receiveSize), MaxSecurityPolicyURIBytes, 0, 0)
 		security, used, securityErr := DecodeAsymmetricSecurityHeader(body[consumed:], maxCertificate, l.config.Binary)
 		if securityErr != nil {
-			return 0, token, SequenceHeader{}, nil, securityErr
+			return parts, securityErr
 		}
 		// Only the None policy is served, so a request that presents a
 		// certificate is refused rather than silently treated as unsecured.
 		if len(security.SenderCertificate) != 0 || len(security.ReceiverCertificateThumbprint) != 0 {
-			return 0, token, SequenceHeader{}, nil, uacpError(StatusBadSecurityPolicyRejected,
+			return parts, uacpError(StatusBadSecurityPolicyRejected,
 				"only an unsecured channel is served by this listener")
 		}
+		// OPC 10000-6 6.7.7 requires the receiver to verify that it supports
+		// the requested SecurityPolicy. Without this check a client that asked
+		// for a signed and encrypted policy would be handed an unsecured
+		// channel and never told, which is the one outcome the clause exists
+		// to prevent. Since exactly one policy is served, comparing against it
+		// also satisfies the clause's rule that a renew must carry the policy
+		// the channel was created with.
+		//
+		// A request that names no policy is refused too: an unnamed policy
+		// cannot be verified as supported, and 6.7.7 requires the response to
+		// carry the same policy the request did, which cannot be answered when
+		// the request carried none.
+		if security.SecurityPolicyURI != l.config.Endpoint.SecurityPolicyURI {
+			return parts, uacpError(StatusBadSecurityPolicyRejected,
+				"the requested security policy is not served by this endpoint")
+		}
+		parts.SecurityPolicyURI = security.SecurityPolicyURI
 		consumed += used
 	} else {
 		tokenID, tokenErr := decoder.ReadUInt32()
 		if tokenErr != nil {
-			return 0, token, SequenceHeader{}, nil, tokenErr
+			return parts, tokenErr
 		}
 		channel, acceptErr := l.registry.Accept(channelID, tokenID, time.Now().UTC())
 		if acceptErr != nil {
-			return 0, token, SequenceHeader{}, nil, acceptErr
+			return parts, acceptErr
 		}
-		token = channel.Token()
+		parts.Token = channel.Token()
 		consumed += 4
 	}
 	if len(body) < consumed+SequenceHeaderSize {
-		return 0, token, SequenceHeader{}, nil, decodingError("message is too short for a sequence header")
+		return parts, decodingError("message is too short for a sequence header")
 	}
 	sequence, err := DecodeSequenceHeader(body[consumed:consumed+SequenceHeaderSize], l.config.Binary)
 	if err != nil {
-		return 0, token, SequenceHeader{}, nil, err
+		return parts, err
 	}
 	if err := state.receiveSequence.Accept(sequence.SequenceNumber); err != nil {
-		return 0, token, SequenceHeader{}, nil, err
+		return parts, err
 	}
-	return channelID, token, sequence, body[consumed+SequenceHeaderSize:], nil
+	parts.Sequence = sequence
+	parts.Payload = body[consumed+SequenceHeaderSize:]
+	return parts, nil
 }
 
 // handleSecureMessage dispatches a MSG. GetEndpoints needs no session, which
@@ -556,11 +623,11 @@ func (l *Listener) handleSecureMessage(conn net.Conn, state *connectionState, bo
 	if !state.negotiated {
 		return uacpError(StatusBadTcpMessageTypeInvalid, "a secure message arrived before the Hello")
 	}
-	channelID, token, sequence, payload, err := l.splitSecureMessage(state, body, false)
+	parts, err := l.splitSecureMessage(state, body, false)
 	if err != nil {
 		return err
 	}
-	decoder, err := NewDecoder(payload, l.config.Binary)
+	decoder, err := NewDecoder(parts.Payload, l.config.Binary)
 	if err != nil {
 		return err
 	}
@@ -569,10 +636,19 @@ func (l *Listener) handleSecureMessage(conn net.Conn, state *connectionState, bo
 		return err
 	}
 
+	// A Publish is held until the subscription has something to report, so it
+	// is answered from its own goroutine. Handling it in the read loop would
+	// stop this connection from serving anything else for as long as the wait
+	// lasts, and a client keeps a Publish outstanding while it reads and
+	// browses on the same channel.
+	if identifier == PublishRequestEncodingID {
+		return l.handlePublish(conn, state, parts, decoder)
+	}
+
 	// A decoding failure means the stream cannot be trusted and closes the
 	// connection. A service failure is reported as a ServiceFault, which leaves
 	// the channel open because the channel itself is healthy.
-	serviceBody, requestHandle, serviceErr, fatal := l.dispatchService(channelID, identifier, decoder)
+	serviceBody, requestHandle, serviceErr, fatal := l.dispatchService(parts.ChannelID, identifier, decoder)
 	if fatal != nil {
 		return fatal
 	}
@@ -591,7 +667,7 @@ func (l *Listener) handleSecureMessage(conn net.Conn, state *connectionState, bo
 			return encodeErr
 		}
 	}
-	return l.writeSecureMessage(conn, state, MessageTypeSecure, token, sequence.RequestID, serviceBody, false)
+	return l.writeSecureMessage(conn, state, MessageTypeSecure, parts.Token, parts.Sequence.RequestID, serviceBody, "", false)
 }
 
 // requireActivatedSession resolves the session a request claims and refuses one
@@ -874,24 +950,6 @@ func (l *Listener) dispatchService(channelID uint32, identifier uint32, decoder 
 		}
 		encoder.WriteSetPublishingModeResponse(response)
 
-	case PublishRequestEncodingID:
-		request, requestErr := decoder.ReadPublishRequest()
-		if requestErr != nil {
-			return nil, 0, nil, requestErr
-		}
-		session, sessionErr := l.activatedSession(request.Header, channelID, now)
-		if sessionErr != nil {
-			return nil, request.Header.RequestHandle, sessionErr, nil
-		}
-		if l.subs == nil {
-			return nil, request.Header.RequestHandle, errNoDataSource, nil
-		}
-		response, publishErr := l.subs.Publish(context.Background(), session, request, now)
-		if publishErr != nil {
-			return nil, request.Header.RequestHandle, publishErr, nil
-		}
-		encoder.WritePublishResponse(response)
-
 	default:
 		// The request handle cannot be trusted from an unparsed body, so the
 		// fault echoes zero rather than a guessed value.
@@ -904,15 +962,29 @@ func (l *Listener) dispatchService(channelID uint32, identifier uint32, decoder 
 // writeSecureMessage frames a single-chunk response. Multi-chunk responses are
 // not produced yet; a body that does not fit the negotiated buffer is reported
 // rather than silently truncated.
-func (l *Listener) writeSecureMessage(conn net.Conn, state *connectionState, messageType MessageType, token ChannelSecurityToken, requestID uint32, serviceBody []byte, asymmetric bool) error {
+func (l *Listener) writeSecureMessage(conn net.Conn, state *connectionState, messageType MessageType, token ChannelSecurityToken, requestID uint32, serviceBody []byte, securityPolicyURI string, asymmetric bool) error {
 	encoder, err := NewEncoder(l.config.Binary)
 	if err != nil {
 		return err
 	}
+	// The sequence number is assigned and the bytes written under one lock, so
+	// a Publish answered from its own goroutine cannot interleave its chunk
+	// with the read loop's, nor take a sequence number out of send order.
+	state.writeMu.Lock()
+	defer state.writeMu.Unlock()
+
 	// The SecureChannelId is part of the 12 byte header of Table 57, so it is
 	// not repeated here; this body starts at the security header.
 	if asymmetric {
-		security, securityErr := EncodeAsymmetricSecurityHeader(AsymmetricSecurityHeader{}, 0, l.config.Binary)
+		// OPC 10000-6 6.7.7: the policy named in the response is the policy the
+		// request named. The asymmetric header is the only place an OPN chunk
+		// carries it, so leaving it empty leaves a client unable to tell which
+		// policy secured the reply — and a conforming one refuses the channel.
+		// Nothing caught this before a third-party client, because this
+		// project's own decoder accepted the empty field its encoder wrote.
+		security, securityErr := EncodeAsymmetricSecurityHeader(AsymmetricSecurityHeader{
+			SecurityPolicyURI: securityPolicyURI,
+		}, 0, l.config.Binary)
 		if securityErr != nil {
 			return securityErr
 		}
@@ -994,4 +1066,119 @@ func (l *Listener) Shutdown(ctx context.Context) error {
 	default:
 		return nil
 	}
+}
+
+// publishIdleTimeout is how long a connection may stay silent while the server
+// still owes it a Publish response. A subscription sends a keep-alive at worst
+// every maxPublishingInterval * MaxKeepAliveCount, so waiting that long plus
+// the ordinary read timeout cannot close a connection that is behaving.
+func (l *Listener) publishIdleTimeout() time.Duration {
+	keepAlive := l.config.Subscriptions.MaxPublishingInterval *
+		time.Duration(l.config.Subscriptions.MaxKeepAliveCount)
+	return keepAlive + l.config.ReadTimeout
+}
+
+// maxOutstandingPublishesPerConnection bounds the Publish requests held for one
+// connection. OPC 10000-4 5.14.5.1 has a server limit the number of active
+// Publish requests, and requires it to accept more than the number of
+// subscriptions created, since a client pipelines several per subscription.
+const maxOutstandingPublishesPerConnection = 64
+
+// handlePublish answers a Publish without occupying the read loop. The request
+// is decoded here, because the decoder reads from the chunk this call owns, and
+// the wait happens in a goroutine that writes the response when it has one.
+func (l *Listener) handlePublish(conn net.Conn, state *connectionState, parts secureMessageParts, decoder *Decoder) error {
+	request, err := decoder.ReadPublishRequest()
+	if err != nil {
+		// A body that cannot be decoded means the stream cannot be trusted.
+		return err
+	}
+	now := time.Now().UTC()
+	if serviceErr := l.publishPrecondition(); serviceErr != nil {
+		return l.writeServiceFault(conn, state, parts, request.Header.RequestHandle, serviceErr)
+	}
+	session, sessionErr := l.activatedSession(request.Header, parts.ChannelID, now)
+	if sessionErr != nil {
+		return l.writeServiceFault(conn, state, parts, request.Header.RequestHandle, sessionErr)
+	}
+
+	// Table 89: a client that has run out of room is told so rather than
+	// having its request silently dropped, and it then waits for one of its
+	// outstanding requests before issuing another.
+	if state.publishing.Add(1) > maxOutstandingPublishesPerConnection {
+		state.publishing.Add(-1)
+		return l.writeServiceFault(conn, state, parts, request.Header.RequestHandle,
+			uacpError(StatusBadTooManyPublishRequests,
+				"this connection already holds %d Publish requests",
+				maxOutstandingPublishesPerConnection))
+	}
+
+	go func() {
+		defer state.publishing.Add(-1)
+
+		// The wait ends with the connection, so a client that disappears does
+		// not leave a goroutine holding a request nobody will read.
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		go func() {
+			select {
+			case <-state.done:
+				cancel()
+			case <-ctx.Done():
+			}
+		}()
+
+		response, publishErr := l.subs.Publish(ctx, session, request, now)
+		if publishErr != nil {
+			if ctx.Err() != nil {
+				// The connection is gone; there is nobody to tell.
+				return
+			}
+			_ = l.writeServiceFault(conn, state, parts, request.Header.RequestHandle, publishErr)
+			return
+		}
+		encoder, encodeErr := NewEncoder(l.config.Binary)
+		if encodeErr != nil {
+			return
+		}
+		encoder.WritePublishResponse(response)
+		body, bodyErr := encoder.Bytes()
+		if bodyErr != nil {
+			return
+		}
+		_ = l.writeSecureMessage(conn, state, MessageTypeSecure, parts.Token,
+			parts.Sequence.RequestID, body, "", false)
+	}()
+	return nil
+}
+
+// publishPrecondition reports the failures that are answered before a Publish
+// is held, so a client is not left waiting on a request that could never be
+// served.
+func (l *Listener) publishPrecondition() error {
+	if l.subs == nil {
+		return errNoDataSource
+	}
+	return nil
+}
+
+// writeServiceFault answers one request with a fault, leaving the channel open
+// because the channel itself is healthy.
+func (l *Listener) writeServiceFault(conn net.Conn, state *connectionState, parts secureMessageParts, requestHandle uint32, serviceErr error) error {
+	status := StatusBadInternalError
+	var codecErr *CodecError
+	if errors.As(serviceErr, &codecErr) {
+		status = codecErr.Status
+	}
+	encoder, err := NewEncoder(l.config.Binary)
+	if err != nil {
+		return err
+	}
+	encoder.WriteServiceFault(NewServiceFault(requestHandle, status, time.Now().UTC()))
+	body, err := encoder.Bytes()
+	if err != nil {
+		return err
+	}
+	return l.writeSecureMessage(conn, state, MessageTypeSecure, parts.Token,
+		parts.Sequence.RequestID, body, "", false)
 }

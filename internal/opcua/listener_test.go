@@ -17,6 +17,14 @@ type testClient struct {
 	conn     net.Conn
 	limits   BinaryLimits
 	sequence uint32
+	// responseSecurityPolicyURI is the policy the server named in its OPN
+	// reply, which OPC 10000-6 6.7.7 requires to be the one the request named.
+	responseSecurityPolicyURI string
+	// securityPolicyURI is what the client names in its OPN. OPC 10000-6 6.7.7
+	// has the receiver verify that it supports the requested policy, so a
+	// client that names none, or names one the endpoint does not serve, is
+	// refused. It is a field so a test can present a policy deliberately.
+	securityPolicyURI string
 }
 
 // testEndpointConfig supplies the values the adapter refuses to invent: the
@@ -160,7 +168,13 @@ func (c *testClient) openChannel(channelID uint32, requestType TokenRequestType,
 		c.t.Fatal(err)
 	}
 
-	security, err := EncodeAsymmetricSecurityHeader(AsymmetricSecurityHeader{}, 0, c.limits)
+	policyURI := c.securityPolicyURI
+	if policyURI == "" {
+		policyURI = testEndpointConfig().SecurityPolicyURI
+	}
+	security, err := EncodeAsymmetricSecurityHeader(AsymmetricSecurityHeader{
+		SecurityPolicyURI: policyURI,
+	}, 0, c.limits)
 	if err != nil {
 		c.t.Fatal(err)
 	}
@@ -200,10 +214,11 @@ func (c *testClient) openChannel(channelID uint32, requestType TokenRequestType,
 	if err != nil {
 		c.t.Fatal(err)
 	}
-	_, used, err := DecodeAsymmetricSecurityHeader(response[4:], 4096, c.limits)
+	responseSecurity, used, err := DecodeAsymmetricSecurityHeader(response[4:], 4096, c.limits)
 	if err != nil {
 		c.t.Fatal(err)
 	}
+	c.responseSecurityPolicyURI = responseSecurity.SecurityPolicyURI
 	_ = decoder
 	payload := response[4+used+SequenceHeaderSize:]
 	serviceDecoder, err := NewDecoder(payload, c.limits)
@@ -239,7 +254,33 @@ func (c *testClient) callService(token ChannelSecurityToken, requestID uint32, s
 		c.t.Fatal(err)
 	}
 	c.send(MessageTypeSecure, ChunkFinal, encoded)
+	return c.readServiceResponse()
+}
 
+// sendService writes a request without waiting for its response, so a test can
+// have more than one outstanding at a time the way a real client does.
+func (c *testClient) sendService(token ChannelSecurityToken, requestID uint32, serviceBody []byte) {
+	c.t.Helper()
+	body, err := NewEncoder(c.limits)
+	if err != nil {
+		c.t.Fatal(err)
+	}
+	body.WriteUInt32(token.SecureChannelID)
+	body.WriteUInt32(token.TokenID)
+	c.sequence++
+	body.WriteUInt32(c.sequence)
+	body.WriteUInt32(requestID)
+	body.write(serviceBody)
+	encoded, err := body.Bytes()
+	if err != nil {
+		c.t.Fatal(err)
+	}
+	c.send(MessageTypeSecure, ChunkFinal, encoded)
+}
+
+// readServiceResponse reads one response from the socket.
+func (c *testClient) readServiceResponse() (uint32, *Decoder, error) {
+	c.t.Helper()
 	header, response, err := c.receive()
 	if err != nil {
 		return 0, nil, err
@@ -1385,5 +1426,204 @@ func TestListenerCloseIsIdempotent(t *testing.T) {
 	}
 	if listener.Listening() {
 		t.Fatal("the listener still reports itself as listening")
+	}
+}
+
+// OPC 10000-6 6.7.7: "If the Message is the response sent to the Client, then
+// the SecurityPolicy shall be the same as the one specified in the request."
+// The asymmetric security header is the only place an OPN chunk carries the
+// policy, so an empty one leaves a conforming client unable to tell which
+// policy secured the reply — and it refuses the channel rather than guess.
+//
+// This went unnoticed until a third-party client was pointed at the listener,
+// because this project's own decoder accepted the empty field its own encoder
+// wrote. A round trip against itself cannot catch a field both sides omit.
+func TestOpenSecureChannelEchoesTheRequestedSecurityPolicy(t *testing.T) {
+	_, address := startTestListener(t, testListenerConfig())
+	client := dialTestClient(t, address)
+	client.hello()
+
+	if _, err := client.openChannel(0, TokenRequestIssue, 1); err != nil {
+		t.Fatalf("OpenSecureChannel: %v", err)
+	}
+	want := testEndpointConfig().SecurityPolicyURI
+	if client.responseSecurityPolicyURI != want {
+		t.Fatalf("response security policy = %q, want %q",
+			client.responseSecurityPolicyURI, want)
+	}
+}
+
+// 6.7.7 also requires the receiver to verify that it supports the requested
+// policy. A client asking for one this endpoint does not serve must be told so,
+// not handed an unsecured channel it never asked for.
+func TestOpenSecureChannelRefusesAPolicyItDoesNotServe(t *testing.T) {
+	for _, testCase := range []struct {
+		name   string
+		policy string
+	}{
+		{"a policy the endpoint does not serve", "http://opcfoundation.org/UA/SecurityPolicy#Basic256Sha256"},
+		// A request naming no policy cannot be verified as supported, and the
+		// reply could not name the policy the request named.
+		{"no policy at all", ""},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			_, address := startTestListener(t, testListenerConfig())
+			client := dialTestClient(t, address)
+			client.hello()
+			// An empty field would otherwise fall back to the served policy.
+			client.securityPolicyURI = testCase.policy
+			if testCase.policy == "" {
+				client.securityPolicyURI = "\x00"
+			}
+
+			_, err := client.openChannel(0, TokenRequestIssue, 1)
+			if err == nil {
+				t.Fatal("the channel was opened with a policy the endpoint does not serve")
+			}
+			if got := codecStatus(t, err); got != StatusBadSecurityPolicyRejected {
+				t.Fatalf("status = %s", got.Hex())
+			}
+		})
+	}
+}
+
+// A Publish is held until the subscription has something to say, so it must not
+// occupy the connection while it waits: a client keeps a Publish outstanding
+// and reads and browses on the same channel at the same time. Handling it in
+// the read loop would stall everything else for the length of the wait, which
+// is the whole publishing interval at best and the keep-alive interval at
+// worst.
+func TestAHeldPublishDoesNotBlockTheConnection(t *testing.T) {
+	runtime := &subscribingRuntime{}
+	listener, err := NewListenerWithRuntime(testListenerConfig(), runtime, 1000, 2000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	socket, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	served := make(chan error, 1)
+	go func() { served <- listener.Serve(socket) }()
+	t.Cleanup(func() {
+		_ = listener.Close()
+		if err := <-served; err != nil {
+			t.Errorf("Serve: %v", err)
+		}
+	})
+
+	rights := &opcda.DAAccessRights{Raw: 3, Read: true, Write: true}
+	if err := listener.AddressSpace().PopulateBranch(nil, []opcda.BrowseEntry{
+		{Kind: opcda.BrowseEntryItem, Name: "Int32", ItemID: itemID("Test/Int32"),
+			CanonicalType: varType(opcda.VTI4), AccessRights: rights},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	client := dialTestClient(t, socket.Addr().String())
+	client.hello()
+	opened, err := client.openChannel(0, TokenRequestIssue, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	created, err := client.createSession(opened.SecurityToken, 2, testClientNonce())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.activateSession(opened.SecurityToken, 3, created.AuthenticationToken, NullExtensionObject()); err != nil {
+		t.Fatal(err)
+	}
+
+	encode := func(write func(*Encoder)) []byte {
+		t.Helper()
+		encoder, encodeErr := NewEncoder(client.limits)
+		if encodeErr != nil {
+			t.Fatal(encodeErr)
+		}
+		write(encoder)
+		body, bodyErr := encoder.Bytes()
+		if bodyErr != nil {
+			t.Fatal(bodyErr)
+		}
+		return body
+	}
+
+	identifier, decoder, err := client.callService(opened.SecurityToken, 4, encode(func(e *Encoder) {
+		e.WriteCreateSubscriptionRequest(CreateSubscriptionRequest{
+			Header:                      requestHeaderFor(created.AuthenticationToken, 4),
+			RequestedPublishingInterval: 250,
+			RequestedMaxKeepAliveCount:  10,
+			PublishingEnabled:           true,
+		})
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if identifier != CreateSubscriptionResponseEncodingID {
+		t.Fatalf("service = %d", identifier)
+	}
+	subscription, err := decoder.ReadCreateSubscriptionResponse()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, _, err = client.callService(opened.SecurityToken, 5, encode(func(e *Encoder) {
+		e.WriteCreateMonitoredItemsRequest(CreateMonitoredItemsRequest{
+			Header:             requestHeaderFor(created.AuthenticationToken, 5),
+			SubscriptionID:     subscription.SubscriptionID,
+			TimestampsToReturn: TimestampsBoth,
+			ItemsToCreate: []MonitoredItemCreateRequest{{
+				ItemToMonitor: ReadValueID{
+					NodeID: ItemNodeID("Test/Int32"), AttributeID: AttributeValue},
+				MonitoringMode: MonitoringModeReporting,
+				RequestedParameters: MonitoringParameters{
+					ClientHandle: 77, Filter: NullExtensionObject()},
+			}},
+		})
+	})); err != nil {
+		t.Fatal(err)
+	}
+
+	// The Publish has nothing to report, so it is held. The Read that follows
+	// must still be answered.
+	client.sendService(opened.SecurityToken, 6, encode(func(e *Encoder) {
+		e.WritePublishRequest(PublishRequest{
+			Header: requestHeaderFor(created.AuthenticationToken, 6),
+		})
+	}))
+	client.sendService(opened.SecurityToken, 7, encode(func(e *Encoder) {
+		e.WriteReadRequest(ReadRequest{
+			Header:             requestHeaderFor(created.AuthenticationToken, 7),
+			TimestampsToReturn: TimestampsBoth,
+			NodesToRead: []ReadValueID{{
+				NodeID: NumericNodeID(0, NodeIDServerStatusState), AttributeID: AttributeValue}},
+		})
+	}))
+
+	identifier, _, err = client.readServiceResponse()
+	if err != nil {
+		t.Fatalf("the Read behind a held Publish was never answered: %v", err)
+	}
+	if identifier != ReadResponseEncodingID {
+		t.Fatalf("service = %d, want the Read answered while the Publish is held", identifier)
+	}
+
+	// Now give the subscription something to say, and the held Publish is
+	// answered too.
+	runtime.latest().push(daNotification("Test/Int32", 4242, QualityGood))
+	identifier, decoder, err = client.readServiceResponse()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if identifier != PublishResponseEncodingID {
+		t.Fatalf("service = %d, want the held Publish answered", identifier)
+	}
+	published, err := decoder.ReadPublishResponse()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !published.NotificationMessage.HasData ||
+		len(published.NotificationMessage.Notifications) != 1 {
+		t.Fatalf("notification message = %+v", published.NotificationMessage)
 	}
 }

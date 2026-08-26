@@ -198,7 +198,7 @@ func (handler *adapterServiceHandler) Execute(_ []string, requests <-chan svc.Ch
 		writeServiceEventError(log, "load service configuration: "+err.Error())
 		return false, 1
 	}
-	service, err := app.New(config, nil)
+	service, err := app.New(withBuildInfo(config), nil)
 	if err != nil {
 		slog.Error("create adapter service", "error", err)
 		writeServiceEventError(log, "create adapter: "+err.Error())

@@ -416,6 +416,15 @@ func (s *DataAccessService) Read(ctx context.Context, request ReadRequest, now t
 			results[index] = s.readAttribute(node, target.AttributeID, now, request.TimestampsToReturn)
 			continue
 		}
+		if node.IsLocalVariable() {
+			// A variable the server answers for itself, such as the standard
+			// NamespaceArray. Its timestamps are this server's own, which is
+			// not the synthesised source timestamp design §5 forbids: for this
+			// node the server genuinely is the source, and no DA value is
+			// involved.
+			results[index] = localDataValue(node.LocalValue(now), request.TimestampsToReturn, now)
+			continue
+		}
 		if node.Class != NodeClassVariable || node.ItemID == "" {
 			results[index] = failedDataValue(StatusBadAttributeIDInvalid)
 			continue
@@ -443,6 +452,18 @@ func (s *DataAccessService) Read(ctx context.Context, request ReadRequest, now t
 		Results:     results,
 		Diagnostics: []DiagnosticInfo{},
 	}, nil
+}
+
+// localDataValue answers a variable the address space holds itself.
+func localDataValue(value Variant, timestamps TimestampsToReturn, now time.Time) DataValue {
+	result := DataValue{Value: value, Status: StatusGood}
+	if timestamps == TimestampsSource || timestamps == TimestampsBoth {
+		result.SourceTimestamp = now
+	}
+	if timestamps == TimestampsServer || timestamps == TimestampsBoth {
+		result.ServerTimestamp = now
+	}
+	return result
 }
 
 func failedDataValue(status StatusCode) DataValue {

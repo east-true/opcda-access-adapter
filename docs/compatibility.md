@@ -126,7 +126,32 @@ Write is enabled for the OPC UA scenario so those changes can be induced; the
 fixture's `Test` items are static and would otherwise show only one snapshot.
 The write-disabled default stays covered by the HTTP and gRPC scenarios.
 
-Still no third-party OPC UA client: the probe uses this project's own codec.
+### Third-party OPC UA client interoperability
+
+The two results above were produced by this project's own codec talking to this
+project's own server, which agree with each other by construction. A
+third-party client — [asyncua](https://github.com/FreeOpcUa/opcua-asyncio),
+used as an interop client only, as design §5.2 permits — now runs against the
+UA frontend over a scripted DA source. See
+[docs/validation/ua-client-interop.md](validation/ua-client-interop.md) for
+what it checks and `scripts/interop/run.sh` to run it.
+
+It found four defects that the Go suite could not see, each of which made the
+adapter unusable with a conforming client: an `OpenSecureChannel` reply naming
+no security policy, so **no third-party client could connect at all**; `Browse`
+ignoring `includeSubtypes`, so a generic hierarchical walk found nothing;
+`Publish` answering immediately rather than holding the request, which turned
+the client into a busy loop of 3,874 exchanges in 40 seconds; and the standard
+`Server` object being absent, so the client's liveness probe failed and it tore
+the connection down. All four are fixed and covered by regression tests.
+
+What this is evidence for: one third-party client interoperates with this
+server on connection, browse, read, write, subscription, and the standard
+Server object. What it is not evidence for: the DA side, which is scripted here
+and validated separately on Windows; any security policy other than `None`; or
+conformance. One client is not the OPC Foundation's Compliance Test Tool, and
+**no "OPC UA Certified" or "OPC UA Compliant" claim is made**. UA Expert,
+open62541, and the OPC Foundation .NET stack have not been tried.
 
 ### Phase 7 gRPC Subscribe streaming result
 

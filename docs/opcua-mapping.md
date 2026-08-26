@@ -249,6 +249,26 @@ bytes actually present.
 and signature terms as parameters rather than assumptions, so a signed policy
 can supply them without the formula being rewritten.
 
+### The policy an OPN names
+
+Clause 6.7.7 says: *"If the Message is the response sent to the Client, then the
+SecurityPolicy shall be the same as the one specified in the request."* The
+asymmetric security header is the only place an OPN chunk carries the policy, so
+the reply **echoes the policy the request named**, and a conforming client that
+receives an empty one refuses the channel rather than guess which policy secured
+the reply.
+
+The same clause requires the receiver to **verify that it supports the requested
+policy**. Exactly one policy is served, so the request is compared against it: a
+client asking for a signed and encrypted policy is told it is not served rather
+than handed an unsecured channel it never asked for. A request naming *no*
+policy is refused too — an unnamed policy cannot be verified as supported, and
+the reply could not name what the request did not.
+
+Both were wrong until a third-party client was pointed at the listener. This
+project's decoder accepted the empty field its own encoder wrote, which is
+precisely what a round trip against itself cannot catch.
+
 ### Sequence numbers
 
 `SequenceValidator` enforces 6.7.2.4: the number is incremented by **exactly
@@ -500,9 +520,45 @@ than zero as Table 15 requires.
 ## The address space
 
 `internal/opcua/addressspace.go` maps the DA source onto UA nodes. The standard
-nodes — Root, Objects, Types, and the folder that holds the source — use the
-identifiers from the OPC Foundation NodeIds table, and the attribute and
-`AccessLevel` values come from the AttributeIds table and OPC 10000-3.
+nodes — Root, Objects, Types, the folder that holds the source, and the `Server`
+object — use the identifiers from the OPC Foundation NodeIds table, and the
+attribute and `AccessLevel` values come from the AttributeIds table and OPC
+10000-3.
+
+### The standard Server object
+
+OPC 10000-5 8.3.2 places a `Server` object in every server's address space, and
+a generic UA client depends on it in two ways that are not optional in practice:
+
+- It reads the **`NamespaceArray` before anything else**, because a namespace
+  index means nothing on its own — only the URI it stands for is stable, which
+  is the same reason design §35.2 keeps the URI rather than the index as this
+  adapter's durable name.
+- It reads **`ServerStatus` on a timer** to decide whether the server is still
+  alive. Without it a client concludes the server is dead however healthy it is,
+  and tears the connection down.
+
+`internal/opcua/serverstatus.go` publishes `ServerArray`, `NamespaceArray`, the
+`ServerStatus` subtree (`StartTime`, `CurrentTime`, `State`, `BuildInfo` and its
+six fields), `ServiceLevel`, and `Auditing`. `ServerStatus` and `BuildInfo` are
+carried as `ExtensionObject` structures naming their `DefaultBinary` encodings,
+with the field order the NodeSet gives: `StartTime`, `CurrentTime`, `State`,
+`BuildInfo`, `SecondsTillShutdown`, `ShutdownReason`, and within `BuildInfo`
+`ProductUri`, `ManufacturerName`, `ProductName`, `SoftwareVersion`,
+`BuildNumber`, `BuildDate` — an order the names alone do not suggest, and one a
+foreign decoder is the only thing that can confirm.
+
+These variables are answered from the address space and **never reach the DA
+source**: the server is reporting on itself. `CurrentTime` is answered as of the
+read rather than fixed at construction, which is what makes it useful as a
+liveness signal. `State` is always `Running`: a DA source that is disconnected
+is reported per item, never by claiming the UA server itself has failed.
+
+The node budget counts **only source-derived nodes**. It exists to stop a source
+with a very large or hostile address space from exhausting memory, and counting
+the server's own fixed nodes would mean that adding a node the specification
+requires silently reduced how many DA items an operator's configured limit
+allows.
 
 `NodeClass` is a **bit mask** (1, 2, 4, 8, …), not an ordinal. That is why
 Browse filters node classes with a mask, and treating it as an ordinal would
@@ -609,6 +665,16 @@ test:
 - **`requestedMaxReferencesPerNode` of zero means the client imposes no limit**,
   so the server's own bound applies. A client can tighten that bound but cannot
   raise it.
+
+- **`includeSubtypes` is honoured.** A reference matches when the requested type
+  is one of its supertypes, using the relation the OPC Foundation NodeSet gives:
+  `Organizes` is a `HierarchicalReferences`, `HasProperty` and `HasComponent`
+  aggregate and are hierarchical, `HasTypeDefinition` is non-hierarchical, and
+  everything is a `References`. This matters more than it looks: browsing for
+  `HierarchicalReferences` with subtypes included is **how a generic client
+  walks an address space**, and ignoring the flag made such a client see nothing
+  at all. This project's own probe browsed with an unspecified reference type
+  and never noticed.
 
 Table 168 adds one more: a type definition exists only for `Object` and
 `Variable`, so any other node class carries a null NodeId there.
@@ -782,9 +848,12 @@ doing it here is explicit rather than hidden.
 
 ### What the parameters actually mean here
 
-- **`revisedSamplingInterval`** reports the subscription's publishing interval,
-  not the client's request, because the DA group's update rate is the real
-  sampling rate and the source never saw the client's number.
+- **`revisedSamplingInterval`** reports the update rate the **DA server settled
+  on**, read back from the group once it exists, because that is the real
+  sampling rate and the source never saw the client's number. A vendor may
+  revise far from what was requested, and the client should be told what the
+  source actually does. Before the group exists the subscription's publishing
+  interval is the best answer available.
 - **`revisedQueueSize` is 1.** The DA core coalesces per item, so the effective
   queue is one value per item; reporting a larger queue would overstate what the
   client will receive.
@@ -796,11 +865,31 @@ doing it here is explicit rather than hidden.
 
 ### Publish
 
-`Publish` answers from what the DA core has already delivered. It does **not**
-hold the request open: a real UA server does, but this listener serves one
-request at a time per connection, so holding it would block the connection
-entirely. With nothing to report it answers a keep-alive, which carries no
-`NotificationData` at all and does not consume a sequence number.
+`Publish` answers from what the DA core has already delivered, and it **holds
+the request** until the subscription has something to report or a keep-alive
+comes due. OPC 10000-4 5.14.5.1 is explicit that Publish requests are queued in
+the server, and the reason is practical: a client issues the next Publish as soon
+as the last response arrives, so an empty response returned at once is answered
+at once. Measured against a third-party client before this was fixed, that was
+**3,874 exchanges in 40 seconds against one notification actually delivered**,
+and the load starved the very sampling the subscription existed to deliver.
+
+Holding a request cannot occupy the connection, because a client keeps a Publish
+outstanding while it reads and browses on the same channel. So a Publish is
+answered from its own goroutine while the read loop carries on, writes to the
+socket are serialised — the send sequence number is assigned under the same lock,
+so chunks cannot interleave or go out of order — and a held request is released
+when its connection ends. The read deadline is extended while a connection has
+Publish requests outstanding: such a connection is idle because **the server owes
+it a response**, not because the client has gone away.
+
+Table 89's guidance that a server should limit active Publish requests, while
+accepting more than the number of subscriptions created, is implemented as a
+per-connection bound answered with `Bad_TooManyPublishRequests`.
+
+With nothing to report for `maxKeepAliveCount` publishing cycles it answers a
+keep-alive, which carries no `NotificationData` at all and does not consume a
+sequence number.
 
 Table 82's `maxNotificationsPerPublish` of zero means the client imposes no
 limit; a smaller client value tightens the server's bound. What does not fit is
@@ -828,12 +917,22 @@ variable, a Read of that variable, and a Subscription whose MonitoredItem
 receives the server's initial snapshot and then change-driven notifications
 induced through the UA Write service.
 
-**No third-party OPC UA client has been tested against this server.** The probe
-is written against this project's own codec, so it proves the server is
-internally consistent and reaches the DA source — not that a real UA client
-interoperates with it. Per ADR-0016 no conformance or interoperability claim is
-made, and the `SecurityPolicy None` path is for local interoperability work
-only.
+A **third-party UA client** now runs against the frontend too, over a scripted
+DA source, through `scripts/interop/run.sh`. It found four defects this
+project's own probe could not: an `OpenSecureChannel` reply naming no security
+policy, `Browse` ignoring `includeSubtypes`, `Publish` answering immediately
+rather than holding the request, and the standard `Server` object being absent.
+Each is described above and covered by regression tests;
+`docs/validation/ua-client-interop.md` records what the suite checks.
+
+What that is evidence for: **one** third-party client interoperates with this
+server on connection, browse, read, write, subscription, and the standard Server
+object. What it is not evidence for: the DA side, which is scripted there and
+validated separately on Windows; any security policy other than `None`; or
+conformance — one client is not the OPC Foundation's Compliance Test Tool. Per
+ADR-0016 **no "OPC UA Certified" or "OPC UA Compliant" claim is made**, and the
+`SecurityPolicy None` path is for local interoperability work only. UA Expert,
+open62541, and the OPC Foundation .NET stack have not been tried.
 
 ## What is not decided here
 

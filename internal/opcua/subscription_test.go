@@ -978,3 +978,110 @@ func TestRevisedSamplingIntervalComesFromTheSource(t *testing.T) {
 			result.RevisedSamplingInterval)
 	}
 }
+
+// OPC 10000-4 5.14.5.1 has Publish requests queued in the server: a client
+// issues the next Publish as soon as the last response arrives, so answering an
+// empty one at once turns the client into a busy loop. A third-party client
+// measured thousands of exchanges a second against this listener before Publish
+// began holding the request, and the load starved the sampling the subscription
+// existed to deliver.
+func TestPublishHoldsTheRequestUntilThereIsSomethingToSay(t *testing.T) {
+	runtime := &subscribingRuntime{}
+	service, _ := testSubscriptionService(t, runtime)
+	id := createSubscription(t, service)
+	monitorItem(t, service, id, ItemNodeID("Test/Int32"), 7)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	type result struct {
+		response PublishResponse
+		err      error
+	}
+	done := make(chan result, 1)
+	go func() {
+		response, err := service.Publish(ctx, testSession, PublishRequest{
+			Header: RequestHeader{AdditionalHeader: NullExtensionObject()},
+		}, channelEpoch)
+		done <- result{response, err}
+	}()
+
+	// Nothing has changed, so the request must still be held rather than
+	// answered with an empty response.
+	select {
+	case got := <-done:
+		cancel()
+		t.Fatalf("Publish answered with nothing to report: %+v %v", got.response, got.err)
+	case <-time.After(300 * time.Millisecond):
+	}
+
+	// Once the source reports a change the held request is answered.
+	runtime.latest().push(daNotification("Test/Int32", 4242, QualityGood))
+	select {
+	case got := <-done:
+		cancel()
+		if got.err != nil {
+			t.Fatal(got.err)
+		}
+		if !got.response.NotificationMessage.HasData ||
+			len(got.response.NotificationMessage.Notifications) != 1 {
+			t.Fatalf("notification message = %+v", got.response.NotificationMessage)
+		}
+	case <-time.After(5 * time.Second):
+		cancel()
+		t.Fatal("the held Publish was never answered after a change")
+	}
+}
+
+// A held Publish is released when its connection goes, so a client that
+// disappears does not leave the request waiting forever.
+func TestPublishStopsWaitingWhenTheConnectionEnds(t *testing.T) {
+	runtime := &subscribingRuntime{}
+	service, _ := testSubscriptionService(t, runtime)
+	id := createSubscription(t, service)
+	monitorItem(t, service, id, ItemNodeID("Test/Int32"), 7)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		_, err := service.Publish(ctx, testSession, PublishRequest{
+			Header: RequestHeader{AdditionalHeader: NullExtensionObject()},
+		}, channelEpoch)
+		done <- err
+	}()
+
+	time.Sleep(50 * time.Millisecond)
+	cancel()
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("the held Publish returned a response after its connection ended")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the held Publish outlived its connection")
+	}
+}
+
+// With nothing to report the subscription still has to speak eventually, so the
+// keep-alive comes after maxKeepAliveCount publishing cycles rather than never.
+func TestPublishSendsAKeepAliveAfterTheKeepAliveCount(t *testing.T) {
+	runtime := &subscribingRuntime{}
+	service, _ := testSubscriptionService(t, runtime)
+	id := createSubscription(t, service)
+	monitorItem(t, service, id, ItemNodeID("Test/Int32"), 7)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	response, err := service.Publish(ctx, testSession, PublishRequest{
+		Header: RequestHeader{AdditionalHeader: NullExtensionObject()},
+	}, channelEpoch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A keep-alive carries no NotificationData and reuses the last sequence
+	// number, because Table 164 counts notifications rather than responses.
+	if response.NotificationMessage.HasData {
+		t.Fatalf("keep-alive carried data: %+v", response.NotificationMessage)
+	}
+	if response.SubscriptionID != id {
+		t.Fatalf("keep-alive subscription = %d, want %d", response.SubscriptionID, id)
+	}
+}

@@ -143,7 +143,15 @@ func (e *Encoder) WriteOpenSecureChannelResponse(response OpenSecureChannelRespo
 	e.WriteUInt32(response.SecurityToken.TokenID)
 	e.WriteDateTime(response.SecurityToken.CreatedAt)
 	e.WriteUInt32(response.SecurityToken.RevisedLifetime)
-	e.WriteByteString(response.ServerNonce)
+	// A nil nonce is written as null rather than as a zero-length ByteString.
+	// OPC 10000-6 6.7.4 says the nonces should be set to null when the security
+	// mode is None, and the two encodings are distinguishable on the wire, so a
+	// client can tell "no nonce" from "an empty one".
+	if response.ServerNonce == nil {
+		e.WriteNullByteString()
+	} else {
+		e.WriteByteString(response.ServerNonce)
+	}
 }
 
 func (d *Decoder) ReadOpenSecureChannelResponse() (OpenSecureChannelResponse, error) {
