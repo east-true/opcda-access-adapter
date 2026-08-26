@@ -163,6 +163,21 @@ intervals since 1601-01-01 UTC with the clause's saturation rules at both ends.
 Booleans are written as `1` for true and any non-zero byte decodes as true, and
 NaN is normalised to an IEEE quiet NaN, both as the clause requires.
 
+### Null is not empty
+
+`-1` and `0` are **different values**, and a field that is simply not present is
+written as null rather than as a zero-length string. This is easy to get wrong
+in Go, where the zero value of a `string` is `""` and both readings collapse to
+the same thing, and easy to miss in testing, because this project's decoder
+treats null and empty alike.
+
+It is not cosmetic. OPC 10000-4 Table 192 says `issuedTokenType` "may only be
+specified if TokenType is ISSUEDTOKEN", so writing an empty one on an
+`ANONYMOUS` policy specifies a field the clause forbids. The OPC Foundation's
+own .NET stack refused the endpoint outright with `Bad_IdentityTokenInvalid`
+until this was fixed, while two other third-party clients tolerated it — a
+reminder that "it works with the client I tried" is not the same as correct.
+
 ### Bounds
 
 Design §35.5 requires the hand-written parser to bound what a peer can make it
@@ -478,12 +493,25 @@ applies to the transport profile URI.
 `CloseSession` from **OPC 10000-4 Tables 15, 17 and 19**, and the listener
 serves all three over a real socket.
 
-### Checks that are not conditional on security
+### The client nonce, and the one deliberate deviation
 
-**The client nonce length is validated even with `SecurityMode` `None`.** OPC
-10000-4 states the server shall check it and return `Bad_NonceInvalid` outside
-32 to 128 bytes, and that rule is not conditioned on the security mode. It would
-have been easy to skip it on the unsecured path; the clause does not allow that.
+**A nonce that is present is validated even with `SecurityMode` `None`.** OPC
+10000-4 5.7.2 states the server shall check the length and return
+`Bad_NonceInvalid` outside 32 to 128 bytes, and Table 16 repeats it. Neither
+statement is conditioned on the security mode.
+
+**An absent nonce is accepted under `None`, and only there.** This is the one
+place the adapter knowingly departs from a literal reading. open62541 sends no
+nonce at all on an unsecured channel — deliberately, per a comment in its own
+source — so enforcing the clause literally makes this server unusable with a
+reference implementation. The clause's own stated purpose for the field is to
+prove possession of the client's ApplicationInstanceCertificate, and the same
+clause says a server shall ignore that certificate when the `securityPolicyUri`
+is `None`: nothing is signed, so there is nothing for the nonce to take part in
+and its absence costs no security. Under any other security mode — where the
+nonce does real work — the rule is enforced exactly as written. The
+[interop validation doc](validation/ua-client-interop.md) records the deviation
+so it can be reversed by decision rather than found by accident.
 
 **The session is bound to the SecureChannel it was created on.** Table 15 says
 the authentication token is used *together with* the `SecureChannelId` to decide
@@ -917,22 +945,30 @@ variable, a Read of that variable, and a Subscription whose MonitoredItem
 receives the server's initial snapshot and then change-driven notifications
 induced through the UA Write service.
 
-A **third-party UA client** now runs against the frontend too, over a scripted
-DA source, through `scripts/interop/run.sh`. It found four defects this
-project's own probe could not: an `OpenSecureChannel` reply naming no security
-policy, `Browse` ignoring `includeSubtypes`, `Publish` answering immediately
-rather than holding the request, and the standard `Server` object being absent.
-Each is described above and covered by regression tests;
-`docs/validation/ua-client-interop.md` records what the suite checks.
+**Three third-party UA clients** now run against the frontend too, over a
+scripted DA source, through `scripts/interop/run.sh`: asyncua (Python),
+open62541 (C), and the OPC Foundation's own .NET stack. Between them they found
+six defects this project's own probe could not — an `OpenSecureChannel` reply
+naming no security policy, `Browse` ignoring `includeSubtypes`, `Publish`
+answering immediately rather than holding the request, the standard `Server`
+object being absent, unspecified endpoint strings written as zero-length rather
+than null, and a session nonce rule that no unsecured open62541 client can
+satisfy. Each is described above and covered by regression tests;
+`docs/validation/ua-client-interop.md` records what the suite checks and why the
+last of them is a deliberate deviation rather than a defect.
 
-What that is evidence for: **one** third-party client interoperates with this
-server on connection, browse, read, write, subscription, and the standard Server
-object. What it is not evidence for: the DA side, which is scripted there and
-validated separately on Windows; any security policy other than `None`; or
-conformance — one client is not the OPC Foundation's Compliance Test Tool. Per
-ADR-0016 **no "OPC UA Certified" or "OPC UA Compliant" claim is made**, and the
-`SecurityPolicy None` path is for local interoperability work only. UA Expert,
-open62541, and the OPC Foundation .NET stack have not been tried.
+Two of the six came from the second and third clients **against a server the
+first already passed**, which is why all three stay in the suite.
+
+What that is evidence for: three third-party clients, one of them the
+Foundation's own, interoperate with this server on connection, browse, read,
+write, subscription, and the standard Server object. What it is not evidence
+for: the DA side, which is scripted there and validated separately on Windows;
+any security policy other than `None`; or conformance — three clients are not
+the OPC Foundation's Compliance Test Tool. Per ADR-0016 **no "OPC UA Certified"
+or "OPC UA Compliant" claim is made**, and the `SecurityPolicy None` path is for
+local interoperability work only. UA Expert has not been tried: it is
+distributed only to registered users.
 
 ## What is not decided here
 

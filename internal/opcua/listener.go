@@ -738,7 +738,14 @@ func (l *Listener) dispatchService(channelID uint32, identifier uint32, decoder 
 		if requestErr != nil {
 			return nil, 0, nil, requestErr
 		}
-		session, serverNonce, createErr := l.sessions.Create(channelID, request, now)
+		// The nonce rule depends on the channel's security mode, so the
+		// channel is resolved before the session is created.
+		channel, channelErr := l.registry.Lookup(channelID)
+		if channelErr != nil {
+			return nil, request.Header.RequestHandle, channelErr, nil
+		}
+		session, serverNonce, createErr := l.sessions.Create(
+			channelID, channel.SecurityMode(), request, now)
 		if createErr != nil {
 			return nil, request.Header.RequestHandle, createErr, nil
 		}

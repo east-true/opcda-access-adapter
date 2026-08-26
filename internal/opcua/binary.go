@@ -236,6 +236,18 @@ func (e *Encoder) WriteString(value string) {
 
 func (e *Encoder) WriteNullString() { e.WriteInt32(nullLength) }
 
+// WriteOptionalString writes a field that is simply not present as a null
+// String rather than as a zero-length one. The two are distinct values on the
+// wire, and a receiver that distinguishes them reads a zero-length string as
+// "specified, and empty".
+func (e *Encoder) WriteOptionalString(value string) {
+	if value == "" {
+		e.WriteNullString()
+		return
+	}
+	e.WriteString(value)
+}
+
 func (e *Encoder) WriteByteString(value []byte) {
 	if len(value) > e.limits.MaxByteStringBytes {
 		e.fail(limitsError("ByteString exceeds the %d byte limit", e.limits.MaxByteStringBytes))

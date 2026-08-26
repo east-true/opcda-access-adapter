@@ -518,15 +518,39 @@ func randomBytes(length int) ([]byte, error) {
 	return value, nil
 }
 
-// Create issues a session bound to the given SecureChannel.
-func (r *SessionRegistry) Create(channelID uint32, request CreateSessionRequest, now time.Time) (*Session, []byte, error) {
-	// Table 15 and the Bad_NonceInvalid description: the server shall check the
-	// client nonce length, and the rule is not conditioned on the security
-	// mode.
-	if len(request.ClientNonce) < MinNonceBytes || len(request.ClientNonce) > MaxNonceBytes {
-		return nil, nil, uacpError(StatusBadNonceInvalid,
+// checkClientNonce applies OPC 10000-4 5.7.2's rule that the server shall check
+// the client nonce length, returning Bad_NonceInvalid below 32 or above 128
+// bytes.
+//
+// One deliberate deviation: with SecurityMode None an absent nonce is accepted.
+// Read literally the rule is unconditional, and the OPC Foundation's own .NET
+// stack sends a full nonce even unsecured — but open62541, a reference
+// implementation, sends none at all under None, so enforcing the rule literally
+// makes this server unusable with it. The clause's own stated purpose for the
+// field is to "prove possession of its ApplicationInstanceCertificate in the
+// response", and 5.7.2 also says a server shall ignore that certificate when
+// the securityPolicyUri is None. Under None there is no signature, so there is
+// nothing to prove and the nonce is inert: accepting its absence costs no
+// security.
+//
+// A nonce that is present is still checked, and under any other security mode
+// the rule is enforced exactly as written — that is where the nonce does work.
+func checkClientNonce(nonce []byte, mode SecurityMode) error {
+	if len(nonce) == 0 && mode == SecurityModeNone {
+		return nil
+	}
+	if len(nonce) < MinNonceBytes || len(nonce) > MaxNonceBytes {
+		return uacpError(StatusBadNonceInvalid,
 			"the client nonce is %d bytes; it must be between %d and %d",
-			len(request.ClientNonce), MinNonceBytes, MaxNonceBytes)
+			len(nonce), MinNonceBytes, MaxNonceBytes)
+	}
+	return nil
+}
+
+// Create issues a session bound to the given SecureChannel.
+func (r *SessionRegistry) Create(channelID uint32, mode SecurityMode, request CreateSessionRequest, now time.Time) (*Session, []byte, error) {
+	if err := checkClientNonce(request.ClientNonce, mode); err != nil {
+		return nil, nil, err
 	}
 	if len(r.sessions) >= r.limits.MaxSessions {
 		return nil, nil, uacpError(StatusBadTooManySessions,

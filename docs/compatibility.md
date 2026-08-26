@@ -129,29 +129,49 @@ The write-disabled default stays covered by the HTTP and gRPC scenarios.
 ### Third-party OPC UA client interoperability
 
 The two results above were produced by this project's own codec talking to this
-project's own server, which agree with each other by construction. A
-third-party client — [asyncua](https://github.com/FreeOpcUa/opcua-asyncio),
-used as an interop client only, as design §5.2 permits — now runs against the
-UA frontend over a scripted DA source. See
-[docs/validation/ua-client-interop.md](validation/ua-client-interop.md) for
-what it checks and `scripts/interop/run.sh` to run it.
+project's own server, which agree with each other by construction. **Three**
+independent third-party clients now run against the UA frontend over a scripted
+DA source — all as interop clients only, as design §5.2 permits, with nothing
+in the adapter linking against any of them:
 
-It found four defects that the Go suite could not see, each of which made the
-adapter unusable with a conforming client: an `OpenSecureChannel` reply naming
-no security policy, so **no third-party client could connect at all**; `Browse`
-ignoring `includeSubtypes`, so a generic hierarchical walk found nothing;
-`Publish` answering immediately rather than holding the request, which turned
-the client into a busy loop of 3,874 exchanges in 40 seconds; and the standard
-`Server` object being absent, so the client's liveness probe failed and it tore
-the connection down. All four are fixed and covered by regression tests.
+| Client | Version | Checks |
+| --- | --- | --- |
+| [asyncua](https://github.com/FreeOpcUa/opcua-asyncio) (Python) | 1.1.x | 142 |
+| [open62541](https://github.com/open62541/open62541) (C) | 1.5.7 | 128 |
+| [OPC Foundation .NET stack](https://github.com/OPCFoundation/UA-.NETStandard) | 1.5.378.156 | 131 |
 
-What this is evidence for: one third-party client interoperates with this
-server on connection, browse, read, write, subscription, and the standard
-Server object. What it is not evidence for: the DA side, which is scripted here
-and validated separately on Windows; any security policy other than `None`; or
-conformance. One client is not the OPC Foundation's Compliance Test Tool, and
-**no "OPC UA Certified" or "OPC UA Compliant" claim is made**. UA Expert,
-open62541, and the OPC Foundation .NET stack have not been tried.
+See [docs/validation/ua-client-interop.md](validation/ua-client-interop.md) for
+what they check and `scripts/interop/run.sh` to run them.
+
+Together they found six defects the Go suite could not see. Four came from
+asyncua: an `OpenSecureChannel` reply naming no security policy, so **no
+third-party client could connect at all**; `Browse` ignoring `includeSubtypes`,
+so a generic hierarchical walk found nothing; `Publish` answering immediately
+rather than holding the request, which turned the client into a busy loop of
+3,874 exchanges in 40 seconds; and the standard `Server` object being absent,
+so the client's liveness probe failed.
+
+Two more came from the other clients **against a server asyncua already
+passed**, which is the argument for having more than one: the Foundation's own
+stack refused the endpoint with `Bad_IdentityTokenInvalid`, because unspecified
+strings were written as zero-length rather than null and Table 192 forbids
+specifying `issuedTokenType` on an `ANONYMOUS` policy; and open62541 could not
+connect at all, because it deliberately sends no session nonce on an unsecured
+channel. The first is a plain defect and is fixed. The second is recorded as a
+**deliberate deviation** — an absent nonce is accepted only under
+`SecurityMode None`, where the clause's own rationale for the field does not
+apply — and the validation doc explains it so it can be reversed by decision
+rather than discovered by accident. All are covered by regression tests.
+
+What this is evidence for: three third-party clients, one of them the OPC
+Foundation's own, interoperate with this server on connection, browse, read,
+write, subscription, and the standard Server object. What it is not evidence
+for: the DA side, which is scripted here and validated separately on Windows;
+any security policy other than `None`; or conformance. Three clients are not
+the OPC Foundation's Compliance Test Tool, and **no "OPC UA Certified" or "OPC
+UA Compliant" claim is made**. UA Expert is not tested: Unified Automation
+distributes it only to registered users, so it could not be obtained without
+creating an account.
 
 ### Phase 7 gRPC Subscribe streaming result
 

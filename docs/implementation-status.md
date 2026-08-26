@@ -123,35 +123,32 @@ release-promotion gate.
 ## In progress
 
 - Third-party OPC UA client interoperability is on
-  `fix/opcua-client-interop`. Every UA test before it ran this project's
-  encoder against its own decoder, which agree by construction. A third-party
-  client ([asyncua](https://github.com/FreeOpcUa/opcua-asyncio), used as an
-  interop client only, as design §5.2 permits) now runs against the UA frontend
-  over a scripted DA source, via `scripts/interop/run.sh`; see
+  `fix/opcua-client-interop-clients`. **Three** independent clients now run
+  against the UA frontend over a scripted DA source, via
+  `scripts/interop/run.sh`: asyncua (Python, 142 checks), open62541 1.5.7 (C,
+  128 checks), and the OPC Foundation's own .NET stack 1.5.378.156 (131
+  checks). All are interop clients only, as design §5.2 permits; nothing in the
+  adapter links against any of them. See
   `docs/validation/ua-client-interop.md`.
 
-  It found four defects the Go suite could not see, each of which made the
-  adapter unusable with a conforming client:
+  Two further defects surfaced from the second and third clients **against a
+  server the first already passed**:
 
-  1. The `OpenSecureChannel` reply named no security policy. OPC 10000-6 6.7.7
-     requires the response to name the policy the request named, so **no
-     third-party client could connect at all**. The same clause's requirement
-     to verify that the requested policy is supported was also not checked.
-  2. `Browse` decoded `includeSubtypes` and ignored it, so a generic
-     hierarchical walk found nothing.
-  3. `Publish` answered immediately rather than holding the request. OPC
-     10000-4 5.14.5.1 has Publish requests queued in the server; answering at
-     once produced 3,874 exchanges in 40 seconds against one notification
-     delivered, and starved the sampling the subscription existed to deliver.
-  4. The standard `Server` object was missing, so the client's liveness probe
-     failed and it tore the connection down after the first notification.
+  1. Unspecified endpoint strings were written as zero-length rather than null.
+     A null String and a zero-length String are distinct in the UA binary
+     encoding, and Table 192 says `issuedTokenType` may only be specified when
+     the token type is ISSUEDTOKEN — so an empty one on an ANONYMOUS policy
+     specifies a field the clause forbids. The Foundation's stack refused the
+     endpoint with `Bad_IdentityTokenInvalid`; the other two tolerated it.
+  2. `CreateSession` refused open62541, which deliberately sends no nonce on an
+     unsecured channel. Recorded as a **deliberate deviation**: an absent nonce
+     is accepted only under `SecurityMode None`, where the clause's own stated
+     rationale for the field (proving possession of a certificate that the same
+     clause says is ignored under None) does not apply. A present nonce is
+     still checked, and under any other mode the rule is enforced as written.
 
-  All four are fixed with regression tests. The address space now publishes the
-  `Server` object with `ServerArray`, `NamespaceArray`, the `ServerStatus`
-  subtree, `ServiceLevel` and `Auditing`; the node budget counts only
-  source-derived nodes, so a fixed node the specification requires does not
-  reduce how many DA items an operator's limit allows.
-
+  UA Expert remains untested: Unified Automation distributes it only to
+  registered users, so it could not be obtained without creating an account.
 
 - The local KVM/libvirt destructive-validation gate is paused. The dedicated
   `opcda-destructive-review` VM and all of its dedicated host resources were
@@ -555,10 +552,17 @@ release-promotion gate.
    Treat vendor callback behavior as untested: a server may refuse connection
    points, revise update rates differently, or report Quality and timestamps
    differently. Record any such observation before changing source semantics.
-8. One third-party UA client is not conformance. Run `scripts/interop/run.sh`
-   before any change to the UA wire format, and treat other clients — UA
-   Expert, open62541, the OPC Foundation .NET stack — as untested. Do not make
-   an "OPC UA Certified" or "OPC UA Compliant" claim; ADR-0016 forbids it.
+8. Three third-party UA clients are not conformance. Run
+   `scripts/interop/run.sh` before any change to the UA wire format, and keep
+   all three enabled where their toolchains exist — two of the six defects
+   found so far came from the second and third clients against a server the
+   first already passed. UA Expert stays untested until someone with an account
+   runs it. Do not make an "OPC UA Certified" or "OPC UA Compliant" claim;
+   ADR-0016 forbids it.
+9. The absent-session-nonce acceptance under `SecurityMode None` is a recorded
+   deliberate deviation from a literal reading of OPC 10000-4 5.7.2, not an
+   oversight. Reverse it by decision if a signed policy is ever served, where
+   the nonce does real work and the rule is already enforced as written.
 
 ## Decisions
 

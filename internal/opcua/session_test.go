@@ -118,15 +118,14 @@ func TestActivateAndCloseSessionRoundTrip(t *testing.T) {
 	}
 }
 
-// OPC 10000-4: the server shall check the client nonce length and return
-// Bad_NonceInvalid outside 32 to 128 bytes. The rule is not conditioned on the
-// security mode.
+// OPC 10000-4 5.7.2: the server shall check the client nonce length and return
+// Bad_NonceInvalid outside 32 to 128 bytes.
 func TestCreateSessionChecksTheClientNonceLength(t *testing.T) {
 	registry := newTestSessionRegistry(t, DefaultSessionLimits())
-	for _, length := range []int{0, 1, MinNonceBytes - 1, MaxNonceBytes + 1} {
+	for _, length := range []int{1, MinNonceBytes - 1, MaxNonceBytes + 1} {
 		request := testCreateSessionRequest()
 		request.ClientNonce = bytes.Repeat([]byte{1}, length)
-		_, _, err := registry.Create(1, request, channelEpoch)
+		_, _, err := registry.Create(1, SecurityModeNone, request, channelEpoch)
 		if err == nil {
 			t.Fatalf("a %d byte nonce was accepted", length)
 		}
@@ -137,19 +136,44 @@ func TestCreateSessionChecksTheClientNonceLength(t *testing.T) {
 	for _, length := range []int{MinNonceBytes, 64, MaxNonceBytes} {
 		request := testCreateSessionRequest()
 		request.ClientNonce = bytes.Repeat([]byte{1}, length)
-		if _, _, err := registry.Create(1, request, channelEpoch); err != nil {
+		if _, _, err := registry.Create(1, SecurityModeNone, request, channelEpoch); err != nil {
 			t.Fatalf("a %d byte nonce was refused: %v", length, err)
+		}
+	}
+}
+
+// With SecurityMode None an absent nonce is accepted, and under any other mode
+// it is not. open62541 sends no nonce at all when the channel is unsecured, and
+// under None there is no signature for the nonce to take part in, so accepting
+// its absence costs no security. Where the nonce does work, the rule stands.
+func TestCreateSessionAcceptsAnAbsentNonceOnlyWhenUnsecured(t *testing.T) {
+	registry := newTestSessionRegistry(t, DefaultSessionLimits())
+	request := testCreateSessionRequest()
+	request.ClientNonce = nil
+	if _, _, err := registry.Create(1, SecurityModeNone, request, channelEpoch); err != nil {
+		t.Fatalf("an unsecured channel refused an absent nonce: %v", err)
+	}
+
+	for _, mode := range []SecurityMode{SecurityModeSign, SecurityModeSignAndEncrypt} {
+		request := testCreateSessionRequest()
+		request.ClientNonce = nil
+		_, _, err := registry.Create(1, mode, request, channelEpoch)
+		if err == nil {
+			t.Fatalf("%s accepted an absent nonce", mode)
+		}
+		if got := codecStatus(t, err); got != StatusBadNonceInvalid {
+			t.Fatalf("status = %s, want Bad_NonceInvalid", got.Hex())
 		}
 	}
 }
 
 func TestCreateSessionIssuesAnUnguessableToken(t *testing.T) {
 	registry := newTestSessionRegistry(t, DefaultSessionLimits())
-	first, firstNonce, err := registry.Create(1, testCreateSessionRequest(), channelEpoch)
+	first, firstNonce, err := registry.Create(1, SecurityModeNone, testCreateSessionRequest(), channelEpoch)
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, secondNonce, err := registry.Create(1, testCreateSessionRequest(), channelEpoch)
+	second, secondNonce, err := registry.Create(1, SecurityModeNone, testCreateSessionRequest(), channelEpoch)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -189,7 +213,7 @@ func TestSessionTimeoutIsRevisedAndGreaterThanZero(t *testing.T) {
 	} {
 		request := testCreateSessionRequest()
 		request.RequestedSessionTimeout = testCase.requested
-		session, _, err := registry.Create(1, request, channelEpoch)
+		session, _, err := registry.Create(1, SecurityModeNone, request, channelEpoch)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -206,7 +230,7 @@ func TestSessionTimeoutIsRevisedAndGreaterThanZero(t *testing.T) {
 // whether a client may use the session.
 func TestSessionIsBoundToItsSecureChannel(t *testing.T) {
 	registry := newTestSessionRegistry(t, DefaultSessionLimits())
-	session, _, err := registry.Create(11, testCreateSessionRequest(), channelEpoch)
+	session, _, err := registry.Create(11, SecurityModeNone, testCreateSessionRequest(), channelEpoch)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -225,7 +249,7 @@ func TestSessionIsBoundToItsSecureChannel(t *testing.T) {
 
 func TestSessionLookupRejectsUnknownAndExpired(t *testing.T) {
 	registry := newTestSessionRegistry(t, DefaultSessionLimits())
-	session, _, err := registry.Create(1, testCreateSessionRequest(), channelEpoch)
+	session, _, err := registry.Create(1, SecurityModeNone, testCreateSessionRequest(), channelEpoch)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -260,7 +284,7 @@ func TestSessionLookupRejectsUnknownAndExpired(t *testing.T) {
 // Table 17: "Null or empty user token shall always be interpreted as anonymous."
 func TestActivateAcceptsAnonymousIdentities(t *testing.T) {
 	registry := newTestSessionRegistry(t, DefaultSessionLimits())
-	session, _, err := registry.Create(1, testCreateSessionRequest(), channelEpoch)
+	session, _, err := registry.Create(1, SecurityModeNone, testCreateSessionRequest(), channelEpoch)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -296,7 +320,7 @@ func TestActivateAcceptsAnonymousIdentities(t *testing.T) {
 
 func TestActivateRejectsOtherIdentityTypes(t *testing.T) {
 	registry := newTestSessionRegistry(t, DefaultSessionLimits())
-	session, _, err := registry.Create(1, testCreateSessionRequest(), channelEpoch)
+	session, _, err := registry.Create(1, SecurityModeNone, testCreateSessionRequest(), channelEpoch)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -337,11 +361,11 @@ func TestSessionRegistryBoundsAndCleanup(t *testing.T) {
 	limits.MaxSessions = 2
 	registry := newTestSessionRegistry(t, limits)
 	for count := 0; count < limits.MaxSessions; count++ {
-		if _, _, err := registry.Create(1, testCreateSessionRequest(), channelEpoch); err != nil {
+		if _, _, err := registry.Create(1, SecurityModeNone, testCreateSessionRequest(), channelEpoch); err != nil {
 			t.Fatal(err)
 		}
 	}
-	_, _, err := registry.Create(1, testCreateSessionRequest(), channelEpoch)
+	_, _, err := registry.Create(1, SecurityModeNone, testCreateSessionRequest(), channelEpoch)
 	if err == nil {
 		t.Fatal("the session limit was exceeded")
 	}
@@ -356,14 +380,14 @@ func TestSessionRegistryBoundsAndCleanup(t *testing.T) {
 	if registry.Count() != 0 {
 		t.Fatalf("registry holds %d sessions", registry.Count())
 	}
-	if _, _, err := registry.Create(1, testCreateSessionRequest(), channelEpoch.Add(time.Hour)); err != nil {
+	if _, _, err := registry.Create(1, SecurityModeNone, testCreateSessionRequest(), channelEpoch.Add(time.Hour)); err != nil {
 		t.Fatalf("a slot was not freed: %v", err)
 	}
 }
 
 func TestCloseSessionRemovesIt(t *testing.T) {
 	registry := newTestSessionRegistry(t, DefaultSessionLimits())
-	session, _, err := registry.Create(1, testCreateSessionRequest(), channelEpoch)
+	session, _, err := registry.Create(1, SecurityModeNone, testCreateSessionRequest(), channelEpoch)
 	if err != nil {
 		t.Fatal(err)
 	}
