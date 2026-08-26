@@ -68,7 +68,24 @@ explicit resubscribe receives a new generation-scoped identifier and delivers
 again. Because it stops the fixture, it runs before the long-lived adapter
 starts and leaves no activated server behind.
 
-The HTTP, gRPC, and Subscribe probes do not print or upload process values. Their summaries contain only
+The OPC UA probe drives the UA frontend against the real source over a TCP
+socket: Hello/Acknowledge, OpenSecureChannel, GetEndpoints, CreateSession and
+ActivateSession, a Browse walk from Root through Objects to the source folder
+and down to a variable, and a Read of that variable.
+
+It asserts that the published endpoint matches the configured endpoint URL and
+security policy URI exactly, that the security mode is None, and that an
+unsecured endpoint carries **no certificate** and security level 0. The run
+supplies placeholder policy and transport profile URIs: the known URIs are
+defined by OPC 10000-7, which this project has not transcribed, so the probe
+checks only that the server publishes exactly what it was configured with and
+makes **no claim that those are the standard URIs**.
+
+Write is never enabled for the OPC UA scenario. The read assertion allows any
+status the source's quality produces — a non-Good quality is data, not a failure
+— and requires only that a usable status carries a value and a bad one does not.
+
+The HTTP, gRPC, Subscribe, and OPC UA probes do not print or upload process values. Their summaries contain only
 operation outcomes, VARTYPE, raw Quality, timestamp presence, HRESULTs,
 subscription identifiers, revised update rates, iteration count, and bounded
 resource deltas.

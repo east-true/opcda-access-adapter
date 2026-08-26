@@ -18,6 +18,8 @@ param(
 
     [string]$SubscribeProbePath,
 
+    [string]$OPCUAProbePath,
+
     [ValidateRange(0, 10)]
     [int]$FailureCycles = 0,
 
@@ -56,6 +58,10 @@ function Assert-True {
         throw $Message
     }
 }
+
+# The configuration file version the adapter writes. Kept in one place so
+# adding a frontend does not require editing every assertion.
+$script:ConfigFileVersion = 3
 
 function Invoke-NativeProcess {
     param(
@@ -254,6 +260,67 @@ function Start-GRPCAdapter {
     $stderr = Join-Path $script:WorkingDirectory "adapter-$Label.stderr.log"
     return Start-Process -FilePath $script:AdapterExecutable -PassThru `
         -RedirectStandardOutput $stdout -RedirectStandardError $stderr
+}
+
+function Start-OPCUAAdapter {
+    param(
+        [Parameter(Mandatory = $true)]
+        [int]$Port,
+
+        [Parameter(Mandatory = $true)]
+        [string]$Label
+    )
+
+    $env:OPCDA_SOURCE_PROG_ID = $script:ProgID
+    Remove-Item Env:OPCDA_SOURCE_CLSID -ErrorAction SilentlyContinue
+    $env:OPCDA_FRONTEND = 'opcua'
+    $env:OPCDA_OPCUA_LISTEN = "127.0.0.1:$Port"
+    $env:OPCDA_OPCUA_ENDPOINT_URL = "opc.tcp://127.0.0.1:$Port"
+    $env:OPCDA_OPCUA_APPLICATION_URI = 'urn:validation:opcda-access-adapter'
+    $env:OPCDA_OPCUA_NAMESPACE_URI = 'urn:validation:opcda-access-adapter'
+    # The known SecurityPolicy and transport profile URIs are defined by
+    # OPC 10000-7, which this project has not transcribed. The validation run
+    # supplies placeholders and asserts only that the server publishes exactly
+    # what it was configured with; it does not claim these are the standard
+    # URIs.
+    $env:OPCDA_OPCUA_SECURITY_POLICY_URI = 'urn:validation:security-policy:none'
+    $env:OPCDA_OPCUA_TRANSPORT_PROFILE_URI = 'urn:validation:transport:uatcp-uasc-uabinary'
+    $env:OPCDA_OPCUA_SOURCE_FOLDER = 'Source'
+    # Write is never enabled for the OPC UA scenario.
+    $env:OPCDA_WRITE_ENABLED = 'false'
+    $env:OPCDA_RECONNECT_INITIAL = '200ms'
+    $env:OPCDA_RECONNECT_MAX = '2s'
+    $env:OPCDA_REQUEST_DEADLINE = '10s'
+    $env:OPCDA_COM_CALL_WATCHDOG = '15s'
+
+    $stdout = Join-Path $script:WorkingDirectory "adapter-$Label.stdout.log"
+    $stderr = Join-Path $script:WorkingDirectory "adapter-$Label.stderr.log"
+    return Start-Process -FilePath $script:AdapterExecutable -PassThru `
+        -RedirectStandardOutput $stdout -RedirectStandardError $stderr
+}
+
+function Test-OPCUAFrontend {
+    Assert-True ($null -ne $script:OPCUAProbeExecutable) 'OPC UA probe path is required for OPC UA validation'
+    $port = if ($AdapterArch -eq '386') { 18751 } else { 18752 }
+    $adapter = $null
+    try {
+        $adapter = Start-OPCUAAdapter -Port $port -Label 'opcua'
+        Invoke-NativeProcess -FilePath $script:OPCUAProbeExecutable -ArgumentList @(
+            '-address', "127.0.0.1:$port",
+            '-endpoint-url', "opc.tcp://127.0.0.1:$port",
+            '-security-policy-uri', 'urn:validation:security-policy:none',
+            '-timeout', '60s'
+        ) -TimeoutSeconds 90
+        $listeners = @(Get-NetTCPConnection -State Listen -OwningProcess $adapter.Id -ErrorAction SilentlyContinue)
+        Assert-True ($listeners.Count -eq 1) 'OPC UA adapter did not expose exactly one TCP listener'
+        Assert-True ($listeners[0].LocalAddress -eq '127.0.0.1' -and [int]$listeners[0].LocalPort -eq $port) `
+            'OPC UA adapter listener was reachable beyond IPv4 loopback'
+        Write-Host "OPCUA_FRONTEND_PASS arch=$AdapterArch securityMode=None writeEnabled=false valuesLogged=false"
+    }
+    finally {
+        Stop-Adapter $adapter
+        Stop-ServerProcesses
+    }
 }
 
 function Stop-Adapter {
@@ -641,7 +708,8 @@ function Test-GuidedSetupWindowsService {
         ) -TimeoutSeconds 60 -StandardInputText $answers
 
         $guidedConfig = Get-Content -LiteralPath $script:GuidedConfigPath -Raw | ConvertFrom-Json
-        Assert-True ($guidedConfig.version -eq 2) 'guided config version was not 2'
+        Assert-True ($guidedConfig.version -eq $script:ConfigFileVersion) `
+            "guided config version was not $($script:ConfigFileVersion)"
         Assert-True (([Guid]$guidedConfig.source.clsid) -eq ([Guid]$expectedCLSID)) 'guided config did not preserve the selected exact CLSID'
         Assert-True ($guidedConfig.frontend.type -ceq 'http') 'guided config selected a non-HTTP frontend'
         Assert-True ($guidedConfig.frontend.httpListen -ceq "127.0.0.1:$guidedPort") 'guided config listener changed'
@@ -727,7 +795,8 @@ function Test-GuidedSetupGRPCWindowsService {
         ) -TimeoutSeconds 60 -StandardInputText $answers
 
         $guidedConfig = Get-Content -LiteralPath $configPath -Raw | ConvertFrom-Json
-        Assert-True ($guidedConfig.version -eq 2) 'gRPC guided config version was not 2'
+        Assert-True ($guidedConfig.version -eq $script:ConfigFileVersion) `
+            "gRPC guided config version was not $($script:ConfigFileVersion)"
         Assert-True (([Guid]$guidedConfig.source.clsid) -eq ([Guid]$expectedCLSID)) 'gRPC guided config changed the exact CLSID'
         Assert-True ($guidedConfig.frontend.type -ceq 'grpc') 'gRPC guided config selected another frontend'
         Assert-True ($guidedConfig.frontend.grpcListen -ceq "127.0.0.1:$grpcPort") 'gRPC guided config listener changed'
@@ -861,6 +930,12 @@ $script:SubscribeProbeExecutable = if ([string]::IsNullOrWhiteSpace($SubscribePr
 else {
     (Resolve-Path -LiteralPath $SubscribeProbePath).Path
 }
+$script:OPCUAProbeExecutable = if ([string]::IsNullOrWhiteSpace($OPCUAProbePath)) {
+    $null
+}
+else {
+    (Resolve-Path -LiteralPath $OPCUAProbePath).Path
+}
 $script:ServerRoot = (Resolve-Path -LiteralPath $ServerDirectory).Path
 $script:WorkingDirectory = Join-Path ([IO.Path]::GetTempPath()) "opcda-adapter-real-da-$AdapterArch-$RunLabel"
 if (Test-Path -LiteralPath $script:WorkingDirectory) {
@@ -950,6 +1025,9 @@ try {
     Test-GRPCWriteEnabledForeground
     if ($null -ne $script:SubscribeProbeExecutable) {
         Test-SubscribeCore
+    }
+    if ($null -ne $script:OPCUAProbeExecutable) {
+        Test-OPCUAFrontend
     }
 
     if ($Destructive.IsPresent) {
@@ -1241,7 +1319,8 @@ try {
 
     $stabilityEnabled = $null -ne $script:StabilityProbeExecutable
     $subscribeEnabled = $null -ne $script:SubscribeProbeExecutable
-    Write-Host "REAL_DA_VALIDATION_PASS arch=$AdapterArch server=$serverPlatform browse=root+nested read=partial write=disabled+typed+denied reconnect=true failureCycles=$FailureCycles destructive=$($Destructive.IsPresent) adapterCrashCycles=$AdapterCrashCycles stability=$stabilityEnabled subscribe=$subscribeEnabled soakIterations=$SoakIterations"
+    $opcuaEnabled = $null -ne $script:OPCUAProbeExecutable
+    Write-Host "REAL_DA_VALIDATION_PASS arch=$AdapterArch server=$serverPlatform browse=root+nested read=partial write=disabled+typed+denied reconnect=true failureCycles=$FailureCycles destructive=$($Destructive.IsPresent) adapterCrashCycles=$AdapterCrashCycles stability=$stabilityEnabled subscribe=$subscribeEnabled opcua=$opcuaEnabled soakIterations=$SoakIterations"
     Write-Host "READ_METADATA actualType=$($known.dataType.name) canonicalType=$($known.canonicalDataType.name) qualityRaw=$($known.quality) timestampPresent=$($known.timestampPresent) successHRESULT=$($known.hresult.hex) invalidHRESULT=$($unknown.hresult.hex)"
     Write-Host "RESOURCE_DELTAS adapterHandles=$adapterHandleDelta adapterPrivateBytes=$adapterPrivateDelta serverHandles=$serverHandleDelta serverPrivateBytes=$serverPrivateDelta"
 }

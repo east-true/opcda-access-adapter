@@ -708,6 +708,20 @@ nodes must not be served as if they were current. The same tick expires stale
 secure channels, sessions, and continuation points, which keeps that
 housekeeping on one owned goroutine rather than a timer inside the listener.
 
+## What has and has not been tested
+
+The real-DA validation runs the UA frontend against the source-built OPC
+Foundation DA 2.05a fixture on both architectures: the connection sequence, a
+secure channel, `GetEndpoints`, a session, a Browse walk from Root down to a
+variable, and a Read of that variable.
+
+**No third-party OPC UA client has been tested against this server.** The probe
+is written against this project's own codec, so it proves the server is
+internally consistent and reaches the DA source — not that a real UA client
+interoperates with it. Per ADR-0016 no conformance or interoperability claim is
+made, and the `SecurityPolicy None` path is for local interoperability work
+only.
+
 ## What is not decided here
 
 Certificate handling and the signed and encrypted security policies, address
