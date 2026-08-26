@@ -9,6 +9,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/east-true/opcda-access-adapter/internal/opcda"
 )
 
 // The UA-TCP listener implements the connection sequence of OPC 10000-6 7.1.3:
@@ -43,6 +45,7 @@ type ListenerConfig struct {
 	Channels       ChannelLimits
 	Sessions       SessionLimits
 	Browse         BrowseLimits
+	DataAccess     DataAccessLimits
 	// AddressSpace describes the namespace and folder the DA source appears
 	// under.
 	AddressSpace AddressSpaceConfig
@@ -65,6 +68,7 @@ func DefaultListenerConfig() ListenerConfig {
 		Channels:          DefaultChannelLimits(),
 		Sessions:          DefaultSessionLimits(),
 		Browse:            DefaultBrowseLimits(),
+		DataAccess:        DefaultDataAccessLimits(),
 		// The endpoint has no default: its URLs identify a deployment and its
 		// security policy URI is defined by OPC 10000-7, so both are supplied
 		// rather than assumed.
@@ -104,6 +108,9 @@ func (config ListenerConfig) validate() error {
 	if err := config.Browse.validate(); err != nil {
 		return err
 	}
+	if err := config.DataAccess.validate(); err != nil {
+		return err
+	}
 	if err := config.AddressSpace.validate(); err != nil {
 		return err
 	}
@@ -121,6 +128,7 @@ type Listener struct {
 	sessions  *SessionRegistry
 	space     *AddressSpace
 	browse    *BrowseService
+	data      *DataAccessService
 
 	listening atomic.Bool
 	slots     chan struct{}
@@ -131,7 +139,14 @@ type Listener struct {
 	listener net.Listener
 }
 
+// NewListener builds a listener with no DA runtime, so Read and Write report
+// that no source is available. NewListenerWithRuntime attaches one.
 func NewListener(config ListenerConfig, channelIDSeed, tokenIDSeed uint32) (*Listener, error) {
+	return NewListenerWithRuntime(config, nil, channelIDSeed, tokenIDSeed)
+}
+
+// NewListenerWithRuntime attaches the DA runtime that answers Read and Write.
+func NewListenerWithRuntime(config ListenerConfig, runtime opcda.Runtime, channelIDSeed, tokenIDSeed uint32) (*Listener, error) {
 	if err := config.validate(); err != nil {
 		return nil, err
 	}
@@ -155,6 +170,12 @@ func NewListener(config ListenerConfig, channelIDSeed, tokenIDSeed uint32) (*Lis
 	if err != nil {
 		return nil, err
 	}
+	var data *DataAccessService
+	if runtime != nil {
+		if data, err = NewDataAccessService(space, runtime, config.DataAccess); err != nil {
+			return nil, err
+		}
+	}
 	return &Listener{
 		config:    config,
 		registry:  registry,
@@ -162,6 +183,7 @@ func NewListener(config ListenerConfig, channelIDSeed, tokenIDSeed uint32) (*Lis
 		sessions:  sessions,
 		space:     space,
 		browse:    browse,
+		data:      data,
 		slots:     make(chan struct{}, config.MaxConnections),
 		conns:     make(map[net.Conn]struct{}),
 	}, nil
@@ -564,6 +586,13 @@ func (l *Listener) requireActivatedSession(header RequestHeader, channelID uint3
 // populate it from the DA source.
 func (l *Listener) AddressSpace() *AddressSpace { return l.space }
 
+// errNoDataSource is reported when the listener has no DA runtime attached, so
+// a client is told the source is unavailable rather than given empty values.
+var errNoDataSource = &CodecError{
+	Status:  StatusBadNotConnected,
+	Message: "no OPC DA source is attached to this listener",
+}
+
 // StatusBadInternalError is from the OPC Foundation StatusCode list.
 const StatusBadInternalError StatusCode = 0x80020000
 
@@ -671,6 +700,40 @@ func (l *Listener) dispatchService(channelID uint32, identifier uint32, decoder 
 			return nil, request.Header.RequestHandle, browseErr, nil
 		}
 		encoder.WriteBrowseNextResponse(response)
+
+	case ReadRequestEncodingID:
+		request, requestErr := decoder.ReadReadRequest()
+		if requestErr != nil {
+			return nil, 0, nil, requestErr
+		}
+		if sessionErr := l.requireActivatedSession(request.Header, channelID, now); sessionErr != nil {
+			return nil, request.Header.RequestHandle, sessionErr, nil
+		}
+		if l.data == nil {
+			return nil, request.Header.RequestHandle, errNoDataSource, nil
+		}
+		response, readErr := l.data.Read(context.Background(), request, now)
+		if readErr != nil {
+			return nil, request.Header.RequestHandle, readErr, nil
+		}
+		encoder.WriteReadResponse(response)
+
+	case WriteRequestEncodingID:
+		request, requestErr := decoder.ReadWriteRequest()
+		if requestErr != nil {
+			return nil, 0, nil, requestErr
+		}
+		if sessionErr := l.requireActivatedSession(request.Header, channelID, now); sessionErr != nil {
+			return nil, request.Header.RequestHandle, sessionErr, nil
+		}
+		if l.data == nil {
+			return nil, request.Header.RequestHandle, errNoDataSource, nil
+		}
+		response, writeErr := l.data.Write(context.Background(), request, now)
+		if writeErr != nil {
+			return nil, request.Header.RequestHandle, writeErr, nil
+		}
+		encoder.WriteWriteResponse(response)
 
 	default:
 		// The request handle cannot be trusted from an unparsed body, so the

@@ -580,6 +580,57 @@ requires. When no point can be issued the operation reports
 created but never activated is refused with `Bad_SessionNotActivated`, so a
 client cannot skip `ActivateSession` and still read the address space.
 
+## Read and Write
+
+`internal/opcua/variant.go` adds `Variant` and `DataValue` (**OPC 10000-6 Tables
+26, 27 and 1**), and `internal/opcua/readwrite.go` implements `Read` and `Write`
+(**OPC 10000-4 Tables 47, 53, 167, 180 and 131**). **This is where the UA
+frontend actually reaches the DA runtime.**
+
+### The mapping is applied, not re-decided
+
+A read result goes through the Part 8 mapping already documented above: the DA
+quality becomes the UA `StatusCode`, a per-item HRESULT maps through Table A.4,
+and the DA timestamp becomes the `SourceTimestamp` while the adapter's own time
+becomes the `ServerTimestamp`. **An absent DA timestamp stays absent** rather
+than being filled in with the adapter's clock.
+
+Scalar widths survive: the Go type the DA core produced decides the built-in
+type, so nothing is widened or narrowed on the way out. A bad status carries no
+value, as Table 131 requires.
+
+### Write is strictly typed
+
+The node's canonical DataType decides the VARTYPE, and the `Variant` must
+already carry exactly that type. A `Double` written to an `Int32` node is
+`Bad_TypeMismatch`, and so is a narrower `Int16` — nothing is converted. This
+matches the DA core's own strict typed write.
+
+Table 53 says a server returns `Bad_WriteNotSupported` when it cannot write
+timestamps or an `indexRange`. The DA core writes **values only**, so a write
+carrying a source timestamp, a server timestamp, a status code, or an index
+range is refused before it reaches the source.
+
+### Encoding details worth stating
+
+`DataValue`'s mask means a field is written only when it carries information: a
+`Good` status and an absent timestamp are **omitted**, not written as zeros.
+Picoseconds of 10000 or more decode as 9999, as Table 27 requires.
+
+A `Variant` whose Go value does not match its declared built-in type is refused
+rather than coerced, since coercion would produce a stream the client cannot
+decode. Unassigned built-in ids (26–31) are **accepted on decode** as
+ByteStrings and **never produced on encode**, exactly as Table 26 states. A
+Variant may not contain a Variant. Array Variants are decoded and skipped —
+their declared length is still bounded — because the DA core decodes no arrays
+and this adapter produces none.
+
+### No source attached
+
+A listener built without a DA runtime answers `Read` and `Write` with
+`Bad_NotConnected` rather than returning empty values, so a client is told the
+source is unavailable instead of being handed something that looks like data.
+
 ## What is not decided here
 
 Certificate handling and the signed and encrypted security policies, address
