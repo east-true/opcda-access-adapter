@@ -3,6 +3,7 @@ package opcua
 import (
 	"crypto/rand"
 	"fmt"
+	"sync"
 	"time"
 )
 
@@ -483,19 +484,73 @@ type Session struct {
 	CreatedAt    time.Time
 	LastActivity time.Time
 	Activated    bool
+
+	// ended is closed when the session is terminated, so a request still in
+	// flight learns of it instead of running on against a session that is
+	// gone. OPC 10000-4 5.7.2 requires exactly that: "When a Session is
+	// terminated, all outstanding requests on the Session are aborted and
+	// Bad_SessionClosed StatusCodes are returned to the Client."
+	ended chan struct{}
+	// inFlight counts the requests this session has issued that have not been
+	// answered yet. The clause terminates a session when "the Client fails to
+	// issue a Service request… within the timeout period"; a request still
+	// being served is one the client did issue, so it holds the session open.
+	// Without this a held Publish would let a perfectly behaved client's
+	// session expire underneath it.
+	inFlight int
 }
 
 func (s *Session) expired(now time.Time) bool {
+	// A request the server has not answered yet is a request the client did
+	// issue, so the session is not idle however long the answer takes.
+	if s.inFlight > 0 {
+		return false
+	}
 	deadline := s.LastActivity.Add(time.Duration(s.Timeout) * time.Millisecond)
 	return !now.Before(deadline)
 }
 
-// SessionRegistry issues and tracks sessions. It is not safe for concurrent
-// use; the owning listener drives it from one goroutine.
+// SessionInfo is an immutable snapshot of a session, taken under the registry's
+// lock. Callers get one of these rather than a *Session: the session itself is
+// shared mutable state and stays inside the registry, so there is no way for a
+// caller to read a field while another connection is writing it.
+type SessionInfo struct {
+	ID                  NodeID
+	AuthenticationToken NodeID
+	ChannelID           uint32
+	Name                string
+	Timeout             float64
+	Activated           bool
+}
+
+// Key identifies the session a subscription belongs to.
+func (info SessionInfo) Key() string { return string(info.AuthenticationToken.Opaque) }
+
+// snapshot copies a session's observable state. It is called with the lock
+// held.
+func (s *Session) snapshot() SessionInfo {
+	return SessionInfo{
+		ID:                  s.ID,
+		AuthenticationToken: s.AuthenticationToken,
+		ChannelID:           s.ChannelID,
+		Name:                s.Name,
+		Timeout:             s.Timeout,
+		Activated:           s.Activated,
+	}
+}
+
+// SessionRegistry issues and tracks sessions. It is safe for concurrent use: a
+// listener serves every connection on its own goroutine and expires stale
+// sessions from another, so every one of these methods can run at the same time
+// as any other.
 type SessionRegistry struct {
-	limits   SessionLimits
+	limits SessionLimits
+
+	mu       sync.Mutex
 	sessions map[string]*Session
 	nextID   uint32
+	// onEnd is what the listener needs done when a session ends by any route.
+	onEnd func(SessionInfo)
 }
 
 func NewSessionRegistry(limits SessionLimits) (*SessionRegistry, error) {
@@ -505,7 +560,11 @@ func NewSessionRegistry(limits SessionLimits) (*SessionRegistry, error) {
 	return &SessionRegistry{limits: limits, sessions: make(map[string]*Session)}, nil
 }
 
-func (r *SessionRegistry) Count() int { return len(r.sessions) }
+func (r *SessionRegistry) Count() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return len(r.sessions)
+}
 
 // randomBytes produces a cryptographically random value. A failure here is not
 // recoverable: issuing a predictable session token would be worse than refusing
@@ -575,27 +634,32 @@ func checkClientNonce(nonce []byte, security SessionSecurity) error {
 }
 
 // Create issues a session bound to the given SecureChannel.
-func (r *SessionRegistry) Create(channelID uint32, security SessionSecurity, request CreateSessionRequest, now time.Time) (*Session, []byte, error) {
+func (r *SessionRegistry) Create(channelID uint32, security SessionSecurity, request CreateSessionRequest, now time.Time) (SessionInfo, []byte, error) {
 	if err := checkClientNonce(request.ClientNonce, security); err != nil {
-		return nil, nil, err
-	}
-	if len(r.sessions) >= r.limits.MaxSessions {
-		return nil, nil, uacpError(StatusBadTooManySessions,
-			"the %d session limit is reached", r.limits.MaxSessions)
+		return SessionInfo{}, nil, err
 	}
 
 	// The authentication token is opaque and random so it cannot be guessed
-	// from a session identifier a client has seen.
+	// from a session identifier a client has seen. It is generated before the
+	// lock is taken, because the random source is not this registry's state.
 	tokenBytes, err := randomBytes(32)
 	if err != nil {
-		return nil, nil, err
+		return SessionInfo{}, nil, err
 	}
 	serverNonce, err := randomBytes(MinNonceBytes)
 	if err != nil {
-		return nil, nil, err
+		return SessionInfo{}, nil, err
+	}
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if len(r.sessions) >= r.limits.MaxSessions {
+		return SessionInfo{}, nil, uacpError(StatusBadTooManySessions,
+			"the %d session limit is reached", r.limits.MaxSessions)
 	}
 	r.nextID++
 	session := &Session{
+		ended:               make(chan struct{}),
 		ID:                  NumericNodeID(1, r.nextID),
 		AuthenticationToken: NodeID{Namespace: 1, Type: NodeIDTypeOpaque, Opaque: tokenBytes},
 		ChannelID:           channelID,
@@ -605,12 +669,30 @@ func (r *SessionRegistry) Create(channelID uint32, security SessionSecurity, req
 		LastActivity:        now,
 	}
 	r.sessions[string(tokenBytes)] = session
-	return session, serverNonce, nil
+	return session.snapshot(), serverNonce, nil
 }
 
 // Lookup resolves a session by its authentication token and enforces the
 // channel binding and the timeout.
-func (r *SessionRegistry) Lookup(token NodeID, channelID uint32, now time.Time) (*Session, error) {
+func (r *SessionRegistry) Lookup(token NodeID, channelID uint32, now time.Time) (SessionInfo, error) {
+	var ended []SessionInfo
+	info, err := func() (SessionInfo, error) {
+		r.mu.Lock()
+		defer r.mu.Unlock()
+		session, lookupErr := r.lookupLocked(token, channelID, now, &ended)
+		if lookupErr != nil {
+			return SessionInfo{}, lookupErr
+		}
+		session.LastActivity = now
+		return session.snapshot(), nil
+	}()
+	r.notifyEnded(ended)
+	return info, err
+}
+
+// lookupLocked is the shared resolution step. It returns the live session, so
+// every caller must hold the lock for as long as it uses the result.
+func (r *SessionRegistry) lookupLocked(token NodeID, channelID uint32, now time.Time, ended *[]SessionInfo) (*Session, error) {
 	if token.Type != NodeIDTypeOpaque {
 		return nil, uacpError(StatusBadSessionIDInvalid, "the authentication token is not a session token")
 	}
@@ -619,7 +701,9 @@ func (r *SessionRegistry) Lookup(token NodeID, channelID uint32, now time.Time) 
 		return nil, uacpError(StatusBadSessionIDInvalid, "the session is not known")
 	}
 	if session.expired(now) {
-		delete(r.sessions, string(token.Opaque))
+		if info, removed := r.terminateLocked(session); removed {
+			*ended = append(*ended, info)
+		}
 		return nil, uacpError(StatusBadSessionClosed, "the session timed out")
 	}
 	// A token that leaked to another channel must not grant access.
@@ -627,13 +711,12 @@ func (r *SessionRegistry) Lookup(token NodeID, channelID uint32, now time.Time) 
 		return nil, uacpError(StatusBadSecureChannelIDInvalid,
 			"the session belongs to another secure channel")
 	}
-	session.LastActivity = now
 	return session, nil
 }
 
 // Activate completes activation. The identity token must be anonymous: no other
 // user token type is accepted, because none is implemented.
-func (r *SessionRegistry) Activate(session *Session, request ActivateSessionRequest, anonymousPolicyID string, now time.Time) ([]byte, error) {
+func (r *SessionRegistry) Activate(token NodeID, channelID uint32, request ActivateSessionRequest, anonymousPolicyID string, now time.Time) ([]byte, error) {
 	if err := requireAnonymousIdentity(request.UserIdentityToken, anonymousPolicyID); err != nil {
 		return nil, err
 	}
@@ -641,8 +724,26 @@ func (r *SessionRegistry) Activate(session *Session, request ActivateSessionRequ
 	if err != nil {
 		return nil, err
 	}
-	session.Activated = true
-	session.LastActivity = now
+
+	// The session is resolved again under the lock rather than being passed in
+	// by the caller: a caller holding a *Session across two calls is exactly
+	// the shared-mutable-state hazard this registry exists to prevent.
+	var ended []SessionInfo
+	err = func() error {
+		r.mu.Lock()
+		defer r.mu.Unlock()
+		session, lookupErr := r.lookupLocked(token, channelID, now, &ended)
+		if lookupErr != nil {
+			return lookupErr
+		}
+		session.Activated = true
+		session.LastActivity = now
+		return nil
+	}()
+	r.notifyEnded(ended)
+	if err != nil {
+		return nil, err
+	}
 	return serverNonce, nil
 }
 
@@ -687,22 +788,124 @@ func requireAnonymousIdentity(token ExtensionObject, anonymousPolicyID string) e
 
 // Close removes a session.
 func (r *SessionRegistry) Close(token NodeID, channelID uint32, now time.Time) error {
-	session, err := r.Lookup(token, channelID, now)
-	if err != nil {
-		return err
-	}
-	delete(r.sessions, string(session.AuthenticationToken.Opaque))
-	return nil
+	var ended []SessionInfo
+	err := func() error {
+		r.mu.Lock()
+		defer r.mu.Unlock()
+		session, lookupErr := r.lookupLocked(token, channelID, now, &ended)
+		if lookupErr != nil {
+			return lookupErr
+		}
+		if info, removed := r.terminateLocked(session); removed {
+			ended = append(ended, info)
+		}
+		return nil
+	}()
+	r.notifyEnded(ended)
+	return err
 }
 
 // ExpireStale removes sessions that have gone quiet past their revised timeout.
 func (r *SessionRegistry) ExpireStale(now time.Time) int {
-	removed := 0
-	for key, session := range r.sessions {
-		if session.expired(now) {
-			delete(r.sessions, key)
-			removed++
+	var ended []SessionInfo
+	func() {
+		r.mu.Lock()
+		defer r.mu.Unlock()
+		for _, session := range r.sessions {
+			if session.expired(now) {
+				if info, removed := r.terminateLocked(session); removed {
+					ended = append(ended, info)
+				}
+			}
 		}
+	}()
+	r.notifyEnded(ended)
+	return len(ended)
+}
+
+// terminateLocked ends a session. OPC 10000-4 5.7.2 defines termination as one
+// operation with consequences beyond forgetting the session: "When a Session is
+// terminated, all outstanding requests on the Session are aborted and
+// Bad_SessionClosed StatusCodes are returned to the Client."
+//
+// Every route that ends a session goes through here — an explicit CloseSession,
+// the timeout, and a lookup that finds an already-expired session — because a
+// route that ends a session some other way is a route that skips one of those
+// consequences. That is how DA groups came to be leaked on timeout: the
+// release lived at the CloseSession call site rather than in the operation.
+// It removes the session and wakes anything serving a request for it, and
+// returns the snapshot the caller must hand to the end hook once the lock is
+// released. The hook is deliberately not called here: releasing a session's
+// subscriptions unsubscribes DA groups, which is a COM call on Windows, and
+// running that under the registry lock would stall every other connection's
+// session work for its duration.
+func (r *SessionRegistry) terminateLocked(session *Session) (SessionInfo, bool) {
+	key := string(session.AuthenticationToken.Opaque)
+	if _, live := r.sessions[key]; !live {
+		return SessionInfo{}, false
 	}
-	return removed
+	delete(r.sessions, key)
+	close(session.ended)
+	return session.snapshot(), true
+}
+
+// notifyEnded runs the end hook for sessions terminateLocked removed. It must
+// be called with the lock released.
+func (r *SessionRegistry) notifyEnded(ended []SessionInfo) {
+	r.mu.Lock()
+	hook := r.onEnd
+	r.mu.Unlock()
+	if hook == nil {
+		return
+	}
+	for _, session := range ended {
+		hook(session)
+	}
+}
+
+// OnSessionEnd registers what must happen when a session ends, whichever route
+// ended it. The listener uses it to release the session's subscriptions, so a
+// closed session cannot leave DA groups open on the source.
+func (r *SessionRegistry) OnSessionEnd(hook func(SessionInfo)) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.onEnd = hook
+}
+
+// Ended returns a channel closed when the session terminates, so a request in
+// flight can abort instead of outliving the session it belongs to.
+func (r *SessionRegistry) Ended(token NodeID) (<-chan struct{}, bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	session, ok := r.sessions[string(token.Opaque)]
+	if !ok {
+		return nil, false
+	}
+	return session.ended, true
+}
+
+// BeginRequest marks a request as being served, holding the session open for as
+// long as it takes. EndRequest must follow, which is why it is returned rather
+// than left to the caller to remember.
+func (r *SessionRegistry) BeginRequest(token NodeID) (release func(), ok bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	session, live := r.sessions[string(token.Opaque)]
+	if !live {
+		return nil, false
+	}
+	session.inFlight++
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			r.mu.Lock()
+			defer r.mu.Unlock()
+			if session.inFlight > 0 {
+				session.inFlight--
+			}
+			// The request has been answered, so the idle clock restarts now
+			// rather than when the request arrived.
+			session.LastActivity = time.Now().UTC()
+		})
+	}, true
 }

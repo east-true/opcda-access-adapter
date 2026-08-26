@@ -2,6 +2,7 @@ package opcua
 
 import (
 	"fmt"
+	"sync"
 	"time"
 )
 
@@ -193,15 +194,42 @@ func (c *SecureChannel) Expired(now time.Time) bool {
 func (c *SecureChannel) Close()       { c.closed = true }
 func (c *SecureChannel) Closed() bool { return c.closed }
 
-// ChannelRegistry issues and tracks secure channels. It is not safe for
-// concurrent use; a server owns one per listener and drives it from that
-// listener's goroutine.
+// ChannelInfo is an immutable snapshot of a secure channel, taken under the
+// registry's lock. Callers get one of these rather than a *SecureChannel: the
+// channel itself is shared mutable state and stays inside the registry, so
+// there is no way for a caller to read a field while another connection is
+// writing it.
+type ChannelInfo struct {
+	ID           uint32
+	SecurityMode SecurityMode
+	Token        ChannelSecurityToken
+	// PreviousToken is the superseded token while it is still acceptable, and
+	// HasPreviousToken says whether there is one. OPC 10000-6 6.7.4 keeps the
+	// old token usable until it expires or the new one is used.
+	PreviousToken    ChannelSecurityToken
+	HasPreviousToken bool
+}
+
+// ChannelRegistry issues and tracks secure channels. It is safe for concurrent
+// use: a listener serves every connection on its own goroutine and expires
+// stale channels from another, so every one of these methods can run at the
+// same time as any other.
 type ChannelRegistry struct {
-	limits   ChannelLimits
+	limits ChannelLimits
+
+	mu       sync.Mutex
 	channels map[uint32]*SecureChannel
 
 	nextChannelID uint32
 	nextTokenID   uint32
+}
+
+// snapshot copies a channel's observable state. It is called with the lock
+// held.
+func (c *SecureChannel) snapshot() ChannelInfo {
+	info := ChannelInfo{ID: c.id, SecurityMode: c.securityMode, Token: c.current}
+	info.PreviousToken, info.HasPreviousToken = c.PreviousToken()
+	return info
 }
 
 // NewChannelRegistry seeds the identifier counters. OPC 10000-6 Table 57
@@ -244,12 +272,14 @@ func (r *ChannelRegistry) allocateTokenID() uint32 {
 
 // Issue opens a channel. The security mode is checked first, so a mode the
 // adapter cannot provide never results in an open channel.
-func (r *ChannelRegistry) Issue(mode SecurityMode, requestedLifetime uint32, now time.Time) (*SecureChannel, error) {
+func (r *ChannelRegistry) Issue(mode SecurityMode, requestedLifetime uint32, now time.Time) (ChannelInfo, error) {
 	if err := RequireSupportedSecurityMode(mode); err != nil {
-		return nil, err
+		return ChannelInfo{}, err
 	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	if len(r.channels) >= r.limits.MaxChannels {
-		return nil, uacpError(StatusBadTcpNotEnoughResources,
+		return ChannelInfo{}, uacpError(StatusBadTcpNotEnoughResources,
 			"the %d secure channel limit is reached", r.limits.MaxChannels)
 	}
 	channel := &SecureChannel{
@@ -264,12 +294,14 @@ func (r *ChannelRegistry) Issue(mode SecurityMode, requestedLifetime uint32, now
 		RevisedLifetime: r.limits.reviseLifetime(requestedLifetime),
 	}
 	r.channels[channel.id] = channel
-	return channel, nil
+	return channel.snapshot(), nil
 }
 
 // Renew issues a new token for an existing channel.
 func (r *ChannelRegistry) Renew(channelID uint32, requestedLifetime uint32, now time.Time) (ChannelSecurityToken, error) {
-	channel, err := r.Lookup(channelID)
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	channel, err := r.lookupLocked(channelID)
 	if err != nil {
 		return ChannelSecurityToken{}, err
 	}
@@ -278,7 +310,19 @@ func (r *ChannelRegistry) Renew(channelID uint32, requestedLifetime uint32, now 
 
 // Lookup resolves a channel. OPC 10000-6 Table 57 requires an unrecognised
 // SecureChannelId to be reported as a transport error.
-func (r *ChannelRegistry) Lookup(channelID uint32) (*SecureChannel, error) {
+func (r *ChannelRegistry) Lookup(channelID uint32) (ChannelInfo, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	channel, err := r.lookupLocked(channelID)
+	if err != nil {
+		return ChannelInfo{}, err
+	}
+	return channel.snapshot(), nil
+}
+
+// lookupLocked is the shared resolution step. It returns the live channel, so
+// every caller must hold the lock for as long as it uses the result.
+func (r *ChannelRegistry) lookupLocked(channelID uint32) (*SecureChannel, error) {
 	channel, ok := r.channels[channelID]
 	if !ok {
 		return nil, uacpError(StatusBadTcpSecureChannelUnknown, "secure channel %d is not known", channelID)
@@ -291,19 +335,23 @@ func (r *ChannelRegistry) Lookup(channelID uint32) (*SecureChannel, error) {
 
 // Accept resolves a channel and validates the token in one step, which is what
 // a receiver does for every incoming chunk.
-func (r *ChannelRegistry) Accept(channelID, tokenID uint32, now time.Time) (*SecureChannel, error) {
-	channel, err := r.Lookup(channelID)
+func (r *ChannelRegistry) Accept(channelID, tokenID uint32, now time.Time) (ChannelInfo, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	channel, err := r.lookupLocked(channelID)
 	if err != nil {
-		return nil, err
+		return ChannelInfo{}, err
 	}
 	if err := channel.AcceptToken(tokenID, now); err != nil {
-		return nil, err
+		return ChannelInfo{}, err
 	}
-	return channel, nil
+	return channel.snapshot(), nil
 }
 
 // Close removes a channel, which is what a CloseSecureChannel request does.
 func (r *ChannelRegistry) Close(channelID uint32) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	channel, ok := r.channels[channelID]
 	if !ok {
 		return uacpError(StatusBadTcpSecureChannelUnknown, "secure channel %d is not known", channelID)
@@ -316,6 +364,8 @@ func (r *ChannelRegistry) Close(channelID uint32) error {
 // ExpireStale removes channels whose tokens have all expired and reports how
 // many were reclaimed, so a peer cannot hold slots by going silent.
 func (r *ChannelRegistry) ExpireStale(now time.Time) int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	removed := 0
 	for id, channel := range r.channels {
 		if channel.Expired(now) {
@@ -327,7 +377,11 @@ func (r *ChannelRegistry) ExpireStale(now time.Time) int {
 	return removed
 }
 
-func (r *ChannelRegistry) Count() int { return len(r.channels) }
+func (r *ChannelRegistry) Count() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return len(r.channels)
+}
 
 // RequireProtocolVersion implements OPC 10000-6 6.7.4: the version in the
 // OpenSecureChannel request shall match the one from the Hello, and a mismatch

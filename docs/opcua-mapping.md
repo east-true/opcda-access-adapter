@@ -487,6 +487,35 @@ URI would be unusable by a real client, which is precisely why the value is
 supplied by configuration rather than written from recollection. The same
 applies to the transport profile URI.
 
+## Concurrency
+
+The listener serves each connection on its own goroutine, and the owning
+application drives expiry and address-space invalidation from another. Every
+service the listener holds is therefore reached from several goroutines at
+once, and the package follows one rule because of it:
+
+- **A service that holds mutable state synchronises itself.** It does not
+  assume a caller serialises access, because no caller does.
+- **A service that is immutable after construction needs nothing.** The
+  endpoint description and the data-access service are exactly that.
+- **A service never hands out a pointer to state it owns.** Callers get value
+  snapshots — `ChannelInfo`, `SessionInfo` — so nothing outside can read a
+  field while another connection writes it, or hold a stale object across two
+  calls. Mutation happens only inside the owning type, under its own lock.
+
+That third point is what makes the rule hold rather than merely be stated. A
+registry that locks its map but returns `*Session` has only moved the race one
+level down, because callers then read and write the session itself.
+
+Six services already followed this. The channel and session registries did not:
+they carried a comment asserting a single-goroutine owner that the listener has
+never provided, and nothing checked. Two clients connecting at the same time
+faulted the process with a Go runtime `concurrent map read and map write` —
+which no `recover` can catch, so the server simply died. Every test until then
+had used one connection at a time. `internal/opcua/concurrency_test.go` now
+drives concurrent clients against a listener while expiry runs, so a service
+that opts out of the rule fails there instead of in production.
+
 ## Sessions
 
 `internal/opcua/session.go` implements `CreateSession`, `ActivateSession` and
@@ -531,6 +560,43 @@ always checked against the full 32–128 range, and every other security mode
 enforces the rule as written — both stricter than the Foundation's server. The
 [interop validation doc](validation/ua-client-interop.md) records the deviation
 so it can be reversed by decision rather than found by accident.
+
+### Ending a session is one operation
+
+OPC 10000-4 5.7.2 defines session termination with consequences beyond
+forgetting the session: *"When a Session is terminated, all outstanding requests
+on the Session are aborted and Bad_SessionClosed StatusCodes are returned to the
+Client."* A session's subscriptions also hold DA groups open on the source, and
+those must be released with it.
+
+There are three routes to a session ending — an explicit `CloseSession`, the
+timeout, and a lookup that finds one already expired — and each has to do all of
+it. Implementing that at the call sites meant only one route did: the DA release
+lived beside the `CloseSession` handler, so **a session that timed out left its
+groups open on the source forever**, which is what an ordinary client crash or
+lost network produces. The registry deleted a map entry and nothing else
+happened.
+
+Termination is now a single operation every route goes through. It removes the
+session, closes a per-session channel that wakes anything still serving a
+request for it, and invokes an end hook the listener registers once — which
+releases the session's subscriptions. The hook runs after the registry lock is
+released, because unsubscribing a DA group is a COM call on Windows and holding
+a lock across it would stall every other connection's session work.
+
+### A request in flight holds its session open
+
+The clause terminates a session when the client *"fails to issue a Service
+request"* within the timeout. A request the server has not answered yet is one
+the client did issue, so the idle clock must not run against it.
+
+This is not hypothetical. `Publish` is held until the subscription has something
+to say, and the limits permit a subscription to be legitimately silent for a
+publishing interval times a keep-alive count — up to 1h40m — against a session
+timeout of at most 10 minutes. Before `Publish` was held, a client re-sent
+constantly and kept its own session alive by accident; holding the request made
+the gap reachable. A session with requests in flight is never stale, and the
+idle clock restarts when the request is answered.
 
 **The session is bound to the SecureChannel it was created on.** Table 15 says
 the authentication token is used *together with* the `SecureChannelId` to decide
