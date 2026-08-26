@@ -75,6 +75,35 @@ broad vendor-compatibility claim. A vendor server that rejects connection
 points, revises rates differently, or reports Quality or timestamps
 differently has not been tested.
 
+### Phase 8 OPC UA frontend result
+
+PR #51 workflow run
+[`32921155696`](https://github.com/east-true/opcda-access-adapter/actions/runs/32921155696)
+tested adapter head `cc228a16f1b154b2c1e109f5a52161b7db32f7c6` on both native x86/386 and
+x64/amd64. Each architecture passed, against the source-built OPC Foundation DA
+2.05a fixture:
+
+- the UA-TCP connection sequence, with 65536 byte buffers negotiated;
+- an `OpenSecureChannel` issuing a channel and a token with a 60000 ms revised
+  lifetime;
+- `GetEndpoints` publishing exactly the configured endpoint URL and security
+  policy URI, with security mode None, **no certificate**, and security level 0;
+- `CreateSession` and `ActivateSession` with an anonymous identity;
+- a Browse walk from Root through Objects to the source folder and down to the
+  fixture's three DA items, with the address space filled from DA Browse on
+  demand;
+- a Read of one item returning `Good` with the source timestamp present;
+- exactly one loopback TCP listener, Write disabled, and no process value in any
+  log.
+
+The security policy and transport profile URIs used in this run are
+placeholders. The known URIs are defined by OPC 10000-7, which this project has
+not transcribed, so the run asserts only that the server publishes exactly what
+it was configured with. **No third-party OPC UA client was involved**: the probe
+uses this project's own codec, so this is evidence that the server is internally
+consistent and reaches the DA source, not that a real UA client interoperates
+with it. No conformance or interoperability claim is made.
+
 ### Phase 7 gRPC Subscribe streaming result
 
 PR #34 workflow run

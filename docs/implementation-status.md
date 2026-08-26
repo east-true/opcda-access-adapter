@@ -20,6 +20,15 @@ Foundation fixture on both supported architectures, including change-driven
 delivery, group and advise cleanup, and invalidation across an induced
 disconnect. This is not a broad vendor-compatibility claim.
 
+**PHASE 8 OPC UA FRONTEND IMPLEMENTED AND FIXTURE-VALIDATED** — a hand-written
+UA server for `SecurityPolicy None` passed all eight PR checks and completed the
+connection sequence, secure channel, `GetEndpoints`, session, Browse and Read
+against the source-built OPC Foundation fixture on both architectures. Only
+`SecurityMode` `None` is implemented and it is not production ready. UA
+Subscriptions and MonitoredItems are absent, so the DA Subscribe core is not
+reachable over UA. **No third-party UA client has been tested**, and no
+conformance or interoperability claim is made.
+
 **PHASE 7 gRPC SUBSCRIBE STREAMING IMPLEMENTED AND FIXTURE-VALIDATED** — the
 DA core is exposed as a server-streaming `Subscribe` RPC and passed all eight
 PR checks, including a real-DA stream run on both architectures. Backpressure
@@ -114,20 +123,6 @@ release-promotion gate.
 
 ## In progress
 
-- Phase 8 OPC UA is on `feat/opcua-application-wiring`, which makes the UA
-  frontend selectable: configuration version 3, guided setup, service lifecycle,
-  and address space invalidation after a DA reconnect. Merged so far: the
-  DA-to-UA mapping (PR #37), the UA Binary codec (PR #38), the connection
-  protocol framing (PR #39), the secure conversation framing (PR #40), the
-  SecureChannel token lifecycle (PR #41), the structured types and service
-  headers (PR #42), the SecureChannel service bodies (PR #43), the UA-TCP
-  listener (PR #44), GetEndpoints (PR #45), the session services (PR #46), the
-  address space (PR #47), Browse (PR #48), Read/Write (PR #49), and on-demand
-  population (PR #50). Only SecurityMode None is implemented and it is not
-  production ready. Subscriptions and MonitoredItems are not implemented, so the
-  DA Subscribe core is not reachable over UA. No real UA client has been tested
-  against this server, and no conformance or interoperability claim is made.
-
 - The local KVM/libvirt destructive-validation gate is paused. The dedicated
   `opcda-destructive-review` VM and all of its dedicated host resources were
   removed on 2026-08-24 because this host could not run it alongside another
@@ -152,6 +147,28 @@ release-promotion gate.
   bounded helper with a sixty-second deadline, so a pass means the record was
   written rather than that the runner happened to be fast. No product behavior
   and no assertion were weakened.
+- PR #51 CI run
+  [`32921155729`](https://github.com/east-true/opcda-access-adapter/actions/runs/32921155729)
+  passed quality, race/fuzz checks, release packaging, both Windows builds, and
+  both native Windows test jobs at head `cc228a16f1b154b2c1e109f5a52161b7db32f7c6`.
+- PR #51 real-DA run
+  [`32921155696`](https://github.com/east-true/opcda-access-adapter/actions/runs/32921155696)
+  passed on both x86/386 and x64/amd64. A new `opcuaprobe` drove the UA frontend
+  against the fixture through the connection sequence, a secure channel,
+  `GetEndpoints`, a session, a Browse walk down to the fixture's three DA
+  items with the address space filled on demand, and a Read returning `Good`
+  with the source timestamp present. Exact figures are in
+  `docs/compatibility.md`.
+- That run caught a design error the unit tests could not: OPC DA carries access
+  rights in the `AddItems` result rather than in Browse, so every browsed item
+  arrived with no rights and the adapter refused every read as
+  `Bad_NotReadable`. Unknown rights now mean the operation reaches the source,
+  which is the authority; rights the source did report are still enforced
+  locally. No test was weakened to make the check pass.
+- An earlier attempt of the same run failed because the validation script
+  asserted configuration version 2, which the OPC UA frontend raised to 3. The
+  version is now a single script constant.
+
 - PR #34 CI run
   [`32809889776`](https://github.com/east-true/opcda-access-adapter/actions/runs/32809889776)
   passed quality, race/fuzz checks, release packaging, both Windows builds, and
