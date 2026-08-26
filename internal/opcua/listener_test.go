@@ -954,6 +954,162 @@ func TestListenerRefusesBrowseWithoutAnActivatedSession(t *testing.T) {
 	}
 }
 
+// Read over a real socket, all the way through to the DA runtime.
+func TestListenerServesReadFromTheDASource(t *testing.T) {
+	runtime := &stubRuntime{}
+	listener, err := NewListenerWithRuntime(testListenerConfig(), runtime, 1000, 2000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	socket, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	served := make(chan error, 1)
+	go func() { served <- listener.Serve(socket) }()
+	t.Cleanup(func() {
+		_ = listener.Close()
+		if err := <-served; err != nil {
+			t.Errorf("Serve: %v", err)
+		}
+	})
+
+	rights := &opcda.DAAccessRights{Raw: 3, Read: true, Write: true}
+	if err := listener.AddressSpace().PopulateBranch(nil, []opcda.BrowseEntry{
+		{Kind: opcda.BrowseEntryItem, Name: "Int32", ItemID: itemID("Test/Int32"),
+			CanonicalType: varType(opcda.VTI4), AccessRights: rights},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	sourceTime := time.Date(2026, time.August, 26, 1, 2, 3, 400, time.UTC)
+	varTypeI4 := opcda.VTI4
+	runtime.readResults = []opcda.ReadResult{{
+		ItemID: "Test/Int32", VarType: &varTypeI4, HRESULT: opcda.SOK, HRESULTPresent: true,
+		Value: &opcda.DAValue{
+			ItemID: "Test/Int32", VarType: varTypeI4, Value: int32(4242),
+			QualityRaw: 0xC0, Timestamp: sourceTime, TimestampPresent: true,
+		},
+	}}
+
+	client := dialTestClient(t, socket.Addr().String())
+	client.hello()
+	opened, err := client.openChannel(0, TokenRequestIssue, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	created, err := client.createSession(opened.SecurityToken, 2, testClientNonce())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.activateSession(opened.SecurityToken, 3, created.AuthenticationToken, NullExtensionObject()); err != nil {
+		t.Fatal(err)
+	}
+
+	encoder, err := NewEncoder(client.limits)
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoder.WriteReadRequest(ReadRequest{
+		Header: RequestHeader{
+			AuthenticationToken: created.AuthenticationToken,
+			RequestHandle:       4,
+			AdditionalHeader:    NullExtensionObject(),
+		},
+		TimestampsToReturn: TimestampsBoth,
+		NodesToRead:        []ReadValueID{{NodeID: ItemNodeID("Test/Int32"), AttributeID: AttributeValue}},
+	})
+	serviceBody, err := encoder.Bytes()
+	if err != nil {
+		t.Fatal(err)
+	}
+	identifier, decoder, err := client.callService(opened.SecurityToken, 4, serviceBody)
+	if err != nil {
+		t.Fatalf("Read: %v", err)
+	}
+	if identifier != ReadResponseEncodingID {
+		t.Fatalf("service = %d", identifier)
+	}
+	response, err := decoder.ReadReadResponse()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(response.Results) != 1 {
+		t.Fatalf("results = %d", len(response.Results))
+	}
+	result := response.Results[0]
+	if result.Status != StatusGood {
+		t.Fatalf("status = %s", result.Status.Hex())
+	}
+	// The DA value, its quality and its source timestamp reach the client.
+	if result.Value.Type != BuiltInInt32 || result.Value.Value != int32(4242) {
+		t.Fatalf("value = %+v", result.Value)
+	}
+	if !result.SourceTimestamp.Equal(sourceTime) {
+		t.Fatalf("source timestamp = %s", result.SourceTimestamp)
+	}
+	// The exact ItemID was what the source was asked for.
+	if len(runtime.readRequest.Items) != 1 || runtime.readRequest.Items[0] != "Test/Int32" {
+		t.Fatalf("source items = %v", runtime.readRequest.Items)
+	}
+}
+
+// With no DA runtime attached a Read faults rather than returning empty values.
+func TestListenerReportsNoDataSource(t *testing.T) {
+	listener, address := startTestListener(t, testListenerConfig())
+	if err := listener.AddressSpace().PopulateBranch(nil, []opcda.BrowseEntry{
+		{Kind: opcda.BrowseEntryItem, Name: "Int32", ItemID: itemID("Test/Int32"),
+			CanonicalType: varType(opcda.VTI4),
+			AccessRights:  &opcda.DAAccessRights{Raw: 1, Read: true}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	client := dialTestClient(t, address)
+	client.hello()
+	opened, err := client.openChannel(0, TokenRequestIssue, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	created, err := client.createSession(opened.SecurityToken, 2, testClientNonce())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.activateSession(opened.SecurityToken, 3, created.AuthenticationToken, NullExtensionObject()); err != nil {
+		t.Fatal(err)
+	}
+
+	encoder, err := NewEncoder(client.limits)
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoder.WriteReadRequest(ReadRequest{
+		Header: RequestHeader{
+			AuthenticationToken: created.AuthenticationToken,
+			RequestHandle:       4,
+			AdditionalHeader:    NullExtensionObject(),
+		},
+		NodesToRead: []ReadValueID{{NodeID: ItemNodeID("Test/Int32"), AttributeID: AttributeValue}},
+	})
+	serviceBody, err := encoder.Bytes()
+	if err != nil {
+		t.Fatal(err)
+	}
+	identifier, decoder, err := client.callService(opened.SecurityToken, 4, serviceBody)
+	if err != nil {
+		t.Fatalf("the channel closed instead of faulting: %v", err)
+	}
+	if identifier != ServiceFaultEncodingID {
+		t.Fatalf("service = %d, want a ServiceFault", identifier)
+	}
+	header, err := decoder.ReadResponseHeader()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if header.ServiceResult != StatusBadNotConnected {
+		t.Fatalf("service result = %s, want Bad_NotConnected", header.ServiceResult.Hex())
+	}
+}
+
 func TestListenerConfigValidation(t *testing.T) {
 	if err := testListenerConfig().ValidateForConfiguration(); err != nil {
 		t.Fatalf("test config rejected: %v", err)
