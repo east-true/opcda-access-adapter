@@ -181,6 +181,42 @@ written; the added work ahead of it made it lose, on 386, with Browse correctly
 answering `Bad_NotConnected`. It now waits through that status for a bounded
 30 s.
 
+### Table A.1 item property result
+
+PR #76 ran `opcuaprobe`'s Table A.1 check against the fixture on both native
+x86/386 and x64/amd64. Both reported the same thing:
+
+```
+opcua item properties tableA1=none described=0 valuesLogged=false
+```
+
+**The fixture offers no Table A.1 property for any of its items**, so the
+mapping is implemented and unexercised end to end. That is a limitation of this
+server, not of the adapter, and it was established rather than assumed:
+
+- The pinned fixture configuration
+  (`Source/Test/TestServer/OpcTestServer.config.xml` at the ADR-0006 commit)
+  defines exactly one property on its items — `PropertyID="6"`, Scan Rate.
+  Table A.1 maps none of properties 1 to 8 onto a UA property, so there is
+  nothing for the adapter to expose.
+- `capabilities.properties` reports `supported`, so the interface is present and
+  was asked; the answer is that these items have no such properties.
+- `TestBrowsingAnItemExposesItsTableA1Properties` covers the whole path —
+  Browse asks the populator, the populator asks the source, the address space
+  gains the nodes, and the same Browse reports them — so a broken path would
+  fail in ordinary CI rather than look like this.
+
+The larger sample configuration shipped in the same repository
+(`Source/Shared/SampleServer205/OpcDa20Server.config.xml`) does define High EU
+and Low EU on several items, which is what an `EURange` is built from. It is not
+the configuration ADR-0006 pins for validation, and swapping it would mean
+running against something other than the audited upstream artifact, so it has
+not been swapped.
+
+**Validating Table A.1 against a real source therefore needs a second server**,
+which is what [ADR-0017](adr/0017-third-party-vendor-da-fixture.md) is about.
+Until then the mapping rests on unit tests and on the specification.
+
 ### Third-party OPC UA client interoperability
 
 The two results above were produced by this project's own codec talking to this

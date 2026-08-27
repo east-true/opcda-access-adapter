@@ -256,3 +256,62 @@ func TestASourceWithoutPropertiesLeavesItemsWithoutThem(t *testing.T) {
 		}
 	}
 }
+
+// Browsing an item must make its Table A.1 properties appear. This is the whole
+// path -- Browse asks the populator, the populator asks the source, the address
+// space gains the nodes, and the same Browse reports them -- and nothing else
+// covers it end to end.
+func TestBrowsingAnItemExposesItsTableA1Properties(t *testing.T) {
+	runtime := &stubRuntime{
+		available: map[string][]opcda.AvailableProperty{
+			"Test/Float": {
+				{ID: opcda.PropertyEUUnits, VarType: 8},
+				{ID: opcda.PropertyLowEU, VarType: 5},
+				{ID: opcda.PropertyHighEU, VarType: 5},
+			},
+		},
+		propertyValues: map[opcda.PropertyID]opcda.ItemPropertyValue{},
+	}
+	space := testAddressSpace(t)
+	if err := space.PopulateBranch(nil, []opcda.BrowseEntry{
+		{Kind: opcda.BrowseEntryItem, Name: "Float", ItemID: itemID("Test/Float"),
+			CanonicalType: varType(opcda.VTR4)},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	populator, err := NewPopulator(space, runtime, DefaultPopulationLimits())
+	if err != nil {
+		t.Fatalf("NewPopulator: %v", err)
+	}
+	browse, err := NewBrowseService(space, DefaultBrowseLimits())
+	if err != nil {
+		t.Fatalf("NewBrowseService: %v", err)
+	}
+	browse.AttachPopulator(populator)
+
+	response, err := browse.Browse(context.Background(), BrowseRequest{
+		NodesToBrowse: []BrowseDescription{{
+			NodeID:          ItemNodeID("Test/Float"),
+			BrowseDirection: BrowseDirectionForward,
+			ResultMask:      ResultMaskAll,
+		}},
+	}, time.Now())
+	if err != nil {
+		t.Fatalf("Browse: %v", err)
+	}
+	if len(response.Results) != 1 || response.Results[0].StatusCode != StatusGood {
+		t.Fatalf("browse status = %v", response.Results)
+	}
+	names := map[string]bool{}
+	for _, reference := range response.Results[0].References {
+		names[reference.BrowseName.Name] = true
+	}
+	for _, want := range []string{"EngineeringUnits", "EURange"} {
+		if !names[want] {
+			t.Errorf("browsing the item did not report %s; got %v", want, names)
+		}
+	}
+	if runtime.availableCalls == 0 {
+		t.Error("browsing the item never asked the source which properties it has")
+	}
+}

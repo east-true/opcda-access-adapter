@@ -11,6 +11,8 @@ import (
 	"io"
 	"net"
 	"os"
+	"sort"
+	"strings"
 	"time"
 
 	"github.com/east-true/opcda-access-adapter/internal/opcua"
@@ -170,6 +172,12 @@ func run(ctx context.Context, address, endpointURL, policyURI string, writeEnabl
 		return fmt.Errorf("the address space exposed no DA items")
 	}
 	fmt.Printf("opcua address space populated from the source items=%d\n", len(items))
+
+	properties, err := c.validateItemProperties(token, session, items)
+	if err != nil {
+		return err
+	}
+	fmt.Printf("opcua item properties tableA1=%s valuesLogged=false\n", properties)
 
 	if err := c.readItem(token, session, items[0]); err != nil {
 		return err
@@ -987,4 +995,163 @@ func (c *client) readItem(token opcua.ChannelSecurityToken, session, node opcua.
 	fmt.Printf("opcua read status=%s sourceTimestampPresent=%t\n",
 		result.Status.Hex(), !result.SourceTimestamp.IsZero())
 	return nil
+}
+
+// tableA1Properties are the BrowseNames OPC 10000-8 Table A.1 defines, with
+// what each one's value must decode as. A property carrying something else
+// would be a node declaring one type and delivering another, which is the
+// defect class this project has already been bitten by once.
+//
+// This is deliberately a second reading of the specification rather than an
+// import of the server's own binding table. A probe that checked the server
+// against the server would agree with it by construction, including where both
+// are wrong -- which is exactly how a codec tested only against itself hides
+// the defect that stops every real client.
+var tableA1Properties = map[string]opcua.BuiltInTypeID{
+	"EngineeringUnits": opcua.BuiltInString,
+	"EURange":          opcua.BuiltInExtensionObject,
+	"InstrumentRange":  opcua.BuiltInExtensionObject,
+	"TrueState":        opcua.BuiltInString,
+	"FalseState":       opcua.BuiltInString,
+}
+
+// rangeEncodingID is Range_Encoding_DefaultBinary from NodeIds.csv. A Range is
+// two Doubles, so its body is exactly sixteen bytes.
+const (
+	rangeEncodingID   = 886
+	rangeBodyByteSize = 16
+)
+
+// validateItemProperties checks the OPC 10000-8 Table A.1 properties a real
+// source actually exposes, and reports which ones it found.
+//
+// It reports rather than requires: which properties an item has is the
+// source's decision, and an item with none is not a failure. What it does
+// require is that anything the adapter did expose is well formed -- the right
+// BrowseName, a value of the type that BrowseName is defined to carry, and no
+// value at all behind a bad status.
+//
+// No property value is printed. Engineering units and ranges are metadata
+// rather than process data, but the probes claim valuesLogged=false and that
+// claim is kept whole rather than argued about per field.
+func (c *client) validateItemProperties(token opcua.ChannelSecurityToken, session opcua.NodeID, items []opcua.NodeID) (string, error) {
+	found := map[string]int{}
+	handle := uint32(600)
+	described := 0
+
+	for _, item := range items {
+		handle++
+		references, err := c.browse(token, session, item, handle)
+		if err != nil {
+			return "", err
+		}
+		for _, reference := range references {
+			if !reference.IsForward || reference.NodeClass != opcua.NodeClassVariable {
+				continue
+			}
+			want, isTableA1 := tableA1Properties[reference.BrowseName.Name]
+			if !isTableA1 {
+				continue
+			}
+			handle++
+			status, variant, err := c.readAttributeValue(token, session, reference.NodeID.NodeID, opcua.AttributeValue, handle)
+			if err != nil {
+				return "", err
+			}
+			if status.IsBad() {
+				if !variant.IsNull() {
+					return "", fmt.Errorf("property %s carried a value behind a bad status", reference.BrowseName.Name)
+				}
+				// A source that refuses one property is data, not a failure.
+				continue
+			}
+			if variant.Type != want {
+				return "", fmt.Errorf("property %s delivered built-in type %d, want %d",
+					reference.BrowseName.Name, variant.Type, want)
+			}
+			if want == opcua.BuiltInExtensionObject {
+				object, ok := variant.Value.(opcua.ExtensionObject)
+				if !ok {
+					return "", fmt.Errorf("property %s did not decode as an ExtensionObject", reference.BrowseName.Name)
+				}
+				if object.TypeID.Numeric != rangeEncodingID {
+					return "", fmt.Errorf("property %s named encoding %d, want Range %d",
+						reference.BrowseName.Name, object.TypeID.Numeric, rangeEncodingID)
+				}
+				if len(object.Body) != rangeBodyByteSize {
+					return "", fmt.Errorf("property %s carried a %d-byte Range body, want %d",
+						reference.BrowseName.Name, len(object.Body), rangeBodyByteSize)
+				}
+			}
+			found[reference.BrowseName.Name]++
+		}
+
+		// Table A.1 maps Item Description onto the Description attribute.
+		// Bad_AttributeIdInvalid is the correct answer for an item the source
+		// offers no description for, so both outcomes are recorded, not
+		// required.
+		handle++
+		status, variant, err := c.readAttributeValue(token, session, item, opcua.AttributeDescription, handle)
+		if err != nil {
+			return "", err
+		}
+		switch {
+		case status == opcua.StatusGood:
+			if variant.Type != opcua.BuiltInLocalizedText {
+				return "", fmt.Errorf("a Description answered built-in type %d, want LocalizedText", variant.Type)
+			}
+			described++
+		case status == opcua.StatusBadAttributeIDInvalid:
+			// The item has no description, which is a fact about the source.
+		default:
+			return "", fmt.Errorf("a Description answered %s", status.Hex())
+		}
+	}
+
+	names := make([]string, 0, len(found))
+	for name := range tableA1Properties {
+		if found[name] > 0 {
+			names = append(names, fmt.Sprintf("%s:%d", name, found[name]))
+		}
+	}
+	sort.Strings(names)
+	summary := "none"
+	if len(names) > 0 {
+		summary = strings.Join(names, "+")
+	}
+	return fmt.Sprintf("%s described=%d", summary, described), nil
+}
+
+// readAttributeValue reads one attribute of one node and returns its status and
+// value without interpreting either.
+func (c *client) readAttributeValue(token opcua.ChannelSecurityToken, session, node opcua.NodeID,
+	attributeID uint32, handle uint32) (opcua.StatusCode, opcua.Variant, error) {
+	encoder, err := opcua.NewEncoder(c.limits)
+	if err != nil {
+		return 0, opcua.Variant{}, err
+	}
+	encoder.WriteReadRequest(opcua.ReadRequest{
+		Header:             requestHeader(session, handle),
+		TimestampsToReturn: opcua.TimestampsServer,
+		NodesToRead:        []opcua.ReadValueID{{NodeID: node, AttributeID: attributeID}},
+	})
+	serviceBody, err := encoder.Bytes()
+	if err != nil {
+		return 0, opcua.Variant{}, err
+	}
+	identifier, decoder, err := c.call(token, handle, serviceBody)
+	if err != nil {
+		return 0, opcua.Variant{}, fmt.Errorf("read attribute %d: %w", attributeID, err)
+	}
+	if identifier != opcua.ReadResponseEncodingID {
+		return 0, opcua.Variant{}, fmt.Errorf("read answered with service %d", identifier)
+	}
+	response, err := decoder.ReadReadResponse()
+	if err != nil {
+		return 0, opcua.Variant{}, err
+	}
+	if len(response.Results) != 1 {
+		return 0, opcua.Variant{}, fmt.Errorf("read returned %d results", len(response.Results))
+	}
+	return response.Results[0].Status, response.Results[0].Value, nil
 }

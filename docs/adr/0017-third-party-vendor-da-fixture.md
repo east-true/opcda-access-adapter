@@ -6,6 +6,14 @@
 
 ## Context
 
+Since this was written, a second reason has appeared. OPC 10000-8 Table A.1 is
+implemented and **cannot be exercised against the pinned fixture at all**: its
+configuration defines only Scan Rate on its items, and Table A.1 maps none of
+properties 1 to 8 onto a UA property. `docs/compatibility.md` records the
+observation and how it was attributed. A vendor server with engineering units
+and ranges is the only thing that can validate that mapping.
+
+
 Every real-DA result this project has is against one server: the OPC Foundation
 DA 2.05a test server that ADR-0006 builds from pinned source. `docs/compatibility.md`
 says so on every result, and the gap has been open since the first one. A second
