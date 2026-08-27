@@ -5,6 +5,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -14,6 +15,18 @@ import (
 
 	"github.com/east-true/opcda-access-adapter/internal/opcua"
 )
+
+// errSourceNotConnected is the one Browse status that means "not yet" rather
+// than "no". The adapter populates its address space from the DA source, so a
+// Browse issued before the source connects answers Bad_NotConnected honestly.
+// The UA listener accepts as soon as it is bound, which is earlier, so a probe
+// that asserts immediately after activating a session is racing the connect.
+var errSourceNotConnected = errors.New("the adapter reports the DA source as not connected")
+
+// sourceConnectBound is how long the probe waits for that connect. It is a
+// bound, not a sleep: the moment Browse succeeds the scenario continues, and a
+// source that never connects still fails the run.
+const sourceConnectBound = 30 * time.Second
 
 const maximumProbeTimeout = 5 * time.Minute
 
@@ -145,7 +158,7 @@ func run(ctx context.Context, address, endpointURL, policyURI string, writeEnabl
 	}
 	fmt.Print("opcua session created and activated\n")
 
-	sourceFolder, err := c.browseRoot(token, session)
+	sourceFolder, err := c.waitForSourceFolder(token, session)
 	if err != nil {
 		return err
 	}
@@ -833,10 +846,40 @@ func (c *client) browse(token opcua.ChannelSecurityToken, session opcua.NodeID, 
 	if len(response.Results) != 1 {
 		return nil, fmt.Errorf("browse returned %d results", len(response.Results))
 	}
+	if response.Results[0].StatusCode == opcua.StatusBadNotConnected {
+		return nil, errSourceNotConnected
+	}
 	if response.Results[0].StatusCode != opcua.StatusGood {
 		return nil, fmt.Errorf("browse returned %s", response.Results[0].StatusCode.Hex())
 	}
 	return response.Results[0].References, nil
+}
+
+// waitForSourceFolder browses for the source folder, waiting through the window
+// in which the UA listener is up but the DA source is still connecting.
+//
+// grpcprobe has always done this, in waitConnected; this probe did not, and
+// asserted against the source the instant its session activated. That raced,
+// and lost on the 32-bit runner: Browse answered Bad_NotConnected, which was
+// the correct answer to a question asked too early.
+func (c *client) waitForSourceFolder(token opcua.ChannelSecurityToken, session opcua.NodeID) (opcua.NodeID, error) {
+	deadline := time.Now().Add(sourceConnectBound)
+	for attempt := 1; ; attempt++ {
+		folder, err := c.browseRoot(token, session)
+		if err == nil {
+			if attempt > 1 {
+				fmt.Printf("opcua waited for the DA source to connect attempts=%d\n", attempt)
+			}
+			return folder, nil
+		}
+		if !errors.Is(err, errSourceNotConnected) {
+			return opcua.NodeID{}, err
+		}
+		if time.Now().After(deadline) {
+			return opcua.NodeID{}, fmt.Errorf("the DA source did not connect within %s", sourceConnectBound)
+		}
+		time.Sleep(250 * time.Millisecond)
+	}
 }
 
 // browseRoot walks Root to Objects to the source folder, which is what a real

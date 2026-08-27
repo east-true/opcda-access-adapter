@@ -131,6 +131,56 @@ Write is enabled for the OPC UA scenario so those changes can be induced; the
 fixture's `Test` items are static and would otherwise show only one snapshot.
 The write-disabled default stays covered by the HTTP and gRPC scenarios.
 
+### DA error code result
+
+PR #71 workflow run
+[`33069731246`](https://github.com/east-true/opcda-access-adapter/actions/runs/33069731246)
+ran `internal/validation/daerrorprobe` against the fixture on both native
+x86/386 and x64/amd64. **Both architectures produced identical results.**
+
+All thirteen rows of OPC 10000-8 Tables A.4 and A.5 are bound. Two of them, and
+only two, come out of this server. For each observed row the probe fed the
+HRESULT the source really returned to the real mapping function and required the
+table's answer:
+
+| Row | Result |
+|---|---|
+| `OPC_E_UNKNOWNITEMID` | **observed** — source answered `0xC0040007` on Read, mapped to `0x80340000` `Bad_NodeIdUnknown` |
+| `OPC_E_BADRIGHTS` | **observed** — source answered `0xC0040006` on Write, mapped to `0x803B0000` `Bad_NotWritable` |
+
+Three rows were provoked and this source does not produce them. That is a fact
+about this server, not a gap in the adapter:
+
+| Row | What this source did instead |
+|---|---|
+| `OPC_E_INVALIDITEMID` | answers `OPC_E_UNKNOWNITEMID` for malformed ItemIDs; it does not distinguish malformed from absent |
+| `OPC_E_RANGE` | accepted an out-of-range value of the item's own canonical type |
+| `OPC_S_CLAMP` | same — it stored the value rather than clamping it |
+
+The remaining eight cannot be produced through this adapter at all. Six of those
+are consequences of decisions made on purpose, not untested paths:
+
+| Row | Why it cannot be reached |
+|---|---|
+| `OPC_E_BADTYPE`, `DISP_E_TYPEMISMATCH`, `DISP_E_OVERFLOW` | ADR-0004 requires the requested VARTYPE to equal the canonical one and answers `TYPE_MISMATCH` itself, so the source is never asked to convert anything. The probe **demonstrates** this: it attempts the mismatched Write and requires the adapter to refuse it with no source HRESULT attached. |
+| `OPC_E_INVALIDHANDLE` | item handles are the adapter's; a client never supplies one |
+| `OPC_E_INVALID_PID` | the adapter never reads item properties — Table A.1 is not implemented |
+| `OPC_E_NOTSUPPORTED` | a 2.05a Write carries a value only, never a quality or timestamp |
+| `E_OUTOFMEMORY` | requires real memory exhaustion |
+| `E_ACCESSDENIED` | activation-level on this source, not per item |
+
+No value read from the source is printed by the probe. The extreme value written
+to provoke `OPC_E_RANGE` is written back on the same path, and that restoring
+Write is required to succeed so the fixture is not left altered.
+
+Running this also exposed a defect in a different probe. `opcuaprobe` asserted
+against the source the instant its session activated, while `grpcprobe` had
+always waited for the source to connect first. The UA listener accepts as soon
+as it is bound, which is earlier, so the UA probe had been racing since it was
+written; the added work ahead of it made it lose, on 386, with Browse correctly
+answering `Bad_NotConnected`. It now waits through that status for a bounded
+30 s.
+
 ### Third-party OPC UA client interoperability
 
 The two results above were produced by this project's own codec talking to this

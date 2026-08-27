@@ -177,12 +177,45 @@ The tables spell the same DA error two ways: `OPC_E_BADRIGHTS` in A.4,
 `E_BADRIGHTS` in A.5, and neither spelling is reliably the one `opcerror.h`
 uses. The names above are `opcerror.h`'s, which is where the values come from.
 
-Of these, only `OPC_E_BADRIGHTS` and `OPC_E_UNKNOWNITEMID` have been **observed
-against a real server**. The rest are transcribed from the specification and
-their numeric values are checked against `opcerror.h` — for the four Windows
-codes, against `golang.org/x/sys/windows` — but no server has been made to
-produce them. `scripts/spec-check/check.py` re-reads both tables from the OPC
-Foundation's published Part 8 export and fails if any row drifts.
+### Which rows this adapter can produce at all
+
+Binding a row and being able to reach it are different questions, and the tables
+answer only the first. Several rows cannot be produced by any client request,
+because of decisions this project made on purpose:
+
+| Row | Reachable through this adapter |
+|---|---|
+| `OPC_E_BADRIGHTS` | yes — a Write to an item the source does not permit |
+| `OPC_E_UNKNOWNITEMID` | yes — an ItemID the source does not have |
+| `OPC_E_INVALIDITEMID` | yes, if the source distinguishes malformed from absent |
+| `OPC_E_RANGE`, `OPC_S_CLAMP` | yes, if the source enforces or clamps a range |
+| `OPC_E_BADTYPE`, `DISP_E_TYPEMISMATCH`, `DISP_E_OVERFLOW` | **no** — ADR-0004 requires the requested VARTYPE to equal the canonical one and answers `TYPE_MISMATCH` itself, so no conversion is ever asked of the source |
+| `OPC_E_INVALIDHANDLE` | **no** — item handles are the adapter's, and a client never supplies one |
+| `OPC_E_INVALID_PID` | **no** — the adapter never reads item properties, because Table A.1 is not implemented |
+| `OPC_E_NOTSUPPORTED` | **no** — a 2.05a Write carries a value only, never a quality or timestamp |
+| `E_OUTOFMEMORY` | only under real memory exhaustion |
+| `E_ACCESSDENIED` | activation-level on this source, not per item |
+
+The unreachable rows stay bound. They are the specification's table, and each
+becomes reachable the moment the decision behind it changes — relaxing strict
+typing, or implementing Table A.1. A row that is bound and unreachable costs
+nothing; a row that is reachable and unbound is what produced
+`Bad_UnexpectedError` for a condition the table names precisely.
+
+### What a real server has been made to produce
+
+`internal/validation/daerrorprobe` runs in the real-DA validation against the
+OPC Foundation fixture. For each row it either provokes the condition and
+records the exact HRESULT the source returned, or records why the row cannot be
+reached — and for a row it does observe, it feeds that real HRESULT to the real
+mapping function and requires the table's answer. Feeding the mapping a constant
+typed in by this project would prove only what it already assumed.
+
+`docs/compatibility.md` carries the recorded result. `scripts/spec-check/check.py`
+is the other half: it re-reads both tables from the OPC Foundation's published
+Part 8 export and fails if any row drifts from them, and it checks each numeric
+value against `opcerror.h` — for the four Windows codes, against
+`golang.org/x/sys/windows`.
 
 ## Item properties: Table A.1 is not implemented
 
