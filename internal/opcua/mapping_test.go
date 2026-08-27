@@ -267,3 +267,102 @@ func TestDataTypeAgreesWithWhatTheAdapterDelivers(t *testing.T) {
 		}
 	}
 }
+
+// OPC 10000-8 Table A.4 - OPC DA Read error mapping, transcribed row for row.
+//
+// Only OPC_E_BADRIGHTS and OPC_E_UNKNOWNITEMID have been observed against a
+// real server; the rest are transcribed and untested, which docs/compatibility.md
+// records. They are bound anyway because the alternative is the table's "Others"
+// row, which answers Bad_UnexpectedError for conditions the table gives a
+// precise status for.
+func TestReadErrorMappingFollowsPart8TableA4(t *testing.T) {
+	for _, row := range []struct {
+		daError string
+		hresult opcda.HRESULT
+		want    StatusCode
+	}{
+		{"OPC_E_BADRIGHTS", OPCEBadRights, StatusBadNotReadable},
+		{"E_OUTOFMEMORY", EOutOfMemory, StatusBadOutOfMemory},
+		{"OPC_E_INVALIDHANDLE", OPCEInvalidHandle, StatusBadNodeIdUnknown},
+		{"OPC_E_UNKNOWNITEMID", OPCEUnknownItemID, StatusBadNodeIdUnknown},
+		{"E_INVALIDITEMID", OPCEInvalidItemID, StatusBadNodeIdInvalid},
+		{"E_INVALID_PID", OPCEInvalidPID, StatusBadAttributeIDInvalid},
+		{"E_ACCESSDENIED", EAccessDenied, StatusBadOutOfService},
+	} {
+		t.Run(row.daError, func(t *testing.T) {
+			if got := StatusCodeForReadError(row.hresult); got != row.want {
+				t.Fatalf("status = %s, Table A.4 says %s", got.Hex(), row.want.Hex())
+			}
+		})
+	}
+
+	// "Others" is the table's own last row.
+	if got := StatusCodeForReadError(opcda.HRESULT(-2147467259)); got != StatusBadUnexpectedError {
+		t.Fatalf("an unlisted code mapped to %s, want Bad_UnexpectedError", got.Hex())
+	}
+	// A successful HRESULT is not an error; the quality carries the condition.
+	if got := StatusCodeForReadError(opcda.SOK); got != StatusGood {
+		t.Fatalf("S_OK mapped to %s", got.Hex())
+	}
+}
+
+// OPC 10000-8 Table A.5 - OPC DA Write error code mapping, transcribed row for
+// row. Same caveat about what has actually been observed.
+func TestWriteErrorMappingFollowsPart8TableA5(t *testing.T) {
+	for _, row := range []struct {
+		daError string
+		hresult opcda.HRESULT
+		want    StatusCode
+	}{
+		{"E_BADRIGHTS", OPCEBadRights, StatusBadNotWritable},
+		{"DISP_E_TYPEMISMATCH", DispETypeMismatch, StatusBadTypeMismatch},
+		{"E_BADTYPE", OPCEBadType, StatusBadTypeMismatch},
+		{"E_RANGE", OPCERange, StatusBadOutOfRange},
+		{"DISP_E_OVERFLOW", DispEOverflow, StatusBadOutOfRange},
+		{"E_OUTOFMEMORY", EOutOfMemory, StatusBadOutOfMemory},
+		{"E_INVALIDHANDLE", OPCEInvalidHandle, StatusBadNodeIdUnknown},
+		{"E_UNKNOWNITEMID", OPCEUnknownItemID, StatusBadNodeIdUnknown},
+		{"E_INVALIDITEMID", OPCEInvalidItemID, StatusBadNodeIdInvalid},
+		{"E_INVALID_PID", OPCEInvalidPID, StatusBadNodeIdInvalid},
+		{"E_NOTSUPPORTED", OPCENotSupported, StatusBadWriteNotSupported},
+		{"S_CLAMP", OPCSClamp, StatusGoodClamped},
+	} {
+		t.Run(row.daError, func(t *testing.T) {
+			if got := StatusCodeForWriteError(row.hresult); got != row.want {
+				t.Fatalf("status = %s, Table A.5 says %s", got.Hex(), row.want.Hex())
+			}
+		})
+	}
+
+	if got := StatusCodeForWriteError(opcda.HRESULT(-2147467259)); got != StatusBadUnexpectedError {
+		t.Fatalf("an unlisted code mapped to %s, want Bad_UnexpectedError", got.Hex())
+	}
+	if got := StatusCodeForWriteError(opcda.SOK); got != StatusGood {
+		t.Fatalf("S_OK mapped to %s", got.Hex())
+	}
+}
+
+// The tables give OPC_E_INVALID_PID different answers in each direction:
+// Bad_AttributeIdInvalid when reading, Bad_NodeIdInvalid when writing. The
+// asymmetry is the specification's, and each direction follows its own table
+// rather than being reconciled into one answer.
+func TestInvalidPropertyIDKeepsEachTableSAnswer(t *testing.T) {
+	if got := StatusCodeForReadError(OPCEInvalidPID); got != StatusBadAttributeIDInvalid {
+		t.Fatalf("read status = %s, Table A.4 says Bad_AttributeIdInvalid", got.Hex())
+	}
+	if got := StatusCodeForWriteError(OPCEInvalidPID); got != StatusBadNodeIdInvalid {
+		t.Fatalf("write status = %s, Table A.5 says Bad_NodeIdInvalid", got.Hex())
+	}
+}
+
+// OPC_S_CLAMP is a success code: the write happened, but the source stored a
+// value other than the one asked for. Answering the general success case first
+// would report Good and lose that.
+func TestClampedWriteIsNotReportedAsPlainGood(t *testing.T) {
+	if !OPCSClamp.Succeeded() {
+		t.Fatal("OPC_S_CLAMP is a success code")
+	}
+	if got := StatusCodeForWriteError(OPCSClamp); got != StatusGoodClamped {
+		t.Fatalf("status = %s, want Good_Clamped", got.Hex())
+	}
+}

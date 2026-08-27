@@ -141,23 +141,48 @@ Per-item DA HRESULTs map to UA status codes by Part 8 Table A.4 (Read) and
 Table A.5 (Write). A successful HRESULT is not an error: it maps to `Good`, and
 the data condition is carried by the quality instead.
 
-| DA error | UA StatusCode (Read) | UA StatusCode (Write) |
-|---|---|---|
-| `OPC_E_BADRIGHTS` | `Bad_NotReadable` | `Bad_NotWritable` |
-| `OPC_E_UNKNOWNITEMID` | `Bad_NodeIdUnknown` | `Bad_NodeIdUnknown` |
-| Others | `Bad_UnexpectedError` | `Bad_UnexpectedError` |
+Every row of both tables is bound. A dash means the table has no row for that
+direction.
 
-Tables A.4 and A.5 have more rows than this — `E_OUTOFMEMORY`,
-`OPC_E_INVALIDHANDLE`, `E_INVALIDITEMID`, `E_INVALID_PID`, `E_ACCESSDENIED`,
-`DISP_E_TYPEMISMATCH`, `E_BADTYPE`, `E_RANGE`, `DISP_E_OVERFLOW`,
-`E_NOTSUPPORTED`, and `S_CLAMP`.
+| DA error | HRESULT | UA StatusCode (Read) | UA StatusCode (Write) |
+|---|---|---|---|
+| `OPC_E_BADRIGHTS` | `0xC0040006` | `Bad_NotReadable` | `Bad_NotWritable` |
+| `OPC_E_UNKNOWNITEMID` | `0xC0040007` | `Bad_NodeIdUnknown` | `Bad_NodeIdUnknown` |
+| `OPC_E_INVALIDHANDLE` | `0xC0040001` | `Bad_NodeIdUnknown` | `Bad_NodeIdUnknown` |
+| `OPC_E_INVALIDITEMID` | `0xC0040008` | `Bad_NodeIdInvalid` | `Bad_NodeIdInvalid` |
+| `OPC_E_INVALID_PID` | `0xC0040203` | `Bad_AttributeIdInvalid` | `Bad_NodeIdInvalid` |
+| `OPC_E_BADTYPE` | `0xC0040004` | — | `Bad_TypeMismatch` |
+| `OPC_E_RANGE` | `0xC004000B` | — | `Bad_OutOfRange` |
+| `OPC_E_NOTSUPPORTED` | `0xC0040406` | — | `Bad_WriteNotSupported` |
+| `OPC_S_CLAMP` | `0x0004000E` | — | `Good_Clamped` |
+| `E_OUTOFMEMORY` | `0x8007000E` | `Bad_OutOfMemory` | `Bad_OutOfMemory` |
+| `E_ACCESSDENIED` | `0x80070005` | `Bad_OutOfService` | — |
+| `DISP_E_TYPEMISMATCH` | `0x80020005` | — | `Bad_TypeMismatch` |
+| `DISP_E_OVERFLOW` | `0x8002000A` | — | `Bad_OutOfRange` |
+| Others | | `Bad_UnexpectedError` | `Bad_UnexpectedError` |
 
-Only the two DA error codes this project has **observed against a real server**
-are bound to numeric values. The rest need their DA numeric constants confirmed
-against the OPC DA specification before being added, and until then they fall
-into the "Others" row that both tables define explicitly. The mapping is
-therefore correct but incomplete, and completing it is a documentation task with
-a verifiable source, not a guess.
+Three things about this table are deliberate.
+
+`OPC_E_INVALID_PID` is answered differently in each direction —
+`Bad_AttributeIdInvalid` when reading, `Bad_NodeIdInvalid` when writing. The
+asymmetry is the specification's, not a transcription slip: A.4 and A.5 give
+that code different answers, and each direction follows its own table rather
+than being reconciled into one.
+
+`OPC_S_CLAMP` is a **success** code. It is answered before the general success
+test, because the write did happen — the source simply stored a value other
+than the one asked for, and reporting a plain `Good` would lose that.
+
+The tables spell the same DA error two ways: `OPC_E_BADRIGHTS` in A.4,
+`E_BADRIGHTS` in A.5, and neither spelling is reliably the one `opcerror.h`
+uses. The names above are `opcerror.h`'s, which is where the values come from.
+
+Of these, only `OPC_E_BADRIGHTS` and `OPC_E_UNKNOWNITEMID` have been **observed
+against a real server**. The rest are transcribed from the specification and
+their numeric values are checked against `opcerror.h` — for the four Windows
+codes, against `golang.org/x/sys/windows` — but no server has been made to
+produce them. `scripts/spec-check/check.py` re-reads both tables from the OPC
+Foundation's published Part 8 export and fails if any row drifts.
 
 ## Timestamps
 

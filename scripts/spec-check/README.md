@@ -25,12 +25,23 @@ the specification says.
 | | Source |
 | --- | --- |
 | status code values | `StatusCode.csv` |
+| **DA error to UA status mapping** | `OPC-10000-8.md` Tables A.4 and A.5 |
+| DA error numeric values | `opcerror.h` |
 | service encoding identifiers | `NodeIds.csv` (`..._Encoding_DefaultBinary`) |
 | attribute identifiers | `AttributeIds.csv` |
 | request decoder field order | `Opc.Ua.Types.bsd` |
 | DA quality values | `opcda.idl` |
 | DA masks, access rights, data source | `opcda.idl` |
 | **DA COM vtable slot order** | `opcda.idl` |
+
+It also checks that no status code value is declared twice. Two constants for
+one code compile, pass every test, and let each call site pick a spelling at
+random; one such pair existed — `StatusBadAttributeIDInvalid` beside
+`StatusBadAttributeIdInvalid` — and this check is what found it.
+
+Annex A is prose, not a schema, so it is read from the Markdown export the OPC
+Foundation publishes for each specification version. The URL names the version,
+so a later Part 8 gets a new URL rather than new bytes at this one.
 
 The DA side has no CSV, so its authority is the IDL the proxy/stubs are
 generated from, taken from the commit
@@ -52,8 +63,9 @@ than corrupt.
 
 ## Why it pins the schema
 
-The schema is fetched from the OPC Foundation's `UA-Nodeset` repository and
-checked against `digests.txt` before anything is compared. Upstream moving
+Every source — the `UA-Nodeset` schema, the Classic IDL and header, and the
+Part 8 Markdown export — is fetched and checked against `digests.txt` before
+anything is compared. Upstream moving
 would otherwise silently change what "conformant" means here.
 
 If a digest no longer matches, the script stops and prints both. Read what
@@ -71,10 +83,13 @@ release.
 
 ## What it does not check
 
-Values that no machine-readable source publishes: OPC 10000-8 Tables A.2 to A.5,
-which map DA VARTYPEs, qualities and HRESULTs onto UA types and status codes,
-and prose rules such as which channel may carry a session. Those are checked by
-tests that quote the clause they implement.
+OPC 10000-8 Tables A.2 and A.3, which map DA VARTYPEs and qualities onto UA
+types and status codes, and prose rules such as which channel may carry a
+session. Those are checked by tests that quote the clause they implement.
+
+It checks that the mapping matches the tables. It cannot check that a real DA
+server ever produces a given error: of the thirteen rows in A.4 and A.5, two
+have been seen from a real server and eleven have not.
 
 Struct layouts are not checked here either, because Go can check them better:
 `internal/opcda/variant_windows_test.go` asserts the size of `VARIANT`,

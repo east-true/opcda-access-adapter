@@ -47,6 +47,11 @@ const (
 // Status codes used by the OPC DA mapping. Every value here is taken from the
 // OPC Foundation StatusCode list published for the UA namespace; none is
 // derived by hand from the bit layout.
+//
+// This block is the package's only declaration of a StatusCode value. A file
+// that needs a status adds it here rather than declaring its own, so that no
+// code can be declared twice under two spellings of the same name; spec-check
+// fails the build if a second declaration of a value appears anywhere.
 const (
 	StatusGood      StatusCode = 0x00000000
 	StatusUncertain StatusCode = 0x40000000
@@ -72,12 +77,17 @@ const (
 	StatusBadNotWritable        StatusCode = 0x803B0000
 	StatusBadNodeIdUnknown      StatusCode = 0x80340000
 	StatusBadNodeIdInvalid      StatusCode = 0x80330000
-	StatusBadAttributeIdInvalid StatusCode = 0x80350000
+	StatusBadAttributeIDInvalid StatusCode = 0x80350000
 	StatusBadTypeMismatch       StatusCode = 0x80740000
 	StatusBadOutOfRange         StatusCode = 0x803C0000
 	StatusBadOutOfMemory        StatusCode = 0x80030000
 	StatusBadWriteNotSupported  StatusCode = 0x80730000
 	StatusBadUnexpectedError    StatusCode = 0x80010000
+
+	StatusBadIndexRangeInvalid StatusCode = 0x80360000
+	StatusBadInvalidArgument   StatusCode = 0x80AB0000
+	StatusBadTimeout           StatusCode = 0x800A0000
+	StatusBadDataTypeIDUnknown StatusCode = 0x80110000
 )
 
 func (code StatusCode) Severity() uint32 {
