@@ -122,38 +122,48 @@ release-promotion gate.
 
 ## In progress
 
-- Fuzz coverage of the OPC UA service decoders is on `test/fuzz-the-dispatch`.
-  Continuing the audit found that of the sixteen request decoders the listener
-  exposes, **thirteen had no fuzz target at all** — CreateSession,
-  ActivateSession, CloseSession, Browse, BrowseNext, Read, Write,
-  CreateSubscription, CreateMonitoredItems, DeleteMonitoredItems,
-  DeleteSubscriptions, SetPublishingMode and Publish. `GetEndpoints` is among
-  them and is reachable before a session exists at all. Design §35.5 requires
-  the hand-written parser to bound what a peer can make it do, and those
-  decoders are the majority of it.
+- The audit that ran from 2026-08-26 to 2026-08-27 is complete for everything
+  reachable from a Linux workstation. It began from coverage data and from the
+  question of what a path had never executed, and it found, in order: a
+  concurrent-map fault that killed the process when two clients connected at
+  once (#59), DA groups leaked when a session timed out (#59), a quiet
+  subscription outliving its own session (#59), a session that could not move to
+  a new SecureChannel so a client could not reconnect (#60), a `Shutdown` that
+  ignored its context and released nothing (#60), a node declaring one type
+  while delivering another (#61), thirteen unfuzzed request decoders (#62), and
+  two Windows comments stating invariants that were not the ones holding
+  (#63, #65).
 
-  They were missed because the existing targets were written per layer — binary
-  encoding, UACP framing, UASC framing, structured types — so decoders added
-  afterwards inherited nothing. The fix is a target that drives arbitrary bytes
-  through `dispatchService` itself, so a service added later is covered without
-  anyone extending the fuzz file.
+  Static review of the Windows DA code, which cannot be executed here and is
+  covered only by the real-DA workflow, is now complete for the STA thread, the
+  callback path, the COM watchdog, and local detection. **No behavioural defect
+  was found there**; the two findings were comments. What was checked and holds:
 
-  The same omission existed one level up: the CI workflow listed its fuzz
-  targets by name, so a new target ran nowhere until someone edited the
-  workflow. CI now discovers them with `go test -list`, through
-  `scripts/fuzz-smoke.sh`, and fails if it finds none.
+  - the `IOPCDataCallback` vtable is a package-level `var`, so its
+    `syscall.NewCallback` trampolines are created once for the process rather
+    than per subscription, which is the exhaustion hazard that pattern carries;
+  - the STA is initialised, given a message queue before any server can need
+    one, and waits with `MsgWaitForMultipleObjectsEx` under
+    `MWMO_INPUTAVAILABLE`, pumping unconditionally whenever a message wakes it
+    and draining the queue with `PeekMessage(PM_REMOVE)`, so a callback
+    marshalled as a window message cannot be stranded;
+  - the COM watchdog marks the runtime degraded and does not attempt to kill the
+    owning thread, which matches the recorded known issue rather than
+    contradicting it;
+  - `releaseCOM` unadvises before releasing anything the callback reads,
+    unregisters the callback id before unpinning, and unpins only once the COM
+    reference count has come back down;
+  - the callback path makes no COM interface call at all, only `SysStringLen`,
+    so it cannot violate apartment affinity;
+  - `disconnect` removes the DA group before dropping the registration cache, so
+    the items registered on the server go with the group rather than being
+    orphaned;
+  - local detection activates only the OS component category manager, never the
+    vendor server, and bounds both the result count and each ProgID.
 
-  14.7 million executions against the dispatch produced no crash, no panic and
-  no untyped error, so nothing was found — the value is that a regression will
-  be.
-
-  Also audited and sound in this pass: the service lifecycle transitions (double
-  Start, Start after Shutdown and double Shutdown are all handled, and Shutdown
-  before Start is safe); the HTTP and gRPC write decoders, which cover exactly
-  the VARTYPE set the DA core accepts; and `requestBodyError`, whose uncovered
-  `Error` method is never called because its consumers read the typed fields.
-  `Runtime.Shutdown` being safe to call twice was true of both implementations
-  but stated nowhere, and is now part of the interface documentation.
+  What remains unverified is unchanged and is not reachable from here: a
+  third-party vendor DA server (ADR-0017, undecided), UA Expert (account
+  required), and the local VM destructive review below.
 
 - The local KVM/libvirt destructive-validation gate is paused. The dedicated
   `opcda-destructive-review` VM and all of its dedicated host resources were
