@@ -207,6 +207,16 @@ func dataCallbackOnWriteComplete(
 
 func dataCallbackOnCancelComplete(_ uintptr, _ uintptr, _ uintptr) uintptr { return sOK }
 
+// dataCallbackOnDataChange receives one OnDataChange notification.
+//
+// Every array below belongs to the server, which frees them once this returns.
+// The adapter reads them and must not free or VariantClear anything, which is
+// the opposite of IOPCSyncIO::Read: there the client owns the OPCITEMSTATE
+// array the server allocated, so daRead clears each VARIANT and frees the
+// block. Those two conventions sit one file apart, and only this comment says
+// which applies here — clearing a VARIANT the server still owns is a double
+// free that a synthetic unit test cannot reproduce and a real server would
+// punish.
 func dataCallbackOnDataChange(
 	this uintptr,
 	transactionID uintptr,
