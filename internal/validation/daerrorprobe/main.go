@@ -186,17 +186,29 @@ func probe(ctx context.Context, client opcdav1.OPCDAAccessClient) ([]outcome, er
 	if err != nil {
 		return nil, err
 	}
-	// Put back whatever was there, on the same path, before reporting.
-	if _, err := writeHRESULT(ctx, client, itemFloat, floatCanonical, floatValue); err != nil {
+	// Put back whatever was there, on the same path, before reporting. A
+	// restore that does not succeed would leave the extreme value in the
+	// fixture for every scenario after this one.
+	restored, err := writeHRESULT(ctx, client, itemFloat, floatCanonical, floatValue)
+	if err != nil {
 		return nil, err
 	}
+	if !restored.Succeeded() {
+		return nil, fmt.Errorf("restoring %s answered %s", itemFloat, restored.Hex())
+	}
+	// The reason says what the source actually answered rather than assuming
+	// it accepted the value.
+	extremeReason := "this-source-answered-" + extreme.Hex()
+	if extreme.Succeeded() {
+		extremeReason = "this-source-accepts-an-out-of-range-value-of-the-canonical-type"
+	}
 	rangeRow, err := observedIf(write, "OPC_E_RANGE", extreme, opcua.OPCERange,
-		opcua.StatusBadOutOfRange, "this-source-accepts-an-out-of-range-value-of-the-canonical-type")
+		opcua.StatusBadOutOfRange, extremeReason)
 	if err != nil {
 		return nil, err
 	}
 	clampRow, err := observedIf(write, "OPC_S_CLAMP", extreme, opcua.OPCSClamp,
-		opcua.StatusGoodClamped, "this-source-does-not-clamp")
+		opcua.StatusGoodClamped, extremeReason)
 	if err != nil {
 		return nil, err
 	}
