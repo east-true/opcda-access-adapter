@@ -188,30 +188,11 @@ func TestQualityMappingFallsBackToMainQuality(t *testing.T) {
 	}
 }
 
-func TestReadAndWriteErrorMappingFollowsPart8TablesA4AndA5(t *testing.T) {
-	if got := StatusCodeForReadError(OPCEBadRights); got != StatusBadNotReadable {
-		t.Fatalf("read OPC_E_BADRIGHTS = %s, want Bad_NotReadable", got.Hex())
-	}
-	if got := StatusCodeForWriteError(OPCEBadRights); got != StatusBadNotWritable {
-		t.Fatalf("write OPC_E_BADRIGHTS = %s, want Bad_NotWritable", got.Hex())
-	}
-	for _, mapper := range []func(opcda.HRESULT) StatusCode{StatusCodeForReadError, StatusCodeForWriteError} {
-		if got := mapper(OPCEUnknownItemID); got != StatusBadNodeIdUnknown {
-			t.Fatalf("OPC_E_UNKNOWNITEMID = %s, want Bad_NodeIdUnknown", got.Hex())
-		}
-		// Table A.4 and Table A.5 both end with an explicit "Others" row.
-		if got := mapper(opcda.HRESULT(-2147467259)); got != StatusBadUnexpectedError {
-			t.Fatalf("unbound HRESULT = %s, want Bad_UnexpectedError", got.Hex())
-		}
-		// A successful item is not an error; its condition lives in the quality.
-		if got := mapper(opcda.SOK); got != StatusGood {
-			t.Fatalf("S_OK = %s, want Good", got.Hex())
-		}
-	}
-}
-
-// The two DA error codes bound to numeric values are the ones this project has
-// observed against a real server.
+// All thirteen rows of Tables A.4 and A.5 are bound, and spec-check compares
+// each value against opcerror.h. These two are different in kind: they are the
+// ones a real DA server has actually produced for this project, so their values
+// are pinned to what the fixture returned rather than to what a header says.
+// If the header and the fixture ever disagree, that is worth failing over.
 func TestBoundDAErrorCodesMatchTheObservedHRESULTs(t *testing.T) {
 	if OPCEBadRights.Hex() != "0xC0040006" {
 		t.Fatalf("OPC_E_BADRIGHTS = %s", OPCEBadRights.Hex())

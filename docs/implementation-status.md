@@ -167,6 +167,18 @@ release-promotion gate.
   strength of the specification and the header, and no server has been made to
   produce them.
 
+- OPC 10000-8 Table A.1, the DA item property mapping, is not implemented. The
+  adapter never calls `IOPCItemProperties`, so `EURange`, `InstrumentRange`,
+  `EngineeringUnits`, `TrueState`/`FalseState` and the item `Description` are
+  absent from the UA address space. Only the table's Access Rights row is
+  satisfied, and by another route — `AddItems` reports access rights directly.
+  Nothing about this is a conformance defect: source nodes are
+  `BaseDataVariableType`, which makes none of those properties mandatory, and a
+  read of a missing attribute answers `Bad_AttributeIdInvalid`. It is a missing
+  feature, recorded here because `docs/design.md` §11 lists
+  `IOPCItemProperties` in the DA baseline and that could be read as a claim
+  that it is used. See docs/opcua-mapping.md.
+
 - The local KVM/libvirt destructive-validation gate is paused. The dedicated
   `opcda-destructive-review` VM and all of its dedicated host resources were
   removed on 2026-08-24 because this host could not run it alongside another

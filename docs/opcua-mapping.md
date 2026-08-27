@@ -184,6 +184,38 @@ codes, against `golang.org/x/sys/windows` — but no server has been made to
 produce them. `scripts/spec-check/check.py` re-reads both tables from the OPC
 Foundation's published Part 8 export and fails if any row drifts.
 
+## Item properties: Table A.1 is not implemented
+
+Part 8 Table A.1 maps the OPC COM DA item properties onto UA attributes and
+properties: Access Rights (5) onto the `AccessLevel` attribute, Item Description
+(101) onto `Description`, High/Low EU (102/103) onto an `EURange` property,
+High/Low Instrument Range (104/105) onto `InstrumentRange`, EU Units (100) onto
+`EngineeringUnits`, and Close/Open Label (106/107) onto `TrueState`/`FalseState`.
+
+**None of it is implemented, and the adapter does not call `IOPCItemProperties`
+at all.** `docs/design.md` §11 lists that interface in the DA baseline; that is
+a statement about the protocol version targeted, not about what the adapter
+calls today.
+
+Only the first row is satisfied, and by another route: access rights come from
+`OPCITEMRESULT.dwAccessRights` in `AddItems`, which the adapter already reads,
+so `AccessLevel` is correct without Table A.1.
+
+Everything else is simply absent. A source node is a `BaseDataVariableType`, not
+an `AnalogItemType`, so `EURange` and `EngineeringUnits` are not mandatory on it
+and their absence is legal rather than a conformance defect — the adapter does
+not claim a type whose properties it cannot supply. A client asking to read
+`Description` on a source node gets `Bad_AttributeIdInvalid`, which is the
+correct answer for an attribute the node does not have, not an error being
+swallowed.
+
+The cost is real for a client that wants engineering units or a range to render
+a faceplate: it will find neither, and must get them from elsewhere. Closing
+this means implementing `IOPCItemProperties` — a further COM interface, its
+vtable, and a property read path — and deciding whether a node whose EU range is
+known should then be promoted to `AnalogItemType`. That is a feature, not a
+transcription, and it is not planned for v0.
+
 ## Timestamps
 
 Part 8 A.3.2.4: the DA timestamp becomes the UA **SourceTimestamp**. The UA
