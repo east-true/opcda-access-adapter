@@ -161,11 +161,19 @@ release-promotion gate.
   `golang.org/x/sys/windows`, and the tables themselves re-read from the OPC
   Foundation's published Part 8 export rather than retyped.
 
-  What remains open is narrower and is a testing gap, not a transcription one:
-  only `OPC_E_BADRIGHTS` and `OPC_E_UNKNOWNITEMID` have been observed coming out
-  of a real DA server. The other eleven rows are believed correct on the
-  strength of the specification and the header, and no server has been made to
-  produce them.
+  `internal/validation/daerrorprobe` then answered what remained: which rows a
+  real server actually produces, and which this adapter can produce at all. Both
+  architectures agree — two rows observed and confirmed through the real mapping
+  function, three provoked but not produced by this server, and eight
+  unreachable, six of them because of decisions made on purpose (ADR-0004's
+  strict typing, adapter-owned item handles, unimplemented Table A.1, and a
+  2.05a Write that carries a value only). `docs/compatibility.md` records the
+  executed result.
+
+  So the remaining exposure is not that eleven rows are untested. It is that six
+  of them are unreachable **today** and would become reachable the moment the
+  decision behind them changes, and that a different vendor's server may produce
+  the three this one does not.
 
 - OPC 10000-8 Table A.1, the DA item property mapping, is not implemented. The
   adapter never calls `IOPCItemProperties`, so `EURange`, `InstrumentRange`,
