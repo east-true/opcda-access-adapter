@@ -1528,7 +1528,8 @@ Subscribe endpoint는 v0에 없다.
     "browse": "supported",
     "read": true,
     "write": true,
-    "subscribe": false
+    "subscribe": false,
+    "properties": "supported"
   },
   "writeEnabled": false,
   "frontend": {

@@ -228,10 +228,11 @@ func (s *Server) handleStatus(ctx context.Context, w http.ResponseWriter) {
 			LastError            *sourceErrorResponse `json:"lastError,omitempty"`
 		} `json:"source"`
 		Capabilities struct {
-			Browse    string `json:"browse"`
-			Read      bool   `json:"read"`
-			Write     bool   `json:"write"`
-			Subscribe bool   `json:"subscribe"`
+			Browse     string `json:"browse"`
+			Read       bool   `json:"read"`
+			Write      bool   `json:"write"`
+			Subscribe  bool   `json:"subscribe"`
+			Properties string `json:"properties"`
 		} `json:"capabilities"`
 		WriteEnabled bool `json:"writeEnabled"`
 		Runtime      struct {
@@ -258,15 +259,17 @@ func (s *Server) handleStatus(ctx context.Context, w http.ResponseWriter) {
 			LastError:            lastSourceError,
 		},
 		Capabilities: struct {
-			Browse    string `json:"browse"`
-			Read      bool   `json:"read"`
-			Write     bool   `json:"write"`
-			Subscribe bool   `json:"subscribe"`
+			Browse     string `json:"browse"`
+			Read       bool   `json:"read"`
+			Write      bool   `json:"write"`
+			Subscribe  bool   `json:"subscribe"`
+			Properties string `json:"properties"`
 		}{
-			Browse:    status.Capabilities.Browse,
-			Read:      status.Capabilities.Read,
-			Write:     status.Capabilities.Write,
-			Subscribe: status.Capabilities.Subscribe,
+			Browse:     status.Capabilities.Browse,
+			Read:       status.Capabilities.Read,
+			Write:      status.Capabilities.Write,
+			Subscribe:  status.Capabilities.Subscribe,
+			Properties: status.Capabilities.Properties,
 		},
 		WriteEnabled: status.WriteEnabled,
 		Runtime: struct {

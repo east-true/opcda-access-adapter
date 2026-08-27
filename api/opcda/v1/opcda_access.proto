@@ -44,6 +44,10 @@ message DACapabilities {
   bool read = 2;
   bool write = 3;
   bool subscribe = 4;
+  // Whether the source implements IOPCItemProperties, which OPC 10000-8
+  // Table A.1 is mapped from. Like browse it is "supported", "unsupported" or
+  // "unavailable": a source that has not been asked is not one that said no.
+  string properties = 5;
 }
 
 message DARuntimeStatus {

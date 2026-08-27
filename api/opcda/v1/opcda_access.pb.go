@@ -403,11 +403,15 @@ func (x *DASourceError) GetHresult() *DAHRESULT {
 }
 
 type DACapabilities struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Browse        string                 `protobuf:"bytes,1,opt,name=browse,proto3" json:"browse,omitempty"`
-	Read          bool                   `protobuf:"varint,2,opt,name=read,proto3" json:"read,omitempty"`
-	Write         bool                   `protobuf:"varint,3,opt,name=write,proto3" json:"write,omitempty"`
-	Subscribe     bool                   `protobuf:"varint,4,opt,name=subscribe,proto3" json:"subscribe,omitempty"`
+	state     protoimpl.MessageState `protogen:"open.v1"`
+	Browse    string                 `protobuf:"bytes,1,opt,name=browse,proto3" json:"browse,omitempty"`
+	Read      bool                   `protobuf:"varint,2,opt,name=read,proto3" json:"read,omitempty"`
+	Write     bool                   `protobuf:"varint,3,opt,name=write,proto3" json:"write,omitempty"`
+	Subscribe bool                   `protobuf:"varint,4,opt,name=subscribe,proto3" json:"subscribe,omitempty"`
+	// Whether the source implements IOPCItemProperties, which OPC 10000-8
+	// Table A.1 is mapped from. Like browse it is "supported", "unsupported" or
+	// "unavailable": a source that has not been asked is not one that said no.
+	Properties    string `protobuf:"bytes,5,opt,name=properties,proto3" json:"properties,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -468,6 +472,13 @@ func (x *DACapabilities) GetSubscribe() bool {
 		return x.Subscribe
 	}
 	return false
+}
+
+func (x *DACapabilities) GetProperties() string {
+	if x != nil {
+		return x.Properties
+	}
+	return ""
 }
 
 type DARuntimeStatus struct {
@@ -2279,12 +2290,15 @@ const file_api_opcda_v1_opcda_access_proto_rawDesc = "" +
 	"last_error\x18\x04 \x01(\v2\x1e.opcda.access.v1.DASourceErrorR\tlastError\"c\n" +
 	"\rDASourceError\x12\x1c\n" +
 	"\toperation\x18\x01 \x01(\tR\toperation\x124\n" +
-	"\ahresult\x18\x02 \x01(\v2\x1a.opcda.access.v1.DAHRESULTR\ahresult\"p\n" +
+	"\ahresult\x18\x02 \x01(\v2\x1a.opcda.access.v1.DAHRESULTR\ahresult\"\x90\x01\n" +
 	"\x0eDACapabilities\x12\x16\n" +
 	"\x06browse\x18\x01 \x01(\tR\x06browse\x12\x12\n" +
 	"\x04read\x18\x02 \x01(\bR\x04read\x12\x14\n" +
 	"\x05write\x18\x03 \x01(\bR\x05write\x12\x1c\n" +
-	"\tsubscribe\x18\x04 \x01(\bR\tsubscribe\"\xb3\x01\n" +
+	"\tsubscribe\x18\x04 \x01(\bR\tsubscribe\x12\x1e\n" +
+	"\n" +
+	"properties\x18\x05 \x01(\tR\n" +
+	"properties\"\xb3\x01\n" +
 	"\x0fDARuntimeStatus\x12\x1f\n" +
 	"\vqueue_depth\x18\x01 \x01(\rR\n" +
 	"queueDepth\x12'\n" +

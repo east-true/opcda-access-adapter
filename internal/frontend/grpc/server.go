@@ -194,10 +194,11 @@ func (s *Server) Status(ctx context.Context, _ *opcdav1.DAStatusRequest) (*opcda
 			ConnectionGeneration: runtimeStatus.ConnectionGeneration,
 		},
 		Capabilities: &opcdav1.DACapabilities{
-			Browse:    runtimeStatus.Capabilities.Browse,
-			Read:      runtimeStatus.Capabilities.Read,
-			Write:     runtimeStatus.Capabilities.Write,
-			Subscribe: runtimeStatus.Capabilities.Subscribe,
+			Browse:     runtimeStatus.Capabilities.Browse,
+			Read:       runtimeStatus.Capabilities.Read,
+			Write:      runtimeStatus.Capabilities.Write,
+			Subscribe:  runtimeStatus.Capabilities.Subscribe,
+			Properties: runtimeStatus.Capabilities.Properties,
 		},
 		WriteEnabled: runtimeStatus.WriteEnabled,
 		Runtime: &opcdav1.DARuntimeStatus{
