@@ -299,6 +299,7 @@ DA_VTABLES = {
     "iopcSyncIOVTable": "IOPCSyncIO",
     "iopcDataCallbackVTable": "IOPCDataCallback",
     "iopcBrowseServerAddressSpaceVTable": "IOPCBrowseServerAddressSpace",
+    "iopcItemPropertiesVTable": "IOPCItemProperties",
 }
 
 
@@ -319,6 +320,36 @@ def check_da(files):
         if got != want:
             fail(f"{go_name}: code 0x{got:04X}, {idl_name} 0x{want:04X}")
     print(f"  {checked} DA quality values")
+
+    checked = 0
+    # The item property identifiers OPC 10000-8 Table A.1 is written in terms
+    # of. opcda.idl declares them, so they are checked rather than retyped.
+    for go_name, idl_name in (("PropertyDataType", "OPC_PROPERTY_DATATYPE"),
+                              ("PropertyValue", "OPC_PROPERTY_VALUE"),
+                              ("PropertyQuality", "OPC_PROPERTY_QUALITY"),
+                              ("PropertyTimestamp", "OPC_PROPERTY_TIMESTAMP"),
+                              ("PropertyAccessRights", "OPC_PROPERTY_ACCESS_RIGHTS"),
+                              ("PropertyScanRate", "OPC_PROPERTY_SCAN_RATE"),
+                              ("PropertyEUType", "OPC_PROPERTY_EU_TYPE"),
+                              ("PropertyEUInfo", "OPC_PROPERTY_EU_INFO"),
+                              ("PropertyEUUnits", "OPC_PROPERTY_EU_UNITS"),
+                              ("PropertyDescription", "OPC_PROPERTY_DESCRIPTION"),
+                              ("PropertyHighEU", "OPC_PROPERTY_HIGH_EU"),
+                              ("PropertyLowEU", "OPC_PROPERTY_LOW_EU"),
+                              ("PropertyHighIR", "OPC_PROPERTY_HIGH_IR"),
+                              ("PropertyLowIR", "OPC_PROPERTY_LOW_IR"),
+                              ("PropertyCloseLabel", "OPC_PROPERTY_CLOSE_LABEL"),
+                              ("PropertyOpenLabel", "OPC_PROPERTY_OPEN_LABEL")):
+        match = re.search(r'\b' + go_name + r'\s+PropertyID\s*=\s*(\d+)', src)
+        want = values.get(idl_name)
+        if match is None or want is None:
+            fail(f"{go_name} or {idl_name} could not be read")
+            continue
+        checked += 1
+        got = int(match.group(1))
+        if got != want:
+            fail(f"{go_name}: id {got}, {idl_name} {want}")
+    print(f"  {checked} DA item property identifiers")
 
     checked = 0
     for go_name, idl_name in (("qualityLimitMask", "OPC_LIMIT_MASK"),

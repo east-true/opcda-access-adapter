@@ -28,9 +28,10 @@ func (r *unsupportedRuntime) Status(context.Context) RuntimeStatus {
 		Source:       r.config.Source,
 		WriteEnabled: r.config.WriteEnabled,
 		Capabilities: Capabilities{
-			Browse: "unavailable",
-			Read:   false,
-			Write:  false,
+			Browse:     "unavailable",
+			Read:       false,
+			Write:      false,
+			Properties: "unavailable",
 		},
 	}
 }
@@ -56,6 +57,14 @@ func (*unsupportedRuntime) Subscribe(context.Context, SubscribeRequest) (Subscri
 
 func (*unsupportedRuntime) Unsubscribe(context.Context, SubscriptionID) error {
 	return NewAdapterError(CodeRuntimeUnavailable, "OPC DA runtime requires Windows")
+}
+
+func (*unsupportedRuntime) AvailableItemProperties(context.Context, string) ([]AvailableProperty, error) {
+	return nil, NewAdapterError(CodeRuntimeUnavailable, "OPC DA runtime requires Windows")
+}
+
+func (*unsupportedRuntime) ItemProperties(context.Context, ItemPropertiesRequest) ([]ItemPropertyValue, error) {
+	return nil, NewAdapterError(CodeRuntimeUnavailable, "OPC DA runtime requires Windows")
 }
 
 func (*unsupportedRuntime) Shutdown(context.Context) error { return nil }

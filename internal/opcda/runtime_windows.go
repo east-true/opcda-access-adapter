@@ -22,17 +22,19 @@ type daThreadCommand struct {
 }
 
 type daThreadSession struct {
-	server              *iopcServer
-	serverGroupHandle   uint32
-	hasServerGroup      bool
-	itemMgt             *iopcItemMgt
-	syncIO              *iopcSyncIO
-	browse              *iopcBrowseServerAddressSpace
-	browseCapability    string
-	subscribeCapability string
-	generation          uint64
-	registrations       *registrationCache
-	nextClientHandle    uint32
+	server               *iopcServer
+	serverGroupHandle    uint32
+	hasServerGroup       bool
+	itemMgt              *iopcItemMgt
+	syncIO               *iopcSyncIO
+	browse               *iopcBrowseServerAddressSpace
+	browseCapability     string
+	properties           *iopcItemProperties
+	propertiesCapability string
+	subscribeCapability  string
+	generation           uint64
+	registrations        *registrationCache
+	nextClientHandle     uint32
 
 	subscriptions            map[SubscriptionID]*daSubscription
 	nextGroupClientHandle    uint32
@@ -79,7 +81,7 @@ func New(config Config) (Runtime, error) {
 			State:        RuntimeStateStarting,
 			Source:       config.Source,
 			WriteEnabled: config.WriteEnabled,
-			Capabilities: Capabilities{Browse: "unavailable"},
+			Capabilities: Capabilities{Browse: "unavailable", Properties: "unavailable"},
 		},
 	}
 
@@ -116,7 +118,7 @@ func (r *windowsRuntime) runDAThread(started chan<- error) {
 		finishWatchdog()
 		r.updateStatus(func(status *RuntimeStatus) {
 			status.State = RuntimeStateStopped
-			status.Capabilities = Capabilities{Browse: "unavailable"}
+			status.Capabilities = Capabilities{Browse: "unavailable", Properties: "unavailable"}
 			status.QueueDepth = 0
 			status.SubscriptionCount = 0
 		})
@@ -204,6 +206,22 @@ func (r *windowsRuntime) connect(session *daThreadSession) error {
 		session.browse = browse
 		session.browseCapability = "supported"
 	}
+	// IOPCItemProperties is optional in exactly the way browsing is: a source
+	// that does not implement it is working correctly and simply has no
+	// properties to offer.
+	properties, propertiesSupported, propertiesErr := queryPropertiesInterface(server)
+	switch {
+	case isConnectionLoss(propertiesErr):
+		session.disconnect()
+		return propertiesErr
+	case propertiesErr != nil:
+		session.propertiesCapability = "unavailable"
+	case !propertiesSupported:
+		session.propertiesCapability = "unsupported"
+	default:
+		session.properties = properties
+		session.propertiesCapability = "supported"
+	}
 	session.beginConnectionGeneration(r.config.Limits.MaxRegisteredItems)
 	session.reconnectAttempt = 0
 	session.reconnectAt = time.Time{}
@@ -249,10 +267,11 @@ func (r *windowsRuntime) tryConnect(session *daThreadSession, reconnect bool) {
 		status.State = RuntimeStateConnected
 		status.ConnectionGeneration = session.generation
 		status.Capabilities = Capabilities{
-			Browse:    session.browseCapability,
-			Read:      true,
-			Write:     true,
-			Subscribe: session.subscribeCapability == "supported",
+			Browse:     session.browseCapability,
+			Read:       true,
+			Write:      true,
+			Subscribe:  session.subscribeCapability == "supported",
+			Properties: session.propertiesCapability,
 		}
 		status.DegradedReason = ""
 		status.LastSourceError = SourceDiagnostic{}
@@ -300,7 +319,12 @@ func (session *daThreadSession) disconnect() {
 		session.browse.release()
 		session.browse = nil
 	}
+	if session.properties != nil {
+		session.properties.release()
+		session.properties = nil
+	}
 	session.browseCapability = "unavailable"
+	session.propertiesCapability = "unavailable"
 	session.subscribeCapability = "unavailable"
 	if session.syncIO != nil {
 		session.syncIO.release()
@@ -773,7 +797,7 @@ func (r *windowsRuntime) markDegraded(reason string) {
 	r.degraded.Store(true)
 	r.updateStatus(func(status *RuntimeStatus) {
 		status.State = RuntimeStateDegraded
-		status.Capabilities = Capabilities{Browse: "unavailable"}
+		status.Capabilities = Capabilities{Browse: "unavailable", Properties: "unavailable"}
 		status.SubscriptionCount = 0
 		status.DegradedReason = reason
 	})
@@ -783,7 +807,7 @@ func (r *windowsRuntime) setState(state RuntimeState) {
 	r.updateStatus(func(status *RuntimeStatus) {
 		status.State = state
 		if state != RuntimeStateConnected {
-			status.Capabilities = Capabilities{Browse: "unavailable"}
+			status.Capabilities = Capabilities{Browse: "unavailable", Properties: "unavailable"}
 			status.SubscriptionCount = 0
 		}
 	})
@@ -799,4 +823,98 @@ func (r *windowsRuntime) updateStatus(update func(*RuntimeStatus)) {
 	r.statusMu.Lock()
 	defer r.statusMu.Unlock()
 	update(&r.status)
+}
+
+// AvailableItemProperties reports which properties the source offers for one
+// item, in the source's own order.
+func (r *windowsRuntime) AvailableItemProperties(ctx context.Context, itemID string) ([]AvailableProperty, error) {
+	if err := r.validatePropertyItemID(itemID); err != nil {
+		return nil, err
+	}
+
+	type response struct {
+		available []AvailableProperty
+		err       error
+	}
+	responses := make(chan response, 1)
+	command := daThreadCommand{
+		context: ctx,
+		name:    "QueryAvailableProperties",
+		run: func(session *daThreadSession) {
+			available, err := session.queryAvailableProperties(itemID, r.config.Limits)
+			r.handleOperationFailure(session, err)
+			responses <- response{available: available, err: err}
+		},
+	}
+	if err := r.enqueue(ctx, command); err != nil {
+		return nil, err
+	}
+	select {
+	case response := <-responses:
+		return response.available, response.err
+	case <-ctx.Done():
+		return nil, &AdapterError{Code: CodeRuntimeDeadline, Message: "QueryAvailableProperties deadline exceeded", Cause: ctx.Err()}
+	}
+}
+
+// ItemProperties reads property values for one item. Results match the
+// requested identifiers in size and order.
+func (r *windowsRuntime) ItemProperties(ctx context.Context, request ItemPropertiesRequest) ([]ItemPropertyValue, error) {
+	if err := r.validatePropertyItemID(request.ItemID); err != nil {
+		return nil, err
+	}
+	if len(request.Properties) == 0 {
+		return nil, NewAdapterError(CodeInvalidRequest, "ItemProperties requires at least one property")
+	}
+	if len(request.Properties) > r.config.Limits.MaxItemProperties {
+		return nil, NewAdapterError(CodeRequestLimitExceeded, "item property limit exceeded")
+	}
+	// The value and quality of an item belong to Read and Subscribe, which
+	// carry the timestamp and the raw quality with them. Answering the same
+	// question here would produce a second, poorer answer to it.
+	for _, property := range request.Properties {
+		if property == PropertyValue || property == PropertyQuality || property == PropertyTimestamp {
+			return nil, NewAdapterError(CodeInvalidRequest,
+				"item value, quality and timestamp are read through Read or Subscribe, not as properties")
+		}
+	}
+
+	type response struct {
+		values []ItemPropertyValue
+		err    error
+	}
+	responses := make(chan response, 1)
+	command := daThreadCommand{
+		context: ctx,
+		name:    "GetItemProperties",
+		run: func(session *daThreadSession) {
+			values, err := session.getItemProperties(request, r.config.Limits)
+			r.handleOperationFailure(session, err)
+			responses <- response{values: values, err: err}
+		},
+	}
+	if err := r.enqueue(ctx, command); err != nil {
+		return nil, err
+	}
+	select {
+	case response := <-responses:
+		return response.values, response.err
+	case <-ctx.Done():
+		return nil, &AdapterError{Code: CodeRuntimeDeadline, Message: "GetItemProperties deadline exceeded", Cause: ctx.Err()}
+	}
+}
+
+func (r *windowsRuntime) validatePropertyItemID(itemID string) error {
+	if itemID == "" {
+		return NewAdapterError(CodeInvalidRequest, "itemId must not be empty")
+	}
+	for _, character := range itemID {
+		if character == 0 {
+			return NewAdapterError(CodeInvalidRequest, "itemId must not contain NUL")
+		}
+	}
+	if len([]byte(itemID)) > r.config.Limits.MaxItemIDBytes {
+		return NewAdapterError(CodeItemIDTooLong, "itemId exceeds configured limit")
+	}
+	return nil
 }

@@ -1,0 +1,75 @@
+package opcda
+
+// OPC DA item properties, the source of OPC 10000-8 Table A.1.
+//
+// A property is metadata about an item -- its engineering units, its range,
+// the labels for a discrete item's two states -- rather than its value. The
+// adapter reads them through IOPCItemProperties, which is optional: a server
+// may not implement it, and one that does need not offer every property for
+// every item.
+//
+// Two of these identifiers name the item's own value and quality. The adapter
+// never reads them through this path. Value and Quality belong to the Read and
+// Subscribe paths, which carry the timestamp and the raw quality alongside;
+// fetching them here would produce a second, poorer answer to a question that
+// already has one.
+
+// PropertyID is an OPC DA item property identifier. The standard identifiers
+// are declared in opcda.idl, which scripts/spec-check/check.py verifies these
+// against.
+type PropertyID uint32
+
+const (
+	PropertyDataType     PropertyID = 1
+	PropertyValue        PropertyID = 2
+	PropertyQuality      PropertyID = 3
+	PropertyTimestamp    PropertyID = 4
+	PropertyAccessRights PropertyID = 5
+	PropertyScanRate     PropertyID = 6
+	PropertyEUType       PropertyID = 7
+	PropertyEUInfo       PropertyID = 8
+
+	PropertyEUUnits     PropertyID = 100
+	PropertyDescription PropertyID = 101
+	PropertyHighEU      PropertyID = 102
+	PropertyLowEU       PropertyID = 103
+	PropertyHighIR      PropertyID = 104
+	PropertyLowIR       PropertyID = 105
+	PropertyCloseLabel  PropertyID = 106
+	PropertyOpenLabel   PropertyID = 107
+)
+
+// AvailableProperty is one property a source reports for an item, as
+// IOPCItemProperties::QueryAvailableProperties reported it. The description is
+// the server's own text and is passed through unchanged.
+type AvailableProperty struct {
+	ID          PropertyID
+	Description string
+	VarType     DAVarType
+}
+
+// ItemPropertiesRequest asks for the value of specific properties of one item.
+type ItemPropertiesRequest struct {
+	ItemID     string
+	Properties []PropertyID
+}
+
+// ItemPropertyValue is one property value exactly as the source reported it.
+// A per-property HRESULT is a result, not a transport failure: a source may
+// offer a property for one item and refuse it for another.
+type ItemPropertyValue struct {
+	ID             PropertyID
+	OK             bool
+	HRESULT        HRESULT
+	HRESULTPresent bool
+	VarType        DAVarType
+	VarTypePresent bool
+	Value          any
+	ValuePresent   bool
+	ErrorCode      string
+}
+
+// propertiesUnsupported is what every path answers when the source does not
+// implement IOPCItemProperties. It is a capability, not a failure: the source
+// is working correctly and simply does not offer properties.
+const propertiesUnsupported = "IOPC ItemProperties is not implemented by this source"

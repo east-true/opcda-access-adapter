@@ -16,6 +16,13 @@ type Runtime interface {
 	WriteBatch(context.Context, []WriteItem) ([]WriteResult, error)
 	Subscribe(context.Context, SubscribeRequest) (Subscription, error)
 	Unsubscribe(context.Context, SubscriptionID) error
+	// AvailableItemProperties and ItemProperties read OPC DA item properties,
+	// which OPC 10000-8 Table A.1 maps onto UA properties and attributes. They
+	// are in this interface for the same reason Browse is: a runtime whose
+	// source does not offer them answers PROPERTIES_UNSUPPORTED, which is a
+	// capability rather than a missing method.
+	AvailableItemProperties(context.Context, string) ([]AvailableProperty, error)
+	ItemProperties(context.Context, ItemPropertiesRequest) ([]ItemPropertyValue, error)
 	// Shutdown must tolerate being called more than once. The application
 	// shuts the runtime down from its own Shutdown, which a caller may invoke
 	// again, and both implementations already behave this way; stating it
@@ -91,6 +98,7 @@ type Limits struct {
 	MaxBSTRCodeUnits     int
 	MaxSubscriptions     int
 	MaxSubscriptionItems int
+	MaxItemProperties    int
 }
 
 func DefaultLimits() Limits {
@@ -105,6 +113,7 @@ func DefaultLimits() Limits {
 		MaxBSTRCodeUnits:     65536,
 		MaxSubscriptions:     16,
 		MaxSubscriptionItems: 100,
+		MaxItemProperties:    64,
 	}
 }
 
@@ -118,7 +127,8 @@ func (limits Limits) validate() error {
 		limits.MaxItemIDBytes <= 0 ||
 		limits.MaxBSTRCodeUnits <= 0 ||
 		limits.MaxSubscriptions <= 0 ||
-		limits.MaxSubscriptionItems <= 0 {
+		limits.MaxSubscriptionItems <= 0 ||
+		limits.MaxItemProperties <= 0 {
 		return fmt.Errorf("all DA runtime limits must be positive")
 	}
 	if limits.CommandQueue > 4096 ||
@@ -130,7 +140,8 @@ func (limits Limits) validate() error {
 		limits.MaxItemIDBytes > 65536 ||
 		limits.MaxBSTRCodeUnits > 1048576 ||
 		limits.MaxSubscriptions > 256 ||
-		limits.MaxSubscriptionItems > 10000 {
+		limits.MaxSubscriptionItems > 10000 ||
+		limits.MaxItemProperties > 1024 {
 		return fmt.Errorf("one or more DA runtime limits exceed the v0 hard ceiling")
 	}
 	if uint64(limits.MaxReadItems)*uint64(limits.MaxBSTRCodeUnits) > maximumBatchBSTRUnits ||

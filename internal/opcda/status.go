@@ -25,6 +25,11 @@ type Capabilities struct {
 	Read      bool
 	Write     bool
 	Subscribe bool
+	// Properties reports whether the source implements IOPCItemProperties,
+	// which is what OPC 10000-8 Table A.1 is mapped from. Like Browse it is
+	// "supported", "unsupported" or "unavailable" rather than a bool, because
+	// a source that has not been asked yet is not the same as one that said no.
+	Properties string
 }
 
 // SourceDiagnostic is bounded operational metadata about the most recent

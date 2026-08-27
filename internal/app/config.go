@@ -208,6 +208,7 @@ func LoadConfig() (Config, error) {
 		{key: "OPCDA_MAX_BSTR_CODE_UNITS", target: &config.Runtime.Limits.MaxBSTRCodeUnits},
 		{key: "OPCDA_MAX_SUBSCRIPTIONS", target: &config.Runtime.Limits.MaxSubscriptions},
 		{key: "OPCDA_MAX_SUBSCRIPTION_ITEMS", target: &config.Runtime.Limits.MaxSubscriptionItems},
+		{key: "OPCDA_MAX_ITEM_PROPERTIES", target: &config.Runtime.Limits.MaxItemProperties},
 	}
 	for _, setting := range limitSettings {
 		if *setting.target, err = intEnv(setting.key, *setting.target); err != nil {

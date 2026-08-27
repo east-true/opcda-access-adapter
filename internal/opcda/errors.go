@@ -20,6 +20,7 @@ const (
 	CodeRuntimeDeadline              ErrorCode = "RUNTIME_DEADLINE_EXCEEDED"
 	CodeWriteDisabled                ErrorCode = "WRITE_DISABLED"
 	CodeBrowseUnsupported            ErrorCode = "BROWSE_UNSUPPORTED"
+	CodePropertiesUnsupported        ErrorCode = "PROPERTIES_UNSUPPORTED"
 	CodeBrowseResultLimitExceeded    ErrorCode = "BROWSE_RESULT_LIMIT_EXCEEDED"
 	CodeDetectionResultLimitExceeded ErrorCode = "DETECTION_RESULT_LIMIT_EXCEEDED"
 	CodeUnsupportedVarType           ErrorCode = "UNSUPPORTED_VARTYPE"
