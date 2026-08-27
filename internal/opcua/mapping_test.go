@@ -45,9 +45,18 @@ func TestDataTypeMappingFollowsPart8TableA2(t *testing.T) {
 }
 
 func TestDataTypeMappingRejectsTypesTheSpecDoesNotList(t *testing.T) {
-	// VT_INT, VT_UINT, VT_ERROR and VT_CY have no row in Table A.2. They must
-	// fail explicitly rather than borrow a similar type's mapping.
-	for _, varType := range []opcda.DAVarType{opcda.VTInt, opcda.VTUInt, opcda.VTError, opcda.VTCY} {
+	// VT_CY has no row in Table A.2 and the DA core decodes no value for it, so
+	// it must fail explicitly rather than borrow a similar type's mapping.
+	//
+	// VT_INT, VT_UINT and VT_ERROR have no row either, and this test used to
+	// require them to fail for that reason. They do not any more, and the
+	// difference is not coercion: the DA core reads all three out of the same
+	// storage as VT_I4 and VT_UI4 and hands up an int32 or a uint32, so the
+	// value a client receives *is* an Int32. Refusing to say so left a node
+	// declaring the abstract base type while delivering an Int32 — the server
+	// contradicting itself about one value, which is worse than either
+	// consistent answer. See TestDataTypeAgreesWithWhatTheAdapterDelivers.
+	for _, varType := range []opcda.DAVarType{opcda.VTCY} {
 		if got, ok := DataTypeFor(varType); ok {
 			t.Fatalf("%s was mapped to %s despite having no Table A.2 row", varType, got)
 		}
@@ -209,5 +218,52 @@ func TestBoundDAErrorCodesMatchTheObservedHRESULTs(t *testing.T) {
 	}
 	if OPCEUnknownItemID.Hex() != "0xC0040007" {
 		t.Fatalf("OPC_E_UNKNOWNITEMID = %s", OPCEUnknownItemID.Hex())
+	}
+}
+
+// A node must not declare one type and deliver another. The DA core reads
+// VT_INT and VT_ERROR into an int32 and VT_UINT into a uint32, so those are
+// what a client receives; consulting OPC 10000-8 Table A.2 alone, which has no
+// row for any of them, made the node declare the abstract base type instead.
+func TestDataTypeAgreesWithWhatTheAdapterDelivers(t *testing.T) {
+	for _, testCase := range []struct {
+		varType opcda.DAVarType
+		want    DataType
+	}{
+		{opcda.VTInt, DataTypeInt32},
+		{opcda.VTError, DataTypeInt32},
+		{opcda.VTUInt, DataTypeUInt32},
+		// The types the table covers are unaffected.
+		{opcda.VTI4, DataTypeInt32},
+		{opcda.VTUI4, DataTypeUInt32},
+		{opcda.VTBSTR, DataTypeString},
+	} {
+		t.Run(testCase.varType.Name(), func(t *testing.T) {
+			got, ok := DataTypeFor(testCase.varType)
+			if !ok {
+				t.Fatalf("%s has no data type, but the adapter delivers one", testCase.varType)
+			}
+			if got != testCase.want {
+				t.Fatalf("DataTypeFor = %q, want %q", got, testCase.want)
+			}
+		})
+	}
+
+	// A VARTYPE with no Table A.2 row still has no answer.
+	for _, varType := range []opcda.DAVarType{opcda.VTCY, opcda.VTVariant} {
+		if _, ok := DataTypeFor(varType); ok {
+			t.Fatalf("%s was given a data type the table does not define", varType)
+		}
+	}
+
+	// VT_DATE and VT_DECIMAL do have rows, and the transcription keeps them,
+	// but the DA core decodes neither — so no value of either type ever reaches
+	// a client and the rows are unreachable today. They are kept rather than
+	// dropped because the table is what they transcribe; the limitation is the
+	// decoder's and is recorded as such.
+	for _, varType := range []opcda.DAVarType{opcda.VTDate, opcda.VTDecimal} {
+		if _, ok := DataTypeFor(varType); !ok {
+			t.Fatalf("%s lost its Table A.2 row", varType)
+		}
 	}
 }

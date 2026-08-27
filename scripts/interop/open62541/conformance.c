@@ -94,9 +94,8 @@ struct typeCase {
 };
 
 static void checkTypes(UA_Client *client) {
-    /* Every VARTYPE the adapter maps, judged by open62541's decoder against the
-     * UA built-in type OPC 10000-8 Table A.2 names. VT_DATE is the row worth
-     * watching: the table maps it to Double, not DateTime. */
+    /* Every VARTYPE the adapter can actually deliver, judged by open62541's
+     * decoder against the UA built-in type OPC 10000-8 Table A.2 names. */
     struct typeCase cases[] = {
         {"Types.Bool",   &UA_TYPES[UA_TYPES_BOOLEAN], "Boolean"},
         {"Types.SByte",  &UA_TYPES[UA_TYPES_SBYTE],   "SByte"},
@@ -110,7 +109,7 @@ static void checkTypes(UA_Client *client) {
         {"Types.Float",  &UA_TYPES[UA_TYPES_FLOAT],   "Float"},
         {"Types.Double", &UA_TYPES[UA_TYPES_DOUBLE],  "Double"},
         {"Types.String", &UA_TYPES[UA_TYPES_STRING],  "String"},
-        {"Types.Date",   &UA_TYPES[UA_TYPES_DOUBLE],  "Double (Table A.2 maps VT_DATE to Double)"},
+        {"Types.Int32Again", &UA_TYPES[UA_TYPES_INT32], "Int32"},
     };
     char name[256], detail[256];
     for(size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {

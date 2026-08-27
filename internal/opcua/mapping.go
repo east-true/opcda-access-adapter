@@ -27,9 +27,18 @@ const (
 	DataTypeNull DataType = "Null"
 )
 
-// DataTypeFor maps a DA VARTYPE onto a UA DataType following OPC 10000-8
-// Table A.2. It reports false when the specification defines no mapping for the
-// type, so an unmapped VARTYPE fails explicitly instead of being coerced.
+// DataTypeFor answers what UA DataType this adapter delivers for a DA VARTYPE:
+// OPC 10000-8 Table A.2 applied to the type the DA core decodes the VARTYPE as.
+// It reports false when the specification defines no mapping, so an unmapped
+// VARTYPE fails explicitly instead of being coerced.
+//
+// The composition with DecodesAs is what keeps the answer honest. The table has
+// no row for VT_INT, VT_UINT or VT_ERROR, but the DA core reads all three into
+// an int32 or a uint32 and the Variant a client receives says exactly that. A
+// node that consulted the table alone declared such an item to be the abstract
+// base type while delivering an Int32 — the server contradicting itself about
+// one value. Deriving both answers from the type the adapter actually produces
+// removes the possibility rather than adding three special cases.
 //
 // Arrays and by-reference variants are rejected here. Table A.2 maps VT_ARRAY
 // to an array of the mapped element type, but the DA core does not decode
@@ -38,6 +47,13 @@ func DataTypeFor(varType opcda.DAVarType) (DataType, bool) {
 	if varType.IsArray() || varType.IsByRef() {
 		return "", false
 	}
+	return dataTypeFromTableA2(varType.DecodesAs())
+}
+
+// dataTypeFromTableA2 is the transcription of the table itself, with no
+// adapter-specific normalisation. It is unexported because no caller wants the
+// table's answer about a VARTYPE the adapter never delivers.
+func dataTypeFromTableA2(varType opcda.DAVarType) (DataType, bool) {
 	switch varType.Base() {
 	case opcda.VTEmpty, opcda.VTNull:
 		return DataTypeNull, true

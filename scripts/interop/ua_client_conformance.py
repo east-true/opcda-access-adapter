@@ -65,7 +65,7 @@ async def main():
             # A browsed node's identifier must carry the exact ItemID.
             got = {n.nodeid.Identifier for n in leaves}
             check("browsed node identifiers carry the exact ItemID",
-                  "item:Types.Bool" in got and "item:Types.Date" in got, str(sorted(got))[:200])
+                  "item:Types.Bool" in got and "item:Types.String" in got, str(sorted(got))[:200])
             # Hierarchical browse with subtypes, the way a generic client walks.
             hier = await src.get_children(refs=ua.ObjectIds.HierarchicalReferences)
             check("HierarchicalReferences+subtypes finds the branches", len(hier) >= 6, str(len(hier)))
@@ -85,8 +85,7 @@ async def main():
             "Types.Float":  (ua.VariantType.Float,   1.5),
             "Types.Double": (ua.VariantType.Double,  2.25),
             "Types.String": (ua.VariantType.String,  "hello"),
-            # Part 8 Table A.2 maps VT_DATE to Double, not DateTime.
-            "Types.Date":   (ua.VariantType.Double,  45365.5),
+            "Types.Int32Again": (ua.VariantType.Int32, -70001),
         }
         for item, (vtype, value) in expect.items():
             dv = await c.get_node(nid(item)).read_data_value(raise_on_bad_status=False)

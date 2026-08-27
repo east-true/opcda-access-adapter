@@ -156,9 +156,9 @@ internal static class Program
 
     private static void CheckTypes(Session session)
     {
-        // Every VARTYPE the adapter maps, judged by the Foundation's own
-        // decoder against the built-in type OPC 10000-8 Table A.2 names.
-        // VT_DATE is the row worth watching: the table maps it to Double.
+        // Every VARTYPE the adapter can actually deliver, judged by the
+        // Foundation's own decoder against the built-in type OPC 10000-8
+        // Table A.2 names.
         var cases = new (string Item, Type Expected, object Value)[]
         {
             ("Types.Bool", typeof(bool), true),
@@ -173,7 +173,7 @@ internal static class Program
             ("Types.Float", typeof(float), 1.5f),
             ("Types.Double", typeof(double), 2.25d),
             ("Types.String", typeof(string), "hello"),
-            ("Types.Date", typeof(double), 45365.5d),
+            ("Types.Int32Again", typeof(int), -70001),
         };
         foreach (var (item, expected, value) in cases)
         {
