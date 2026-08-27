@@ -122,37 +122,38 @@ release-promotion gate.
 
 ## In progress
 
-- A VARTYPE type-agreement fix is on `fix/vartype-agreement`. Continuing the
-  audit into the weakly covered frontend paths found that the adapter answered
-  two questions about the same value from different inputs, and they disagreed.
+- Fuzz coverage of the OPC UA service decoders is on `test/fuzz-the-dispatch`.
+  Continuing the audit found that of the sixteen request decoders the listener
+  exposes, **thirteen had no fuzz target at all** — CreateSession,
+  ActivateSession, CloseSession, Browse, BrowseNext, Read, Write,
+  CreateSubscription, CreateMonitoredItems, DeleteMonitoredItems,
+  DeleteSubscriptions, SetPublishingMode and Publish. `GetEndpoints` is among
+  them and is reachable before a session exists at all. Design §35.5 requires
+  the hand-written parser to bound what a peer can make it do, and those
+  decoders are the majority of it.
 
-  `decodeVariant` reads VT_INT and VT_ERROR out of the same storage as VT_I4 and
-  VT_UINT out of the same storage as VT_UI4, so all three reach the UA layer as
-  an `int32` or a `uint32`. OPC 10000-8 Table A.2 has no row for any of them, so
-  a node consulting the table alone **declared the abstract base type while
-  delivering an Int32**. The write check had the same split and refused an
-  `Int32` written to a VT_INT item as a type mismatch the DA core would never
-  have raised, since `validateWriteValue` groups those VARTYPEs the same way the
-  decoder does.
+  They were missed because the existing targets were written per layer — binary
+  encoding, UACP framing, UASC framing, structured types — so decoders added
+  afterwards inherited nothing. The fix is a target that drives arbitrary bytes
+  through `dispatchService` itself, so a service added later is covered without
+  anyone extending the fuzz file.
 
-  The normalisation is now stated once as `DAVarType.DecodesAs`, beside the
-  decoder it describes, and `DataTypeFor` composes with it. It is not coercion:
-  the adapter reports the type of the value it actually produced. A VARTYPE with
-  no row and no normalisation, such as VT_CY, still has no answer. An earlier
-  test required these three to fail "rather than borrow a similar type's
-  mapping"; that intent is kept where it applies, and the reasoning for
-  overturning it is recorded in the test itself.
+  The same omission existed one level up: the CI workflow listed its fuzz
+  targets by name, so a new target ran nowhere until someone edited the
+  workflow. CI now discovers them with `go test -list`, through
+  `scripts/fuzz-smoke.sh`, and fails if it finds none.
 
-  VT_DATE and VT_DECIMAL keep their Table A.2 rows and remain **unreachable** —
-  the DA core decodes neither, so a source reporting one gets
-  `UNSUPPORTED_VARTYPE` first. The interop suite no longer scripts a VT_DATE
-  item: it was reporting a client check passing over a path no real source can
-  reach, which a conformance run must not do.
+  14.7 million executions against the dispatch produced no crash, no panic and
+  no untyped error, so nothing was found — the value is that a regression will
+  be.
 
-  Also audited and sound in this pass: the gRPC `GracefulStop` (honours its
-  context and falls back to a hard stop), the gRPC Subscribe stream (releases
-  its DA group on any exit through a detached context), and the gRPC scalar
-  encoder against the set the DA core can decode.
+  Also audited and sound in this pass: the service lifecycle transitions (double
+  Start, Start after Shutdown and double Shutdown are all handled, and Shutdown
+  before Start is safe); the HTTP and gRPC write decoders, which cover exactly
+  the VARTYPE set the DA core accepts; and `requestBodyError`, whose uncovered
+  `Error` method is never called because its consumers read the typed fields.
+  `Runtime.Shutdown` being safe to call twice was true of both implementations
+  but stated nowhere, and is now part of the interface documentation.
 
 - The local KVM/libvirt destructive-validation gate is paused. The dedicated
   `opcda-destructive-review` VM and all of its dedicated host resources were

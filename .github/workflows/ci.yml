@@ -25,17 +25,9 @@ jobs:
       - name: Race detector
         run: go test -race ./...
       - name: Fuzz smoke tests
-        run: |
-          go test ./internal/frontend/http -run=^$ -fuzz=^FuzzReadHTTPBody$ -fuzztime=10000x
-          go test ./internal/frontend/http -run=^$ -fuzz=^FuzzExactJSONString$ -fuzztime=10000x
-          go test ./internal/frontend/http -run=^$ -fuzz=^FuzzDecodeWriteValue$ -fuzztime=10000x
-          go test ./internal/frontend/grpc -run=^$ -fuzz=^FuzzDecodeDAWriteRequest$ -fuzztime=10000x
-          go test ./internal/opcua -run=^$ -fuzz=^FuzzDecodeUABinary$ -fuzztime=10000x
-          go test ./internal/opcua -run=^$ -fuzz=^FuzzDecodeDateTime$ -fuzztime=10000x
-          go test ./internal/opcua -run=^$ -fuzz=^FuzzDecodeUACP$ -fuzztime=10000x
-          go test ./internal/opcua -run=^$ -fuzz=^FuzzDecodeUASC$ -fuzztime=10000x
-          go test ./internal/opcua -run=^$ -fuzz=^FuzzDecodeStructuredTypes$ -fuzztime=10000x
-          go test ./internal/opcua -run=^$ -fuzz=^FuzzDecodeSecureChannelService$ -fuzztime=10000x
+        # Every fuzz target in the repository, discovered rather than listed:
+        # a target added later must not have to be remembered here.
+        run: scripts/fuzz-smoke.sh
       - name: Vet
         run: go vet ./...
 
