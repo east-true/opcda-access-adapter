@@ -28,10 +28,27 @@ the specification says.
 | service encoding identifiers | `NodeIds.csv` (`..._Encoding_DefaultBinary`) |
 | attribute identifiers | `AttributeIds.csv` |
 | request decoder field order | `Opc.Ua.Types.bsd` |
+| DA quality values | `opcda.idl` |
+| DA masks, access rights, data source | `opcda.idl` |
+| **DA COM vtable slot order** | `opcda.idl` |
 
-The field-order check is the one worth having: a decoder that reads two fields
-in the wrong order is silent against this project's own encoder, which writes
-them in the same wrong order, and fails only against a real client.
+The DA side has no CSV, so its authority is the IDL the proxy/stubs are
+generated from, taken from the commit
+[ADR-0006](../../docs/adr/0006-real-da-validation-fixture.md) pins for the
+validation fixture. The constants are therefore checked against the source the
+server this project tests against was itself built from.
+
+Two of these are worth having above the rest.
+
+A decoder that reads two fields in the wrong order is silent against this
+project's own encoder, which writes them in the same wrong order, and fails only
+against a real client.
+
+A **vtable slot in the wrong position calls a different method entirely** —
+`ValidateItems` where `AddItems` was meant — with arguments shaped for the one
+that was intended. No Go test can see it, because the vtable is the server's;
+only a real COM server can, and then only if the mistake happens to crash rather
+than corrupt.
 
 ## Why it pins the schema
 
@@ -55,6 +72,12 @@ release.
 ## What it does not check
 
 Values that no machine-readable source publishes: OPC 10000-8 Tables A.2 to A.5,
-which map DA VARTYPEs, qualities and HRESULTs onto UA types and status codes;
-the OPC DA quality bit layout; and prose rules such as which channel may carry a
-session. Those are checked by tests that quote the clause they implement.
+which map DA VARTYPEs, qualities and HRESULTs onto UA types and status codes,
+and prose rules such as which channel may carry a session. Those are checked by
+tests that quote the clause they implement.
+
+Struct layouts are not checked here either, because Go can check them better:
+`internal/opcda/variant_windows_test.go` asserts the size of `VARIANT`,
+`OPCITEMDEF`, `OPCITEMRESULT` and `OPCITEMSTATE` for both 32-bit and 64-bit, and
+those assertions run on the Windows CI for each architecture. A padding mistake
+fails there rather than corrupting a value.

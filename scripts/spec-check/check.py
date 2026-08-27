@@ -27,7 +27,23 @@ import re
 import sys
 import urllib.request
 
-BASE = "https://raw.githubusercontent.com/OPCFoundation/UA-Nodeset/latest/Schema/"
+UA_BASE = "https://raw.githubusercontent.com/OPCFoundation/UA-Nodeset/latest/Schema/"
+
+# The OPC DA side has no CSV. Its authority is the IDL the proxy/stubs are
+# generated from, taken from the same commit ADR-0006 pins for the validation
+# fixture, so the constants are checked against the source the server this
+# project tests against was itself built from.
+DA_COMMIT = "efe0d1d1ea86a8a727bf26a501a261765e836766"
+DA_BASE = (f"https://raw.githubusercontent.com/OPCF-Members/"
+           f"OPC-Classic-CoreComponents/{DA_COMMIT}/Source/DataAccess/ProxyStub/")
+SOURCES = {
+    "StatusCode.csv": UA_BASE,
+    "NodeIds.csv": UA_BASE,
+    "AttributeIds.csv": UA_BASE,
+    "Opc.Ua.Types.bsd": UA_BASE,
+    "opcda.idl": DA_BASE,
+    "opcerror.h": DA_BASE,
+}
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 UA = os.path.join(ROOT, "internal", "opcua")
 
@@ -47,7 +63,7 @@ def fetch():
             digests[name] = digest
     files = {}
     for name, want in digests.items():
-        data = urllib.request.urlopen(BASE + name, timeout=300).read()
+        data = urllib.request.urlopen(SOURCES[name] + name, timeout=300).read()
         got = hashlib.sha256(data).hexdigest()
         if got != want:
             print(f"  upstream {name} is not the reviewed copy:\n"
@@ -206,6 +222,118 @@ def check_request_decoders(files, src):
     print(f"  {checked} request decoders")
 
 
+def idl_constants(text):
+    """The OPC_ constants the IDL defines, however they are spelled."""
+    stripped = re.sub(r"/\*.*?\*/", "", text, flags=re.S)
+    stripped = re.sub(r"//[^\n]*", "", stripped)
+    values = {}
+    for match in re.finditer(
+            r'(?:const\s+\w+\s+|#define\s+)(OPC_[A-Z0-9_]+)\s*=?\s*'
+            r'(?:\(\(HRESULT\))?\s*(0x[0-9A-Fa-f]+|\d+)', stripped):
+        values[match.group(1)] = int(match.group(2), 0)
+    return values, stripped
+
+
+def idl_interfaces(stripped):
+    """Method order per interface, which is the vtable slot order."""
+    interfaces = {}
+    for match in re.finditer(r'interface\s+(I[A-Za-z0-9_]+)\s*:\s*I[A-Za-z0-9_]+\s*\{(.*?)\n\}',
+                             stripped, re.S):
+        interfaces[match.group(1)] = re.findall(r'HRESULT\s+([A-Za-z0-9_]+)\s*\(', match.group(2))
+    return interfaces
+
+
+def da_sources():
+    text = []
+    directory = os.path.join(ROOT, "internal", "opcda")
+    for name in sorted(os.listdir(directory)):
+        if name.endswith(".go") and not name.endswith("_test.go"):
+            with open(os.path.join(directory, name), encoding="utf-8") as handle:
+                text.append(handle.read())
+    return "".join(text)
+
+
+DA_QUALITY = {
+    "QualityBad": "OPC_QUALITY_BAD",
+    "QualityConfigError": "OPC_QUALITY_CONFIG_ERROR",
+    "QualityNotConnected": "OPC_QUALITY_NOT_CONNECTED",
+    "QualityDeviceFailure": "OPC_QUALITY_DEVICE_FAILURE",
+    "QualitySensorFailure": "OPC_QUALITY_SENSOR_FAILURE",
+    "QualityLastKnown": "OPC_QUALITY_LAST_KNOWN",
+    "QualityCommFailure": "OPC_QUALITY_COMM_FAILURE",
+    "QualityOutOfService": "OPC_QUALITY_OUT_OF_SERVICE",
+    "QualityWaitingForInitialData": "OPC_QUALITY_WAITING_FOR_INITIAL_DATA",
+    "QualityUncertain": "OPC_QUALITY_UNCERTAIN",
+    "QualityLastUsable": "OPC_QUALITY_LAST_USABLE",
+    "QualitySensorCal": "OPC_QUALITY_SENSOR_CAL",
+    "QualityEGUExceeded": "OPC_QUALITY_EGU_EXCEEDED",
+    "QualitySubNormal": "OPC_QUALITY_SUB_NORMAL",
+    "QualityGood": "OPC_QUALITY_GOOD",
+    "QualityLocalOverride": "OPC_QUALITY_LOCAL_OVERRIDE",
+}
+
+# The IDL names the vtable's own methods; IUnknown's three come first in every
+# one, which the Go structs express by embedding iUnknownVTable.
+DA_VTABLES = {
+    "iopcServerVTable": "IOPCServer",
+    "iopcItemMgtVTable": "IOPCItemMgt",
+    "iopcSyncIOVTable": "IOPCSyncIO",
+    "iopcDataCallbackVTable": "IOPCDataCallback",
+    "iopcBrowseServerAddressSpaceVTable": "IOPCBrowseServerAddressSpace",
+}
+
+
+def check_da(files):
+    src = da_sources() + go_sources()
+    values, stripped = idl_constants(files["opcda.idl"])
+    values.update(idl_constants(files["opcerror.h"])[0])
+    interfaces = idl_interfaces(stripped)
+
+    checked = 0
+    for go_name, idl_name in DA_QUALITY.items():
+        match = re.search(r'\b' + go_name + r'\s+uint16\s*=\s*(0x[0-9A-Fa-f]+)', src)
+        if match is None:
+            fail(f"{go_name} is not declared")
+            continue
+        checked += 1
+        got, want = int(match.group(1), 16), values[idl_name]
+        if got != want:
+            fail(f"{go_name}: code 0x{got:04X}, {idl_name} 0x{want:04X}")
+    print(f"  {checked} DA quality values")
+
+    checked = 0
+    for go_name, idl_name in (("qualityLimitMask", "OPC_LIMIT_MASK"),
+                              ("qualityMainAndSub", "OPC_STATUS_MASK"),
+                              ("opcAccessRightRead", "OPC_READABLE"),
+                              ("opcAccessRightWrite", "OPC_WRITEABLE"),
+                              ("opcDataSourceCache", "OPC_DS_CACHE"),
+                              ("opcDataSourceDevice", "OPC_DS_DEVICE")):
+        match = re.search(r'\b' + go_name + r'\s*=\s*(0x[0-9A-Fa-f]+|\d+)', src)
+        want = values.get(idl_name)
+        if match is None or want is None:
+            continue
+        checked += 1
+        got = int(match.group(1), 0)
+        if got != want:
+            fail(f"{go_name}: code {got}, {idl_name} {want}")
+    print(f"  {checked} DA masks and flags")
+
+    checked = 0
+    for go_name, idl_name in DA_VTABLES.items():
+        want = interfaces.get(idl_name)
+        body = re.search(r'type ' + go_name + r' struct \{(.*?)\n\}', src, re.S)
+        if want is None or body is None:
+            fail(f"{go_name} or {idl_name} could not be read")
+            continue
+        got = [line.split()[0] for line in body.group(1).strip().splitlines()
+               if line.strip() and not line.strip().startswith("//")
+               and line.split()[0] != "iUnknownVTable"]
+        checked += 1
+        if got != want:
+            fail(f"{go_name} slot order: code {got}, IDL {want}")
+    print(f"  {checked} DA vtable slot orders")
+
+
 def main():
     print("verifying the schema against the reviewed digests")
     files = fetch()
@@ -215,6 +343,7 @@ def main():
     check_node_ids(files, src)
     check_attribute_ids(files, src)
     check_request_decoders(files, src)
+    check_da(files)
     if failures:
         print(f"\n{len(failures)} transcription(s) do not match the specification")
         return 1
