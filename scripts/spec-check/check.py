@@ -393,7 +393,8 @@ def spec_table(text, caption):
         cells = [cell.strip() for cell in line.split(",")]
         if len(cells) == 2:
             rows.append((cells[0], cells[1]))
-    return rows[1:] if rows and rows[0][0].startswith("OPC DA Error") else rows
+    # Every Annex A table's first row names its columns.
+    return rows[1:]
 
 
 def status_constants(src):
@@ -422,9 +423,11 @@ def go_answers(src, function):
             pending = [name.strip() for name in line[5:].rstrip(":").split(",")]
         elif guard is not None:
             pending = [guard.group(1)]
-        elif line.startswith("return ") and pending:
+        elif pending and (line.startswith("return ") or re.match(r'\w+ = \S', line)):
+            answer = line.split("=", 1)[1] if not line.startswith("return ") \
+                else line[len("return "):]
             for name in pending:
-                answers.setdefault(name, line[len("return "):].strip())
+                answers.setdefault(name, answer.split(",")[0].strip())
             pending = []
     return answers
 
@@ -479,6 +482,66 @@ def check_da_error_mapping(files, src):
     print(f"  {checked} DA error mappings")
 
 
+def check_da_type_mapping(files, src):
+    """Table A.2, VARTYPE to UA DataType."""
+    rows = spec_table(files["OPC-10000-8.md"], "Table A.2 - DataTypes and mapping")
+    answers = go_answers(src, "dataTypeFromTableA2")
+    if not rows or answers is None:
+        fail("Table A.2 or dataTypeFromTableA2 could not be read")
+        return
+    # DataType is a string type whose value is the UA type name, so the table
+    # cell is compared with what the constant actually holds, not with its name.
+    values = dict(re.findall(r'\b(DataType[A-Za-z0-9]+)\s+DataType\s*=\s*"([^"]+)"', src))
+    vartypes = {name.lower(): name for name in
+                re.findall(r'\b(VT[A-Za-z0-9]+)\s+DAVarType\s*=', src)}
+    checked = 0
+    for vartype, ua_type in rows:
+        if vartype == "VT_ARRAY":
+            # Not a type of its own: the array bit is stripped by Base() before
+            # the table is consulted, and the element type is what is mapped.
+            continue
+        go_vartype = vartypes.get(vartype.replace("_", "").lower())
+        if go_vartype is None:
+            fail(f"Table A.2: {vartype} is not declared")
+            continue
+        answered = answers.get("opcda." + go_vartype)
+        checked += 1
+        if answered is None:
+            fail(f"Table A.2: {vartype} is not mapped, the table says {ua_type}")
+        elif values.get(answered) != ua_type:
+            fail(f"Table A.2: {vartype} maps to {values.get(answered, answered)}, "
+                 f"the table says {ua_type}")
+    print(f"  {checked} DA data type mappings")
+
+
+def check_da_quality_mapping(files, src):
+    """Table A.3, DA quality to UA status code."""
+    rows = spec_table(files["OPC-10000-8.md"], "Table A.3 - Quality mapping")
+    answers = go_answers(src, "StatusCodeForQuality")
+    if not rows or answers is None:
+        fail("Table A.3 or StatusCodeForQuality could not be read")
+        return
+    statuses = status_constants(src)
+    # The table names a quality the way opcda.idl does, so the row is resolved
+    # through the IDL name that check_da already ties the Go constant to.
+    by_idl = {idl: go for go, idl in DA_QUALITY.items()}
+    checked = 0
+    for quality, ua_status in rows:
+        go_quality = by_idl.get("OPC_QUALITY_" + quality)
+        if go_quality is None:
+            fail(f"Table A.3: {quality} is not bound to a constant")
+            continue
+        want = statuses.get(("Status" + ua_status.replace("_", "")).lower())
+        if want is None:
+            fail(f"Table A.3: {ua_status} is not declared")
+            continue
+        checked += 1
+        if answers.get(go_quality) != want:
+            fail(f"Table A.3: {quality} answers {answers.get(go_quality) or 'nothing'}, "
+                 f"the table says {want}")
+    print(f"  {checked} DA quality mappings")
+
+
 def main():
     print("verifying the schema against the reviewed digests")
     files = fetch()
@@ -490,6 +553,8 @@ def main():
     check_request_decoders(files, src)
     check_da(files)
     check_da_error_mapping(files, src + da_sources())
+    check_da_type_mapping(files, src + da_sources())
+    check_da_quality_mapping(files, src + da_sources())
     if failures:
         print(f"\n{len(failures)} transcription(s) do not match the specification")
         return 1

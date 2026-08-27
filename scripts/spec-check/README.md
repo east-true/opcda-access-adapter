@@ -25,6 +25,8 @@ the specification says.
 | | Source |
 | --- | --- |
 | status code values | `StatusCode.csv` |
+| **DA VARTYPE to UA DataType** | `OPC-10000-8.md` Table A.2 |
+| **DA quality to UA status code** | `OPC-10000-8.md` Table A.3 |
 | **DA error to UA status mapping** | `OPC-10000-8.md` Tables A.4 and A.5 |
 | DA error numeric values | `opcerror.h` |
 | service encoding identifiers | `NodeIds.csv` (`..._Encoding_DefaultBinary`) |
@@ -83,9 +85,14 @@ release.
 
 ## What it does not check
 
-OPC 10000-8 Tables A.2 and A.3, which map DA VARTYPEs and qualities onto UA
-types and status codes, and prose rules such as which channel may carry a
-session. Those are checked by tests that quote the clause they implement.
+Prose rules, such as which channel may carry a session. Those are checked by
+tests that quote the clause they implement.
+
+Table A.1, the item property mapping, is not checked because it is not
+implemented: the adapter never calls `IOPCItemProperties`. That is recorded in
+`docs/opcua-mapping.md` rather than left to be inferred from this script's
+silence. Tables A.6 to A.9 are the opposite direction — a UA server seen through
+a COM DA client — which this project does not implement either.
 
 It checks that the mapping matches the tables. It cannot check that a real DA
 server ever produces a given error: of the thirteen rows in A.4 and A.5, two
