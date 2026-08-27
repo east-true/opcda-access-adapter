@@ -36,13 +36,23 @@ UA_BASE = "https://raw.githubusercontent.com/OPCFoundation/UA-Nodeset/latest/Sch
 DA_COMMIT = "efe0d1d1ea86a8a727bf26a501a261765e836766"
 DA_BASE = (f"https://raw.githubusercontent.com/OPCF-Members/"
            f"OPC-Classic-CoreComponents/{DA_COMMIT}/Source/DataAccess/ProxyStub/")
+# Annex A of Part 8 is the only normative source for the DA-to-UA mappings, and
+# it is prose, not a schema. The OPC Foundation publishes each specification
+# version as a Markdown export whose URL names the version, so the tables can be
+# read from the publisher rather than retyped. The URL is pinned to 1.05.07; a
+# later version gets a new URL, not new bytes at this one.
+PART8_MARKDOWN = ("https://reference.opcfoundation.org/specs/OPC-10000-8/"
+                  "v1.05.07/t63916693141/download/markdown")
+
+# Every source is a whole URL: most are named after their file, Part 8 is not.
 SOURCES = {
-    "StatusCode.csv": UA_BASE,
-    "NodeIds.csv": UA_BASE,
-    "AttributeIds.csv": UA_BASE,
-    "Opc.Ua.Types.bsd": UA_BASE,
-    "opcda.idl": DA_BASE,
-    "opcerror.h": DA_BASE,
+    "StatusCode.csv": UA_BASE + "StatusCode.csv",
+    "NodeIds.csv": UA_BASE + "NodeIds.csv",
+    "AttributeIds.csv": UA_BASE + "AttributeIds.csv",
+    "Opc.Ua.Types.bsd": UA_BASE + "Opc.Ua.Types.bsd",
+    "opcda.idl": DA_BASE + "opcda.idl",
+    "opcerror.h": DA_BASE + "opcerror.h",
+    "OPC-10000-8.md": PART8_MARKDOWN,
 }
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 UA = os.path.join(ROOT, "internal", "opcua")
@@ -63,7 +73,7 @@ def fetch():
             digests[name] = digest
     files = {}
     for name, want in digests.items():
-        data = urllib.request.urlopen(SOURCES[name] + name, timeout=300).read()
+        data = urllib.request.urlopen(SOURCES[name], timeout=300).read()
         got = hashlib.sha256(data).hexdigest()
         if got != want:
             print(f"  upstream {name} is not the reviewed copy:\n"
@@ -105,9 +115,18 @@ def check_status_codes(files, src):
             yield lowered.replace(a.upper(), b)
 
     checked = 0
+    declared = {}
     for match in re.finditer(r'\bStatus([A-Za-z0-9_]+)\s+StatusCode\s*=\s*(0x[0-9A-Fa-f]+)', src):
         name, value = match.group(1), int(match.group(2), 16)
         checked += 1
+        # One value, one constant. Two declarations of the same code under two
+        # spellings compile and pass every test, and each call site then picks
+        # one at random; statuscode.go owns the enumeration so this cannot arise.
+        if value in declared:
+            fail(f"0x{value:08X} is declared twice: "
+                 f"Status{declared[value]} and Status{name}")
+        else:
+            declared[value] = name
         want = None
         for candidate in spellings(name):
             if candidate in spec:
@@ -334,6 +353,132 @@ def check_da(files):
     print(f"  {checked} DA vtable slot orders")
 
 
+# Tables A.4 and A.5 spell the same DA error two ways - OPC_E_BADRIGHTS in the
+# Read table, E_BADRIGHTS in the Write table - and neither spelling is always
+# the one opcerror.h uses. This resolves a table cell to the Go constant that
+# implements it and, for the OPC codes, to the header that defines its value.
+# The four Windows codes have no OPC_ definition; mapping_windows_test.go
+# checks those against golang.org/x/sys/windows instead, on the one platform
+# where that package builds.
+DA_ERRORS = {
+    "OPC_E_BADRIGHTS": ("OPCEBadRights", "OPC_E_BADRIGHTS"),
+    "E_BADRIGHTS": ("OPCEBadRights", "OPC_E_BADRIGHTS"),
+    "OPC_E_INVALIDHANDLE": ("OPCEInvalidHandle", "OPC_E_INVALIDHANDLE"),
+    "E_INVALIDHANDLE": ("OPCEInvalidHandle", "OPC_E_INVALIDHANDLE"),
+    "OPC_E_UNKNOWNITEMID": ("OPCEUnknownItemID", "OPC_E_UNKNOWNITEMID"),
+    "E_UNKNOWNITEMID": ("OPCEUnknownItemID", "OPC_E_UNKNOWNITEMID"),
+    "E_INVALIDITEMID": ("OPCEInvalidItemID", "OPC_E_INVALIDITEMID"),
+    "E_INVALID_PID": ("OPCEInvalidPID", "OPC_E_INVALID_PID"),
+    "E_BADTYPE": ("OPCEBadType", "OPC_E_BADTYPE"),
+    "E_RANGE": ("OPCERange", "OPC_E_RANGE"),
+    "E_NOTSUPPORTED": ("OPCENotSupported", "OPC_E_NOTSUPPORTED"),
+    "S_CLAMP": ("OPCSClamp", "OPC_S_CLAMP"),
+    "E_OUTOFMEMORY": ("EOutOfMemory", None),
+    "E_ACCESSDENIED": ("EAccessDenied", None),
+    "DISP_E_TYPEMISMATCH": ("DispETypeMismatch", None),
+    "DISP_E_OVERFLOW": ("DispEOverflow", None),
+}
+
+
+def spec_table(text, caption):
+    """The rows of one comma-separated Annex A table, in order."""
+    start = text.find(caption)
+    if start == -1:
+        return []
+    rows = []
+    for line in text[start:].splitlines()[1:]:
+        line = line.strip()
+        if not line:
+            break
+        cells = [cell.strip() for cell in line.split(",")]
+        if len(cells) == 2:
+            rows.append((cells[0], cells[1]))
+    return rows[1:] if rows and rows[0][0].startswith("OPC DA Error") else rows
+
+
+def status_constants(src):
+    """Declared StatusCode constants, keyed case-insensitively."""
+    names = {}
+    for match in re.finditer(r'\b(Status[A-Za-z0-9]+)\s+StatusCode\s*=', src):
+        names[match.group(1).lower()] = match.group(1)
+    return names
+
+
+def go_answers(src, function):
+    """What one mapping function answers, as {DA constant: returned status}.
+
+    Reads both the switch cases and the guards that precede it. OPC_S_CLAMP is
+    a success code, so it has to be answered before the general success test
+    and cannot be a case of the error switch.
+    """
+    body = re.search(r'func ' + function + r'\(.*?\n\}\n', src, re.S)
+    if body is None:
+        return None
+    answers, pending = {}, []
+    for line in body.group(0).splitlines():
+        line = line.strip()
+        guard = re.match(r'if\s+\w+\s*==\s*([A-Za-z0-9_]+)\s*\{$', line)
+        if line.startswith("case "):
+            pending = [name.strip() for name in line[5:].rstrip(":").split(",")]
+        elif guard is not None:
+            pending = [guard.group(1)]
+        elif line.startswith("return ") and pending:
+            for name in pending:
+                answers.setdefault(name, line[len("return "):].strip())
+            pending = []
+    return answers
+
+
+def check_da_error_mapping(files, src):
+    """Tables A.4 and A.5, row for row, against the two mapping functions."""
+    spec = files["OPC-10000-8.md"]
+    statuses = status_constants(src)
+    values = idl_constants(files["opcerror.h"])[0]
+
+    checked, values_checked = 0, set()
+    for caption, function in (
+            ("Table A.4 - OPC DA Read error mapping", "StatusCodeForReadError"),
+            ("Table A.5 - OPC DA Write error code mapping", "StatusCodeForWriteError")):
+        rows = spec_table(spec, caption)
+        if not rows:
+            fail(f"{caption} could not be read from the specification")
+            continue
+        answers = go_answers(src, function)
+        if answers is None:
+            fail(f"{function} could not be read")
+            continue
+        for da_error, ua_status in rows:
+            if da_error == "Others":
+                # The table's own catch-all row, which the switch spells default.
+                continue
+            if da_error not in DA_ERRORS:
+                fail(f"{caption}: {da_error} is not bound to a constant")
+                continue
+            go_name, header_name = DA_ERRORS[da_error]
+            want = statuses.get(("Status" + ua_status.replace("_", "")).lower())
+            if want is None:
+                fail(f"{caption}: {ua_status} is not declared")
+                continue
+            got = answers.get(go_name)
+            checked += 1
+            if got != want:
+                fail(f"{caption}: {da_error} answers {got or 'nothing'}, "
+                     f"the table says {want}")
+            # Both tables name most of these codes; the value is one fact.
+            if header_name is None or header_name in values_checked:
+                continue
+            values_checked.add(header_name)
+            declared = re.search(r'\b' + go_name + r'\s+opcda\.HRESULT\s*=\s*(-?\d+)', src)
+            if declared is None or header_name not in values:
+                fail(f"{go_name} or {header_name} could not be read")
+                continue
+            signed = int(declared.group(1)) & 0xFFFFFFFF
+            if signed != values[header_name]:
+                fail(f"{go_name}: code 0x{signed:08X}, "
+                     f"{header_name} 0x{values[header_name]:08X}")
+    print(f"  {checked} DA error mappings")
+
+
 def main():
     print("verifying the schema against the reviewed digests")
     files = fetch()
@@ -344,6 +489,7 @@ def main():
     check_attribute_ids(files, src)
     check_request_decoders(files, src)
     check_da(files)
+    check_da_error_mapping(files, src + da_sources())
     if failures:
         print(f"\n{len(failures)} transcription(s) do not match the specification")
         return 1

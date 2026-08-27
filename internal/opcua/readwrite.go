@@ -16,15 +16,6 @@ const (
 	WriteResponseEncodingID uint32 = 676
 )
 
-// Status codes used by these services, from the OPC Foundation list.
-const (
-	StatusBadAttributeIDInvalid StatusCode = 0x80350000
-	StatusBadIndexRangeInvalid  StatusCode = 0x80360000
-	StatusBadInvalidArgument    StatusCode = 0x80AB0000
-	StatusBadTimeout            StatusCode = 0x800A0000
-	StatusBadDataTypeIDUnknown  StatusCode = 0x80110000
-)
-
 // TimestampsToReturn values from OPC 10000-4 Table 180.
 type TimestampsToReturn int32
 

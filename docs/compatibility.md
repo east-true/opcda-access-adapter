@@ -425,6 +425,7 @@ observation rather than used to change source semantics.
 | Absent source timestamp | `timestampPresent` false with a zero timestamp | Presence is an independent bit; no timestamp is synthesized |
 | Scalar VARTYPE outside the supported set | the exact raw VARTYPE | Explicit `UNSUPPORTED_VARTYPE`; never coerced or narrowed |
 | Vendor-specific disconnect HRESULT | the exact operation and HRESULT from `lastError` | **Not recognized as a disconnect.** Per ADR-0005 the adapter does not guess: an unrecognized HRESULT stays a source error, so the runtime keeps reporting `connected` and does not reconnect until the process restarts. Recording the exact HRESULT is what justifies adding it. |
+| A per-item HRESULT other than `OPC_E_BADRIGHTS` or `OPC_E_UNKNOWNITEMID` | the exact HRESULT, the operation, and the UA status the client saw | All thirteen rows of Part 8 Tables A.4 and A.5 are bound, but only those two have been observed from a real server. The other eleven are transcribed from the specification with values checked against `opcerror.h`; seeing one confirms a row rather than adding it. |
 | `AppID`/`RunAs` that refuses `NT AUTHORITY\LocalService` | the exact activation HRESULT and the DCOM event | Setup never edits COM/DCOM or firewall permissions; run the adapter in the foreground under an account the vendor policy permits |
 
 Adding a row to the matrix requires an executed result on that server. Do not

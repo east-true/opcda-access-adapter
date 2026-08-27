@@ -153,11 +153,19 @@ release-promotion gate.
   32-bit and 24/48/24/40 on 64-bit — and those run on the Windows CI. Each was
   recomputed by hand from the IDL field types and matches.
 
-  The `opcerror.h` comparison closes a gap this project recorded as open: OPC
-  10000-8 Tables A.4 and A.5 bind only the two DA error codes actually observed,
-  because the rest needed "a verifiable source such as opcerror.h". That source
-  is now pinned and read, so adding a row is a matter of deciding which codes to
-  bind rather than of finding their values.
+  The `opcerror.h` comparison closed a gap this project had recorded as open:
+  OPC 10000-8 Tables A.4 and A.5 used to bind only the two DA error codes
+  actually observed, because the rest needed "a verifiable source such as
+  opcerror.h". Every row of both tables is now bound, with each OPC value
+  checked against `opcerror.h` and each Windows value against
+  `golang.org/x/sys/windows`, and the tables themselves re-read from the OPC
+  Foundation's published Part 8 export rather than retyped.
+
+  What remains open is narrower and is a testing gap, not a transcription one:
+  only `OPC_E_BADRIGHTS` and `OPC_E_UNKNOWNITEMID` have been observed coming out
+  of a real DA server. The other eleven rows are believed correct on the
+  strength of the specification and the header, and no server has been made to
+  produce them.
 
 - The local KVM/libvirt destructive-validation gate is paused. The dedicated
   `opcda-destructive-review` VM and all of its dedicated host resources were

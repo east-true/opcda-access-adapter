@@ -200,18 +200,48 @@ func QualityVendorBits(raw uint16) uint8 {
 	return uint8(raw >> qualityVendorShift)
 }
 
-// OPC DA error codes this project has observed against a real server. Only
-// these two are bound to numeric values; every other row of OPC 10000-8
-// Tables A.4 and A.5 needs its DA constant confirmed against the OPC DA
-// specification before it is added, and until then falls into the "Others" row.
+// The DA error codes OPC 10000-8 Tables A.4 and A.5 name. The OPC ones are
+// transcribed from opcerror.h and the rest are Windows COM codes, both taken
+// at the commit ADR-0006 pins for the validation fixture and checked by
+// scripts/spec-check/check.py.
+//
+// The tables spell the OPC codes inconsistently — Table A.4 writes
+// OPC_E_BADRIGHTS where Table A.5 writes E_BADRIGHTS for the same code, and
+// both write E_INVALIDITEMID for OPC_E_INVALIDITEMID. The names below are the
+// header's.
 const (
 	OPCEBadRights     opcda.HRESULT = -1073479674 // 0xC0040006
 	OPCEUnknownItemID opcda.HRESULT = -1073479673 // 0xC0040007
+	OPCEInvalidHandle opcda.HRESULT = -1073479679 // 0xC0040001
+	OPCEBadType       opcda.HRESULT = -1073479676 // 0xC0040004
+	OPCEInvalidItemID opcda.HRESULT = -1073479672 // 0xC0040008
+	OPCERange         opcda.HRESULT = -1073479669 // 0xC004000B
+	OPCEInvalidPID    opcda.HRESULT = -1073479165 // 0xC0040203
+	OPCENotSupported  opcda.HRESULT = -1073478650 // 0xC0040406
+	OPCSClamp         opcda.HRESULT = 262158      // 0x0004000E
+)
+
+// Windows COM codes the same tables name. Their values come from
+// golang.org/x/sys/windows, which is generated from the Windows SDK headers and
+// is already a dependency of this module; mapping_windows_test.go asserts them
+// against it, since that package builds only on Windows and this one builds
+// everywhere.
+const (
+	EOutOfMemory      opcda.HRESULT = -2147024882 // 0x8007000E
+	EAccessDenied     opcda.HRESULT = -2147024891 // 0x80070005
+	DispETypeMismatch opcda.HRESULT = -2147352571 // 0x80020005
+	DispEOverflow     opcda.HRESULT = -2147352566 // 0x8002000A
 )
 
 // StatusCodeForReadError maps a per-item DA Read HRESULT onto a UA status code
 // following OPC 10000-8 Table A.4. A successful HRESULT is not an error and
 // maps to Good; the quality field carries the data condition instead.
+//
+// Only OPC_E_BADRIGHTS and OPC_E_UNKNOWNITEMID have been observed against a
+// real server; the rest are transcribed and untested, which docs/compatibility.md
+// records. Transcribing them is still better than leaving them in the "Others"
+// row, because that row reports Bad_UnexpectedError for a condition the table
+// gives a precise answer for.
 func StatusCodeForReadError(hr opcda.HRESULT) StatusCode {
 	if hr.Succeeded() {
 		return StatusGood
@@ -219,8 +249,19 @@ func StatusCodeForReadError(hr opcda.HRESULT) StatusCode {
 	switch hr {
 	case OPCEBadRights:
 		return StatusBadNotReadable
-	case OPCEUnknownItemID:
+	case EOutOfMemory:
+		return StatusBadOutOfMemory
+	case OPCEInvalidHandle, OPCEUnknownItemID:
 		return StatusBadNodeIdUnknown
+	case OPCEInvalidItemID:
+		return StatusBadNodeIdInvalid
+	case OPCEInvalidPID:
+		// Table A.4 gives this row Bad_AttributeIdInvalid, where Table A.5
+		// gives the same code Bad_NodeIdInvalid. The asymmetry is the tables';
+		// each direction follows its own.
+		return StatusBadAttributeIDInvalid
+	case EAccessDenied:
+		return StatusBadOutOfService
 	default:
 		return StatusBadUnexpectedError
 	}
@@ -228,15 +269,33 @@ func StatusCodeForReadError(hr opcda.HRESULT) StatusCode {
 
 // StatusCodeForWriteError maps a per-item DA Write HRESULT onto a UA status
 // code following OPC 10000-8 Table A.5.
+//
+// The same caveat applies: only OPC_E_BADRIGHTS and OPC_E_UNKNOWNITEMID have
+// been observed against a real server.
 func StatusCodeForWriteError(hr opcda.HRESULT) StatusCode {
+	// OPC_S_CLAMP is a success code, so it is answered before the general
+	// success case: the value was written, but not the one that was asked for.
+	if hr == OPCSClamp {
+		return StatusGoodClamped
+	}
 	if hr.Succeeded() {
 		return StatusGood
 	}
 	switch hr {
 	case OPCEBadRights:
 		return StatusBadNotWritable
-	case OPCEUnknownItemID:
+	case DispETypeMismatch, OPCEBadType:
+		return StatusBadTypeMismatch
+	case OPCERange, DispEOverflow:
+		return StatusBadOutOfRange
+	case EOutOfMemory:
+		return StatusBadOutOfMemory
+	case OPCEInvalidHandle, OPCEUnknownItemID:
 		return StatusBadNodeIdUnknown
+	case OPCEInvalidItemID, OPCEInvalidPID:
+		return StatusBadNodeIdInvalid
+	case OPCENotSupported:
+		return StatusBadWriteNotSupported
 	default:
 		return StatusBadUnexpectedError
 	}
