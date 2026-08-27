@@ -1340,9 +1340,18 @@ try {
     Assert-True ($serverAfter.Handles -lt 2048 -and $serverHandleDelta -lt 128) 'test server handle growth exceeded the validation bound'
     Assert-True ($serverAfter.PrivateBytes -lt 536870912 -and $serverPrivateDelta -lt 67108864) 'test server private-byte growth exceeded the validation bound'
 
+    # The adapter logs through log/slog's default handler, which writes
+    # key=value text, not JSON. Checking only for the JSON shapes would miss a
+    # leak in the format the adapter actually uses, so both are checked. The
+    # adapter's ten log messages contain no "value" of any kind, so any match
+    # here is a leak rather than a false positive.
+    #
+    # This is evidence from one run on one server. The guarantee itself is
+    # structural and is enforced by TestValueHandlingPackagesDoNotLog: the
+    # packages that handle values do not log at all.
     $valueLogMatches = @(Get-ChildItem -LiteralPath $script:WorkingDirectory -Filter 'adapter-*.log' -File |
-        Select-String -SimpleMatch -Pattern '"value":', '"valueEncoding":')
-    Assert-True ($valueLogMatches.Count -eq 0) 'adapter logs contained a process-value JSON field'
+        Select-String -SimpleMatch -Pattern '"value":', '"valueEncoding":', 'value=', 'valueEncoding=')
+    Assert-True ($valueLogMatches.Count -eq 0) 'adapter logs contained a process value in JSON or key=value form'
 
     $stabilityEnabled = $null -ne $script:StabilityProbeExecutable
     $subscribeEnabled = $null -ne $script:SubscribeProbeExecutable

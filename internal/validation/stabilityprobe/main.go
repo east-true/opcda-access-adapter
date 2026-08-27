@@ -255,7 +255,12 @@ func (p probe) connectedStatus() error {
 }
 
 func (p probe) normal() error {
-	if err := p.connectedStatus(); err != nil {
+	// The HTTP listener binds before the DA source connects, so asserting
+	// "connected" the instant the probe starts depends on the caller having
+	// waited first. It does today, but that is an ordering the probe cannot
+	// see; opcuaprobe made the same assumption and lost the race on a slower
+	// runner. The wait is bounded, so a source that never connects still fails.
+	if err := p.waitConnectedStatus(5 * time.Second); err != nil {
 		return err
 	}
 	if err := p.validatePartialRead(); err != nil {
