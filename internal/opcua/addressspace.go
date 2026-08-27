@@ -164,6 +164,12 @@ type Node struct {
 	// Read teaches it otherwise.
 	DataTypeKnown bool
 
+	// DescriptionOffered records that the source offers Item Description for
+	// this item, which OPC 10000-8 Table A.1 maps to the Description attribute.
+	// It stores whether the property exists, never its text: the description is
+	// read from the source each time a client asks for it.
+	DescriptionOffered bool
+
 	// ItemID is the exact DA ItemID a variable stands for. It is empty for a
 	// folder, because design §35.2 forbids inventing an ItemID for a branch.
 	ItemID opcda.DAItemID

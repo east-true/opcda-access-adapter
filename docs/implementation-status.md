@@ -175,21 +175,21 @@ release-promotion gate.
   decision behind them changes, and that a different vendor's server may produce
   the three this one does not.
 
-- OPC 10000-8 Table A.1, the DA item property mapping, is **half built**.
-  [ADR-0018](adr/0018-da-item-properties.md) decided to build it, and the DA
-  half exists: the adapter queries `IOPCItemProperties` once per connection,
-  reports it as a capability the way it reports Browse, and can discover an
-  item's properties and read their values. `docs/design.md` §11 already listed
-  that interface in the DA baseline, so the code now matches the document.
+- OPC 10000-8 Table A.1, the DA item property mapping, is **implemented**.
+  [ADR-0018](adr/0018-da-item-properties.md) decided to build it, and both
+  halves now exist. The adapter queries `IOPCItemProperties` once per
+  connection and reports it as a capability the way it reports Browse;
+  `EngineeringUnits`, `EURange`, `InstrumentRange`, `TrueState` and `FalseState`
+  appear as properties of a source variable when the source offers the DA
+  properties they are built from, and Item Description answers the `Description`
+  attribute. Values are read live and never cached. `docs/design.md` §11 already
+  listed that interface in the DA baseline, so the code now matches the
+  document.
 
-  The UA half does not exist yet. `EURange`, `InstrumentRange`,
-  `EngineeringUnits`, `TrueState`/`FalseState` and the item `Description` are
-  still absent from the UA address space, so a client that wants engineering
-  units or a range to render a faceplate still finds neither. Only the table's
-  Access Rights row is satisfied, by another route — `AddItems` reports access
-  rights directly. Nothing about the gap is a conformance defect: source nodes
-  are `BaseDataVariableType`, which makes none of those properties mandatory,
-  and a read of a missing attribute answers `Bad_AttributeIdInvalid`.
+  What is deliberately left undecided is whether a node whose EU range is known
+  should be promoted from `BaseDataVariableType` to `AnalogItemType`. `EURange`
+  is reachable either way, and promotion means claiming a type whose mandatory
+  properties must then always exist.
 
 - The local KVM/libvirt destructive-validation gate is paused. The dedicated
   `opcda-destructive-review` VM and all of its dedicated host resources were

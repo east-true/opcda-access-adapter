@@ -533,6 +533,13 @@ func (s *BrowseService) ensurePopulated(ctx context.Context, id NodeID, now time
 	if id.Equal(s.space.SourceFolderID()) {
 		return s.populator.EnsureBranch(ctx, nil, now)
 	}
+	// Browsing a source variable is a client asking what it has, and OPC
+	// 10000-8 Table A.1 properties are part of that answer. They are discovered
+	// here rather than when the item node is created, so an item nobody browses
+	// costs no call to the source.
+	if itemID, ok := s.space.VariableItemID(id); ok {
+		return s.populator.EnsureItemProperties(ctx, itemID, now)
+	}
 	path, ok := PathForNode(id)
 	if !ok {
 		return nil

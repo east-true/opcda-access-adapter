@@ -386,11 +386,36 @@ func (s *DataAccessService) Read(ctx context.Context, request ReadRequest, now t
 	itemIDs := make([]opcda.DAItemID, 0, len(request.NodesToRead))
 	positions := make([]int, 0, len(request.NodesToRead))
 	readNodes := make(map[int]NodeID, len(request.NodesToRead))
+	// Table A.1 property reads are answered one at a time. Each names its own
+	// item and its own DA property identifiers, and there is no DA call that
+	// reads properties of several items at once.
+	type propertyTarget struct {
+		index   int
+		itemID  opcda.DAItemID
+		binding itemPropertyBinding
+	}
+	var propertyTargets []propertyTarget
 
 	for index, target := range request.NodesToRead {
 		// Table 167: indexRange is for arrays, and this adapter exposes none.
 		if target.IndexRange != "" {
 			results[index] = failedDataValue(StatusBadIndexRangeInvalid)
+			continue
+		}
+		// A property node identifier is self-describing in the same way an
+		// item's is: it carries the exact ItemID and the property it stands
+		// for, so it can be read without having been browsed.
+		if itemID, binding, ok := ItemPropertyForNode(target.NodeID); ok {
+			if target.AttributeID != AttributeValue {
+				node, known := s.space.Node(target.NodeID)
+				if !known {
+					results[index] = failedDataValue(StatusBadNodeIdUnknown)
+					continue
+				}
+				results[index] = s.readAttribute(ctx, node, target.AttributeID, now, request.TimestampsToReturn)
+				continue
+			}
+			propertyTargets = append(propertyTargets, propertyTarget{index: index, itemID: itemID, binding: binding})
 			continue
 		}
 		node, ok := s.space.Node(target.NodeID)
@@ -404,7 +429,7 @@ func (s *DataAccessService) Read(ctx context.Context, request ReadRequest, now t
 			}
 		}
 		if target.AttributeID != AttributeValue {
-			results[index] = s.readAttribute(node, target.AttributeID, now, request.TimestampsToReturn)
+			results[index] = s.readAttribute(ctx, node, target.AttributeID, now, request.TimestampsToReturn)
 			continue
 		}
 		if node.IsLocalVariable() {
@@ -434,6 +459,9 @@ func (s *DataAccessService) Read(ctx context.Context, request ReadRequest, now t
 
 	if len(itemIDs) > 0 {
 		s.readFromSource(ctx, itemIDs, positions, readNodes, results, request.TimestampsToReturn, now)
+	}
+	for _, target := range propertyTargets {
+		results[target.index] = s.readItemProperty(ctx, target.itemID, target.binding, request.TimestampsToReturn, now)
 	}
 	return ReadResponse{
 		Header: ResponseHeader{
@@ -566,7 +594,35 @@ func variantForDAValue(value opcda.DAValue) (Variant, bool) {
 }
 
 // readAttribute answers a non-Value attribute from the address space.
-func (s *DataAccessService) readAttribute(node *Node, attributeID uint32, now time.Time, timestamps TimestampsToReturn) DataValue {
+// readItemProperty answers one OPC 10000-8 Table A.1 property by reading the DA
+// properties it is built from, every time it is asked. Nothing is cached: a
+// property this adapter remembered would be a value it could still be serving
+// after the source stopped reporting it.
+func (s *DataAccessService) readItemProperty(ctx context.Context, itemID opcda.DAItemID, binding itemPropertyBinding, timestamps TimestampsToReturn, now time.Time) DataValue {
+	values, err := s.runtime.ItemProperties(ctx, opcda.ItemPropertiesRequest{
+		ItemID: string(itemID), Properties: binding.Sources,
+	})
+	if err != nil {
+		return failedDataValue(statusForRuntimeError(err))
+	}
+	if len(values) != len(binding.Sources) {
+		return failedDataValue(StatusBadInternalError)
+	}
+	variant, status := binding.build(s.space, values)
+	if status != StatusGood {
+		return failedDataValue(status)
+	}
+	// A property is metadata the adapter read now, not a process value with a
+	// source timestamp. The server timestamp is this server's own time for the
+	// operation, and no source timestamp is invented for it.
+	value := DataValue{Value: variant, Status: StatusGood}
+	if timestamps == TimestampsServer || timestamps == TimestampsBoth {
+		value.ServerTimestamp = now
+	}
+	return value
+}
+
+func (s *DataAccessService) readAttribute(ctx context.Context, node *Node, attributeID uint32, now time.Time, timestamps TimestampsToReturn) DataValue {
 	var variant Variant
 	switch attributeID {
 	case AttributeNodeID:
@@ -592,6 +648,30 @@ func (s *DataAccessService) readAttribute(node *Node, attributeID uint32, now ti
 			return failedDataValue(StatusBadAttributeIDInvalid)
 		}
 		variant = Variant{Type: BuiltInByte, Value: node.AccessLevel}
+	case AttributeDescription:
+		// Table A.1 maps Item Description onto this attribute. The node knows
+		// only that the source offers it; the text is read now, so a
+		// description the source has changed is the one a client sees.
+		if !node.DescriptionOffered || node.ItemID == "" {
+			return failedDataValue(StatusBadAttributeIDInvalid)
+		}
+		values, err := s.runtime.ItemProperties(ctx, opcda.ItemPropertiesRequest{
+			ItemID: string(node.ItemID), Properties: []opcda.PropertyID{opcda.PropertyDescription},
+		})
+		if err != nil {
+			return failedDataValue(statusForRuntimeError(err))
+		}
+		if len(values) != 1 {
+			return failedDataValue(StatusBadInternalError)
+		}
+		if status := propertyStatus(values[0]); status != StatusGood {
+			return failedDataValue(status)
+		}
+		text, ok := values[0].Value.(string)
+		if !ok {
+			return failedDataValue(StatusBadTypeMismatch)
+		}
+		variant = Variant{Type: BuiltInLocalizedText, Value: LocalizedText{Text: text}}
 	case AttributeHistorizing:
 		if node.Class != NodeClassVariable {
 			return failedDataValue(StatusBadAttributeIDInvalid)
