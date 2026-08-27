@@ -71,7 +71,12 @@ runtime directly. Each architecture passed:
 - no process value written to any probe output.
 
 This is fixture evidence for the OPC Foundation DA 2.05a test server, not a
-broad vendor-compatibility claim. A vendor server that rejects connection
+broad vendor-compatibility claim. Whether to test a second, third-party server
+at all is an open decision recorded in
+[ADR-0017](adr/0017-third-party-vendor-da-fixture.md): the licence of the
+candidate examined permits it, but the vendor's own distribution no longer
+exists and the surviving copy is behind an account, so obtaining one is a
+supply-chain choice rather than a technical step. A vendor server that rejects connection
 points, revises rates differently, or reports Quality or timestamps
 differently has not been tested.
 

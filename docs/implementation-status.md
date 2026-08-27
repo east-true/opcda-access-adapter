@@ -594,3 +594,4 @@ release-promotion gate.
 - [ADR-0014: gRPC Subscribe server streaming](adr/0014-grpc-subscribe-streaming.md)
 - [ADR-0015: probe the Subscribe capability](adr/0015-subscribe-capability-probe.md)
 - [ADR-0016: OPC UA frontend scope and the DA mapping foundation](adr/0016-opcua-frontend-scope-and-mapping.md)
+- [ADR-0017: a third-party vendor DA server for validation](adr/0017-third-party-vendor-da-fixture.md) — **proposed, undecided**
