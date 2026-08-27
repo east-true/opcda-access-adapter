@@ -105,8 +105,22 @@ var dataCallbackVTable = &iopcDataCallbackVTable{
 }
 
 // A DA server registered as an in-process handler can invoke the callback from
-// a thread the adapter does not own, so the registry and every structure it
-// exposes to the callback are synchronised.
+// a thread the adapter does not own, so everything the callback reaches must be
+// safe for that. Two different guarantees provide it, and confusing them is how
+// a later change breaks one:
+//
+//   - Synchronised: this registry, the pending set behind its own mutex, and
+//     the rejected counter, which is atomic. These are written while the
+//     callback may be running.
+//   - Published then immutable: the subscription's registrations map, group
+//     client handle, item count, BSTR bound and info. Every one is written
+//     before IConnectionPoint::Advise is called, which is the moment the server
+//     can first invoke the callback, and none is written afterwards. They carry
+//     no lock because they need none.
+//
+// Adding a write to anything in the second group — supporting items added to a
+// live subscription, say — makes it a concurrent map write against the callback
+// thread. Go reports that as a fatal error no recover can catch.
 var (
 	callbackRegistryMu sync.Mutex
 	callbackRegistry   = make(map[uint64]*daSubscription)
