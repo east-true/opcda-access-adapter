@@ -134,8 +134,13 @@ func (s *scriptedSource) populate() {
 		item("Types.Float", opcda.VTR4, float32(1.5), good, true, readWrite),
 		item("Types.Double", opcda.VTR8, float64(2.25), good, true, readWrite),
 		item("Types.String", opcda.VTBSTR, "hello", good, true, readWrite),
-		// A VT_DATE carries an OLE automation date, a float64 count of days.
-		item("Types.Date", opcda.VTDate, float64(45365.5), good, true, readWrite),
+		// VT_DATE and VT_DECIMAL are deliberately absent. Table A.2 maps both,
+		// and the mapping is tested directly, but the DA core decodes neither:
+		// a real source reporting one gets UNSUPPORTED_VARTYPE before the UA
+		// layer ever sees a value. Scripting one here would have this suite
+		// report a client check passing over a path no source can reach, which
+		// is the one thing a conformance run must not do.
+		item("Types.Int32Again", opcda.VTI4, int32(-70001), good, true, readWrite),
 	)
 
 	// Raw DA qualities, so a client sees Table A.3 applied rather than a

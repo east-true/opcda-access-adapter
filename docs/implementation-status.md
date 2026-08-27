@@ -122,42 +122,37 @@ release-promotion gate.
 
 ## In progress
 
-- OPC UA session rebinding and listener shutdown are on
-  `fix/opcua-session-rebinding`. Continuing the audit from coverage data found
-  three service paths the Go suite had never executed — `handleCloseChannel`,
-  `Shutdown` and `writeServiceFault` — and two defects among them:
+- A VARTYPE type-agreement fix is on `fix/vartype-agreement`. Continuing the
+  audit into the weakly covered frontend paths found that the adapter answered
+  two questions about the same value from different inputs, and they disagreed.
 
-  1. **A session could not move to a new SecureChannel.** OPC 10000-4 5.7.3
-     says "Subsequent calls to ActivateSession may be associated with different
-     SecureChannels", and 5.7.2 has a client whose connection failed open a new
-     one and "call ActivateSession again". Every request was checked against
-     the channel that *created* the session, so that was refused with
-     `Bad_SecureChannelIdInvalid`: a session survived its connection, as the
-     clause intends, and then could never be used again — it held its DA groups
-     until it timed out while the client built a replacement. asyncua attempts
-     this on every reconnect. Root cause: one field stored two different facts.
-     They are now `CreatedOnChannel` (fixed, decides the first activation) and
-     `BoundChannel` (what requests are checked against, which ActivateSession
-     may move), with the clause's security checks applied to a move.
-  2. **`Shutdown` ignored its context and released nothing.** It closed the
-     socket and returned at once, while the HTTP and gRPC frontends really
-     drain. Root cause: the listener had no completion signal — `Serve` joined
-     its goroutines privately — and did not track the goroutines holding a
-     `Publish` at all. It now tracks everything it starts, raises a signal when
-     `Serve` has joined them, and waits on that or the caller's context. It also
-     ends its sessions, so releasing the DA groups no longer depends on the
-     application stopping the DA runtime immediately afterwards.
+  `decodeVariant` reads VT_INT and VT_ERROR out of the same storage as VT_I4 and
+  VT_UINT out of the same storage as VT_UI4, so all three reach the UA layer as
+  an `int32` or a `uint32`. OPC 10000-8 Table A.2 has no row for any of them, so
+  a node consulting the table alone **declared the abstract base type while
+  delivering an Int32**. The write check had the same split and refused an
+  `Int32` written to a VT_INT item as a type mismatch the DA core would never
+  have raised, since `validateWriteValue` groups those VARTYPEs the same way the
+  decoder does.
 
-  Checked and sound in the same pass: the DA runtime's concurrency design
-  (command channel to a single STA thread), the gRPC and HTTP frontends,
-  `CloseSecureChannel` (including that sending no response matches OPC 10000-6
-  7.1.4), write deadlines, continuation-point bounds, and the per-connection
-  Publish bound.
+  The normalisation is now stated once as `DAVarType.DecodesAs`, beside the
+  decoder it describes, and `DataTypeFor` composes with it. It is not coercion:
+  the adapter reports the type of the value it actually produced. A VARTYPE with
+  no row and no normalisation, such as VT_CY, still has no answer. An earlier
+  test required these three to fail "rather than borrow a similar type's
+  mapping"; that intent is kept where it applies, and the reasoning for
+  overturning it is recorded in the test itself.
 
-  The session-rebinding fixes have tests verified by reverting them. The
-  shutdown release is covered the same way; the waiting half is not covered
-  behaviourally, because `Close` drops every connection and the drain is over in
-  microseconds either way — the wait is there because the signature promises it.
+  VT_DATE and VT_DECIMAL keep their Table A.2 rows and remain **unreachable** —
+  the DA core decodes neither, so a source reporting one gets
+  `UNSUPPORTED_VARTYPE` first. The interop suite no longer scripts a VT_DATE
+  item: it was reporting a client check passing over a path no real source can
+  reach, which a conformance run must not do.
+
+  Also audited and sound in this pass: the gRPC `GracefulStop` (honours its
+  context and falls back to a hard stop), the gRPC Subscribe stream (releases
+  its DA group on any exit through a detached context), and the gRPC scalar
+  encoder against the set the DA core can decode.
 
 - The local KVM/libvirt destructive-validation gate is paused. The dedicated
   `opcda-destructive-review` VM and all of its dedicated host resources were

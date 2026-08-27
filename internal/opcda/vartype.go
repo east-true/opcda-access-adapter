@@ -46,6 +46,33 @@ func (vt DAVarType) IsByRef() bool {
 	return vt&VTByRef != 0
 }
 
+// DecodesAs reports the VARTYPE whose Go representation this one is decoded
+// into. A COM VARIANT carries several types that are the same value in the same
+// storage: VT_INT and VT_ERROR are read as VT_I4's int32, and VT_UINT as
+// VT_UI4's uint32. The decoder therefore hands all of them up as int32 or
+// uint32, and every layer above sees only that.
+//
+// Stating the normalisation here, once, is what stops layers disagreeing about
+// it. The UA frontend answers two questions about a value — what type its node
+// declares, and what type its Variant carries — and it used to derive them
+// separately: the declared type from the raw VARTYPE through OPC 10000-8
+// Table A.2, which has no row for VT_INT, and the Variant from the decoded Go
+// value, which is plainly an int32. A VT_INT item was therefore delivered as an
+// Int32 by a node that declared itself the abstract base type.
+//
+// Everything else maps to itself, so composing with this is a no-op for the
+// types Table A.2 does cover.
+func (vt DAVarType) DecodesAs() DAVarType {
+	switch vt.Base() {
+	case VTInt, VTError:
+		return VTI4
+	case VTUInt:
+		return VTUI4
+	default:
+		return vt.Base()
+	}
+}
+
 func (vt DAVarType) Name() string {
 	if name, ok := varTypeNames[vt.Base()]; ok {
 		return name

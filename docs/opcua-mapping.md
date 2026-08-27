@@ -50,6 +50,41 @@ reported as **unmapped** and fail explicitly. The DA core happens to decode
 `VT_INT` and `VT_ERROR` as `int32`, but borrowing the `VT_I4` row for them would
 be an invention, not a mapping.
 
+### A node must not declare one type and deliver another
+
+Two questions are asked about every value — what type its node declares, and
+what type its `Variant` carries — and they used to be answered from different
+inputs: the declared type from the raw VARTYPE through Table A.2, the `Variant`
+from the Go value the DA core decoded. They can disagree, and they did.
+
+`decodeVariant` reads **VT_INT and VT_ERROR out of the same storage as VT_I4**,
+and **VT_UINT out of the same storage as VT_UI4**, so all three arrive as an
+`int32` or a `uint32`. Table A.2 has no row for any of them. A VT_INT item was
+therefore **delivered as an `Int32` by a node that declared itself the abstract
+base type** — the server contradicting itself about one value. The write check
+had the same split: it refused an `Int32` written to a VT_INT item as a type
+mismatch the DA core would never have raised, since `validateWriteValue` groups
+those VARTYPEs exactly as the decoder does.
+
+The normalisation is now stated once, as `DAVarType.DecodesAs`, next to the
+decoder it describes, and `DataTypeFor` composes with it. That is not coercion:
+the adapter is not deciding VT_INT resembles VT_I4, it is reporting the type of
+the value it actually produced. A VARTYPE with no Table A.2 row and no
+normalisation, such as VT_CY, still has no answer.
+
+An earlier test required VT_INT, VT_UINT and VT_ERROR to fail "rather than
+borrow a similar type's mapping". That intent is kept where it applies — nothing
+is widened or narrowed, and a mismatched width is still refused — but the three
+VARTYPEs are not borrowing anything: the core already read them into the type
+being reported.
+
+**VT_DATE and VT_DECIMAL keep their Table A.2 rows and are unreachable.** The DA
+core decodes neither, so a source reporting one gets `UNSUPPORTED_VARTYPE`
+before the UA layer sees a value. The rows are a faithful transcription and stay;
+the limitation is the decoder's. The interop suite deliberately does **not**
+script a VT_DATE item, because a client check passing over a path no source can
+reach is the one thing a conformance run must not report.
+
 ## Quality
 
 A DA quality is 16 bits. Part 8 A.3.2.3 defines the lower byte as `QQSSSSLL`

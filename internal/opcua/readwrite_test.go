@@ -991,3 +991,38 @@ func TestOptionalCapabilitiesMapToServiceUnsupported(t *testing.T) {
 		}
 	}
 }
+
+// The write type check must accept what the DA core accepts. The core reads and
+// writes VT_INT and VT_ERROR through VT_I4's int32 and VT_UINT through
+// VT_UI4's uint32 — validateWriteValue groups them exactly that way — so a
+// client writing an Int32 to a VT_INT item is writing something the source will
+// take. Deriving the check from Table A.2 alone, which has no row for those
+// VARTYPEs, refused the write as a type mismatch the core would never have
+// raised.
+func TestTheWriteTypeCheckAcceptsWhatTheCoreAccepts(t *testing.T) {
+	for _, testCase := range []struct {
+		varType opcda.DAVarType
+		variant Variant
+	}{
+		{opcda.VTInt, Variant{Type: BuiltInInt32, Value: int32(5)}},
+		{opcda.VTError, Variant{Type: BuiltInInt32, Value: int32(5)}},
+		{opcda.VTUInt, Variant{Type: BuiltInUInt32, Value: uint32(5)}},
+		{opcda.VTI4, Variant{Type: BuiltInInt32, Value: int32(5)}},
+		{opcda.VTUI4, Variant{Type: BuiltInUInt32, Value: uint32(5)}},
+	} {
+		t.Run(testCase.varType.Name(), func(t *testing.T) {
+			if !variantMatchesVarType(testCase.variant, testCase.varType) {
+				t.Fatalf("a built-in type %d write to a %s item was refused",
+					testCase.variant.Type, testCase.varType)
+			}
+		})
+	}
+
+	// A width the core would reject is still refused, so this widened nothing.
+	if variantMatchesVarType(Variant{Type: BuiltInInt64, Value: int64(5)}, opcda.VTInt) {
+		t.Fatal("an Int64 was accepted for a VT_INT item")
+	}
+	if variantMatchesVarType(Variant{Type: BuiltInInt32, Value: int32(5)}, opcda.VTCY) {
+		t.Fatal("a VARTYPE the core cannot write was accepted")
+	}
+}
