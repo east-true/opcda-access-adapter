@@ -20,6 +20,8 @@ param(
 
     [string]$OPCUAProbePath,
 
+    [string]$DAErrorProbePath,
+
     [ValidateRange(0, 10)]
     [int]$FailureCycles = 0,
 
@@ -893,6 +895,16 @@ function Test-GRPCWriteEnabledForeground {
         Assert-True ($listeners.Count -eq 1) 'gRPC adapter did not expose exactly one TCP listener'
         Assert-True ($listeners[0].LocalAddress -eq '127.0.0.1' -and [int]$listeners[0].LocalPort -eq $grpcPort) `
             'gRPC adapter listener was reachable beyond IPv4 loopback'
+        # The DA error rows need the same write-enabled adapter, so they are
+        # recorded here rather than by starting a second one. The probe prints
+        # one DA_ERROR_ROW line per row of Tables A.4 and A.5, saying either
+        # which HRESULT this source produced or why the row cannot be reached.
+        if ($null -ne $script:DAErrorProbeExecutable) {
+            Invoke-NativeProcess -FilePath $script:DAErrorProbeExecutable -ArgumentList @(
+                '-address', "127.0.0.1:$grpcPort",
+                '-timeout', '60s'
+            ) -TimeoutSeconds 90
+        }
         Write-Host "GRPC_WRITE_ENABLED_FOREGROUND_PASS arch=$AdapterArch frontend=grpc typedWrite=true sourceDeniedWrite=true subscribeStream=true valuesLogged=false"
     }
     finally {
@@ -944,6 +956,12 @@ $script:OPCUAProbeExecutable = if ([string]::IsNullOrWhiteSpace($OPCUAProbePath)
 }
 else {
     (Resolve-Path -LiteralPath $OPCUAProbePath).Path
+}
+$script:DAErrorProbeExecutable = if ([string]::IsNullOrWhiteSpace($DAErrorProbePath)) {
+    $null
+}
+else {
+    (Resolve-Path -LiteralPath $DAErrorProbePath).Path
 }
 $script:ServerRoot = (Resolve-Path -LiteralPath $ServerDirectory).Path
 $script:WorkingDirectory = Join-Path ([IO.Path]::GetTempPath()) "opcda-adapter-real-da-$AdapterArch-$RunLabel"

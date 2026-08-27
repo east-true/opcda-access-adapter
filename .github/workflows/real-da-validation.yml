@@ -23,6 +23,7 @@ on:
       - internal/validation/grpcprobe/**
       - internal/validation/subscribeprobe/**
       - internal/validation/opcuaprobe/**
+      - internal/validation/daerrorprobe/**
       - api/opcda/**
       - go.mod
       - go.sum
@@ -83,6 +84,7 @@ jobs:
           go build -trimpath -o "_test/grpc-probe-${{ matrix.arch }}.exe" ./internal/validation/grpcprobe
           go build -trimpath -o "_test/subscribe-probe-${{ matrix.arch }}.exe" ./internal/validation/subscribeprobe
           go build -trimpath -o "_test/opcua-probe-${{ matrix.arch }}.exe" ./internal/validation/opcuaprobe
+          go build -trimpath -o "_test/da-error-probe-${{ matrix.arch }}.exe" ./internal/validation/daerrorprobe
 
       - name: Audit, Defender-scan, and build OPC Foundation test server
         shell: pwsh
@@ -107,4 +109,5 @@ jobs:
           -GRPCProbePath "_test/grpc-probe-${{ matrix.arch }}.exe"
           -SubscribeProbePath "_test/subscribe-probe-${{ matrix.arch }}.exe"
           -OPCUAProbePath "_test/opcua-probe-${{ matrix.arch }}.exe"
+          -DAErrorProbePath "_test/da-error-probe-${{ matrix.arch }}.exe"
           -FailureCycles 3
