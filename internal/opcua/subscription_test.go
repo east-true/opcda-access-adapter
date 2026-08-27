@@ -1111,3 +1111,13 @@ func TestPublishSendsAKeepAliveAfterTheKeepAliveCount(t *testing.T) {
 		t.Fatalf("keep-alive subscription = %d, want %d", response.SubscriptionID, id)
 	}
 }
+
+// This source offers no OPC DA item properties. PROPERTIES_UNSUPPORTED is the
+// same answer a real source without IOPCItemProperties gives.
+func (*subscribingRuntime) AvailableItemProperties(context.Context, string) ([]opcda.AvailableProperty, error) {
+	return nil, opcda.NewAdapterError(opcda.CodePropertiesUnsupported, "this source offers no item properties")
+}
+
+func (*subscribingRuntime) ItemProperties(context.Context, opcda.ItemPropertiesRequest) ([]opcda.ItemPropertyValue, error) {
+	return nil, opcda.NewAdapterError(opcda.CodePropertiesUnsupported, "this source offers no item properties")
+}

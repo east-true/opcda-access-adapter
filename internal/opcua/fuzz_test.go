@@ -563,3 +563,13 @@ func (fuzzRuntime) Subscribe(context.Context, opcda.SubscribeRequest) (opcda.Sub
 
 func (fuzzRuntime) Unsubscribe(context.Context, opcda.SubscriptionID) error { return nil }
 func (fuzzRuntime) Shutdown(context.Context) error                          { return nil }
+
+// This source offers no OPC DA item properties. PROPERTIES_UNSUPPORTED is the
+// same answer a real source without IOPCItemProperties gives.
+func (fuzzRuntime) AvailableItemProperties(context.Context, string) ([]opcda.AvailableProperty, error) {
+	return nil, opcda.NewAdapterError(opcda.CodePropertiesUnsupported, "this source offers no item properties")
+}
+
+func (fuzzRuntime) ItemProperties(context.Context, opcda.ItemPropertiesRequest) ([]opcda.ItemPropertyValue, error) {
+	return nil, opcda.NewAdapterError(opcda.CodePropertiesUnsupported, "this source offers no item properties")
+}

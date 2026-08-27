@@ -84,6 +84,7 @@ configuration version 2; version 1 HTTP files remain readable.
 | `OPCDA_MAX_REGISTERED_ITEMS` | `1024` | lazy item-registration cache bound |
 | `OPCDA_MAX_ITEM_ID_BYTES` | `1024` | exact ItemID UTF-8 byte bound |
 | `OPCDA_MAX_BSTR_CODE_UNITS` | `65536` | source/request BSTR UTF-16 bound |
+| `OPCDA_MAX_ITEM_PROPERTIES` | `64` | DA item properties per item bound |
 
 gRPC-specific listener and transport bounds are documented in the
 [gRPC API reference](grpc-api.md). Only one frontend listener is selected per

@@ -234,3 +234,13 @@ func contains(value, required string) bool {
 	}
 	return false
 }
+
+// This source offers no OPC DA item properties. PROPERTIES_UNSUPPORTED is the
+// same answer a real source without IOPCItemProperties gives.
+func (statusRuntime) AvailableItemProperties(context.Context, string) ([]opcda.AvailableProperty, error) {
+	return nil, opcda.NewAdapterError(opcda.CodePropertiesUnsupported, "this source offers no item properties")
+}
+
+func (statusRuntime) ItemProperties(context.Context, opcda.ItemPropertiesRequest) ([]opcda.ItemPropertyValue, error) {
+	return nil, opcda.NewAdapterError(opcda.CodePropertiesUnsupported, "this source offers no item properties")
+}

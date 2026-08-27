@@ -225,10 +225,12 @@ properties: Access Rights (5) onto the `AccessLevel` attribute, Item Description
 High/Low Instrument Range (104/105) onto `InstrumentRange`, EU Units (100) onto
 `EngineeringUnits`, and Close/Open Label (106/107) onto `TrueState`/`FalseState`.
 
-**None of it is implemented, and the adapter does not call `IOPCItemProperties`
-at all.** `docs/design.md` §11 lists that interface in the DA baseline; that is
-a statement about the protocol version targeted, not about what the adapter
-calls today.
+**The DA half is implemented and the UA half is not yet.**
+[ADR-0018](adr/0018-da-item-properties.md) decided to build this. The adapter
+now queries `IOPCItemProperties` once per connection and can discover and read
+an item's properties, reporting the interface as a capability the way it reports
+Browse. What does not exist yet is this table: nothing from the source reaches
+the UA address space as a property or as the `Description` attribute.
 
 Only the first row is satisfied, and by another route: access rights come from
 `OPCITEMRESULT.dwAccessRights` in `AddItems`, which the adapter already reads,

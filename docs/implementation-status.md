@@ -175,17 +175,21 @@ release-promotion gate.
   decision behind them changes, and that a different vendor's server may produce
   the three this one does not.
 
-- OPC 10000-8 Table A.1, the DA item property mapping, is not implemented. The
-  adapter never calls `IOPCItemProperties`, so `EURange`, `InstrumentRange`,
+- OPC 10000-8 Table A.1, the DA item property mapping, is **half built**.
+  [ADR-0018](adr/0018-da-item-properties.md) decided to build it, and the DA
+  half exists: the adapter queries `IOPCItemProperties` once per connection,
+  reports it as a capability the way it reports Browse, and can discover an
+  item's properties and read their values. `docs/design.md` §11 already listed
+  that interface in the DA baseline, so the code now matches the document.
+
+  The UA half does not exist yet. `EURange`, `InstrumentRange`,
   `EngineeringUnits`, `TrueState`/`FalseState` and the item `Description` are
-  absent from the UA address space. Only the table's Access Rights row is
-  satisfied, and by another route — `AddItems` reports access rights directly.
-  Nothing about this is a conformance defect: source nodes are
-  `BaseDataVariableType`, which makes none of those properties mandatory, and a
-  read of a missing attribute answers `Bad_AttributeIdInvalid`. It is a missing
-  feature, recorded here because `docs/design.md` §11 lists
-  `IOPCItemProperties` in the DA baseline and that could be read as a claim
-  that it is used. See docs/opcua-mapping.md.
+  still absent from the UA address space, so a client that wants engineering
+  units or a range to render a faceplate still finds neither. Only the table's
+  Access Rights row is satisfied, by another route — `AddItems` reports access
+  rights directly. Nothing about the gap is a conformance defect: source nodes
+  are `BaseDataVariableType`, which makes none of those properties mandatory,
+  and a read of a missing attribute answers `Bad_AttributeIdInvalid`.
 
 - The local KVM/libvirt destructive-validation gate is paused. The dedicated
   `opcda-destructive-review` VM and all of its dedicated host resources were
