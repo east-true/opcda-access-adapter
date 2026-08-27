@@ -1,7 +1,6 @@
 # ADR-0018: reading OPC DA item properties
 
-- Status: **Accepted** — the DA layer is implemented; the UA mapping follows in
-  a second change
+- Status: **Accepted and implemented**, DA layer and UA mapping both
 - Date: 2026-08-27
 - Relates to: [ADR-0016](0016-opcua-frontend-scope-and-mapping.md),
   [ADR-0001](0001-v0-bounds-and-runtime-defaults.md)

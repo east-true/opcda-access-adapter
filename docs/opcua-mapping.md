@@ -217,39 +217,76 @@ Part 8 export and fails if any row drifts from them, and it checks each numeric
 value against `opcerror.h` — for the four Windows codes, against
 `golang.org/x/sys/windows`.
 
-## Item properties: Table A.1 is not implemented
+## Item properties: Table A.1
 
 Part 8 Table A.1 maps the OPC COM DA item properties onto UA attributes and
-properties: Access Rights (5) onto the `AccessLevel` attribute, Item Description
-(101) onto `Description`, High/Low EU (102/103) onto an `EURange` property,
-High/Low Instrument Range (104/105) onto `InstrumentRange`, EU Units (100) onto
-`EngineeringUnits`, and Close/Open Label (106/107) onto `TrueState`/`FalseState`.
+properties. All ten rows are now implemented; they do not all become property
+nodes, because the table does not ask them to.
 
-**The DA half is implemented and the UA half is not yet.**
-[ADR-0018](adr/0018-da-item-properties.md) decided to build this. The adapter
-now queries `IOPCItemProperties` once per connection and can discover and read
-an item's properties, reporting the interface as a capability the way it reports
-Browse. What does not exist yet is this table: nothing from the source reaches
-the UA address space as a property or as the `Description` attribute.
+| DA property | UA target | UA type |
+|---|---|---|
+| Access Rights (5) | `AccessLevel` attribute | Byte |
+| Item Description (101) | `Description` attribute | LocalizedText |
+| EU Units (100) | `EngineeringUnits` property | String |
+| High EU (102) + Low EU (103) | `EURange` property | `Range` |
+| High IR (104) + Low IR (105) | `InstrumentRange` property | `Range` |
+| Close Label (106) | `TrueState` property | String |
+| Open Label (107) | `FalseState` property | String |
 
-Only the first row is satisfied, and by another route: access rights come from
-`OPCITEMRESULT.dwAccessRights` in `AddItems`, which the adapter already reads,
-so `AccessLevel` is correct without Table A.1.
+**Access Rights is satisfied from a better source than the table names.**
+`OPCITEMRESULT.dwAccessRights` from `AddItems` already carries it, so the value
+is known without asking for the property, and nothing changed there.
 
-Everything else is simply absent. A source node is a `BaseDataVariableType`, not
-an `AnalogItemType`, so `EURange` and `EngineeringUnits` are not mandatory on it
-and their absence is legal rather than a conformance defect — the adapter does
-not claim a type whose properties it cannot supply. A client asking to read
-`Description` on a source node gets `Bad_AttributeIdInvalid`, which is the
-correct answer for an attribute the node does not have, not an error being
-swallowed.
+**Two rows share one target twice.** High and Low EU both map to `EURange`, and
+the two Instrument Range rows both map to `InstrumentRange`. A single property
+cannot hold two Doubles as a scalar, so each pair becomes the UA `Range`
+structure those BrowseNames are defined to carry — which is also what a client
+reading `EURange` expects to decode. A Range is claimed only when the source
+offers **both** ends: half a range is not a range, and supplying the other end
+would be inventing a number the source never gave.
 
-The cost is real for a client that wants engineering units or a range to render
-a faceplate: it will find neither, and must get them from elsewhere. Closing
-this means implementing `IOPCItemProperties` — a further COM interface, its
-vtable, and a property read path — and deciding whether a node whose EU range is
-known should then be promoted to `AnalogItemType`. That is a feature, not a
-transcription, and it is not planned for v0.
+**`EngineeringUnits`, `TrueState` and `FalseState` are String.** On the standard
+`AnalogItemType` and `TwoStateDiscreteType` those carry `EUInformation` and
+`LocalizedText` instead. Table A.1 says String, and the DA source supplies a
+string; the table is followed rather than improved on. A client expecting
+`EUInformation` will not find one.
+
+### Nothing is cached, and nothing is asked for early
+
+A property node's value is read from the source **every time a client asks**.
+The address space stores which properties an item has — that is structure — and
+never what they say. A property this adapter remembered would be one it could
+still be serving after the source stopped reporting it.
+
+The same applies to the `Description` attribute: the node records only that the
+source offers Item Description, and the text is read when it is asked for. An
+item whose source offers no description keeps answering `Bad_AttributeIdInvalid`,
+which is the correct answer for an attribute a node does not have.
+
+Which properties an item has is discovered when a client **browses** that item,
+which is the moment it asks what the item has. An item nobody browses costs no
+call to the source, and concurrent browses of the same item wait on one call
+rather than queueing several identical ones on the DA thread.
+
+A per-property HRESULT is a result rather than a failure, so it maps through
+Table A.4 like every other read error: a source that refuses one property
+answers `Bad_NotReadable` for that property alone.
+
+### A source without the interface
+
+`IOPCItemProperties` is optional. A source that does not implement it is working
+correctly and simply has no properties to offer: `capabilities.properties`
+reports `unsupported`, browsing its items succeeds with the references they do
+have, and no property node is created. The answer is recorded once rather than
+re-asked for every browse of every item.
+
+### Not decided
+
+Whether a node whose EU range is known should be promoted from
+`BaseDataVariableType` to `AnalogItemType`. `EURange` is reachable as a property
+of a `BaseDataVariableType` node, so the value is delivered either way, and
+promoting a node means claiming a type whose mandatory properties must then
+always exist — including for items the source later stops describing.
 
 ## Timestamps
 

@@ -216,3 +216,73 @@ func (p *Populator) BrowsedBranchCount() int {
 	defer p.mu.Unlock()
 	return len(p.browsed)
 }
+
+// itemPropertiesKey namespaces a discovery in the same map branch browses use.
+// A branch key is a path and an item key is an ItemID, and the prefix keeps a
+// path from ever colliding with an ItemID that spells the same thing.
+func itemPropertiesKey(itemID opcda.DAItemID) string { return "properties\x1f" + string(itemID) }
+
+// EnsureItemProperties asks the source which OPC 10000-8 Table A.1 properties
+// an item has and attaches the corresponding property nodes.
+//
+// A source that does not implement IOPCItemProperties is not an error. It has
+// no properties to offer, the item simply has none, and browsing it succeeds
+// with the references it does have.
+func (p *Populator) EnsureItemProperties(ctx context.Context, itemID opcda.DAItemID, now time.Time) error {
+	key := itemPropertiesKey(itemID)
+
+	p.mu.Lock()
+	if discoveredAt, ok := p.browsed[key]; ok && now.Sub(discoveredAt) < p.limits.RefreshInterval {
+		p.mu.Unlock()
+		return nil
+	}
+	if waiting, running := p.inflight[key]; running {
+		p.mu.Unlock()
+		select {
+		case <-waiting:
+		case <-ctx.Done():
+			return uacpError(StatusBadTimeout, "waiting for a concurrent property discovery was cancelled")
+		}
+		p.mu.Lock()
+		discoveredAt, ok := p.browsed[key]
+		p.mu.Unlock()
+		if ok && now.Sub(discoveredAt) < p.limits.RefreshInterval {
+			return nil
+		}
+		return uacpError(StatusBadNotConnected, "a concurrent property discovery did not succeed")
+	}
+
+	done := make(chan struct{})
+	p.inflight[key] = done
+	p.mu.Unlock()
+
+	err := p.discoverItemProperties(ctx, itemID, key, now)
+	p.mu.Lock()
+	delete(p.inflight, key)
+	p.mu.Unlock()
+	close(done)
+	return err
+}
+
+func (p *Populator) discoverItemProperties(ctx context.Context, itemID opcda.DAItemID, key string, now time.Time) error {
+	discoveryCtx, cancel := context.WithTimeout(ctx, p.limits.RequestTimeout)
+	defer cancel()
+
+	available, err := p.runtime.AvailableItemProperties(discoveryCtx, string(itemID))
+	if err != nil {
+		if adapterErr, ok := opcda.AsAdapterError(err); ok && adapterErr.Code == opcda.CodePropertiesUnsupported {
+			// The source offers no properties. Recording the answer stops the
+			// adapter asking again for every browse of every item.
+			p.mu.Lock()
+			p.browsed[key] = now
+			p.mu.Unlock()
+			return nil
+		}
+		return err
+	}
+	p.space.AttachItemProperties(itemID, available, p.limits.MaxNodes)
+	p.mu.Lock()
+	p.browsed[key] = now
+	p.mu.Unlock()
+	return nil
+}

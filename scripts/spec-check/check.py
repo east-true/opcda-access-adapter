@@ -167,6 +167,47 @@ def check_node_ids(files, src):
             fail(f"{service}{kind}EncodingID: code {value}, spec {want}")
     print(f"  {checked} service encoding ids")
 
+    # The standard node identifiers the address space is built from. Most Go
+    # names are the table's own; these are the ones that were shortened or
+    # qualified differently when they were transcribed.
+    aliases = {
+        "NonHierarchicalRefs": "NonHierarchicalReferences",
+        "HierarchicalRefs": "HierarchicalReferences",
+        "ServerArray": "Server_ServerArray",
+        "NamespaceArray": "Server_NamespaceArray",
+        "ServerStatus": "Server_ServerStatus",
+        "ServerStatusStartTime": "Server_ServerStatus_StartTime",
+        "ServerStatusCurrentTime": "Server_ServerStatus_CurrentTime",
+        "ServerStatusState": "Server_ServerStatus_State",
+        "ServerStatusBuildInfo": "Server_ServerStatus_BuildInfo",
+        "ServerStatusBuildInfoProductName": "Server_ServerStatus_BuildInfo_ProductName",
+        "ServerStatusBuildInfoProductURI": "Server_ServerStatus_BuildInfo_ProductUri",
+        "ServerStatusBuildInfoManufacture": "Server_ServerStatus_BuildInfo_ManufacturerName",
+        "ServerStatusBuildInfoSoftware": "Server_ServerStatus_BuildInfo_SoftwareVersion",
+        "ServerStatusBuildInfoBuildNumber": "Server_ServerStatus_BuildInfo_BuildNumber",
+        "ServerStatusBuildInfoBuildDate": "Server_ServerStatus_BuildInfo_BuildDate",
+        "ServerServiceLevel": "Server_ServiceLevel",
+        "ServerAuditing": "Server_Auditing",
+        "BaseDataVariable": "BaseDataVariableType",
+        "BuildInfoDataType": "BuildInfo",
+        "ServerStateDataType": "ServerState",
+        "UtcTimeDataType": "UtcTime",
+        "ServerStatusEncodingID": "ServerStatusDataType_Encoding_DefaultBinary",
+        "BuildInfoEncodingID": "BuildInfo_Encoding_DefaultBinary",
+    }
+    checked = 0
+    for match in re.finditer(r'\bNodeID([A-Za-z0-9]+)\s+uint32\s*=\s*(\d+)', src):
+        name, value = match.group(1), int(match.group(2))
+        candidates = [aliases.get(name, name).lower(),
+                      re.sub(r'encodingdefaultbinary$', '_encoding_defaultbinary', name.lower())]
+        want = next((spec[candidate] for candidate in candidates if candidate in spec), None)
+        checked += 1
+        if want is None:
+            fail(f"NodeID{name} = {value} has no row in NodeIds.csv")
+        elif want != value:
+            fail(f"NodeID{name}: id {value}, spec {want}")
+    print(f"  {checked} standard node ids")
+
 
 def check_attribute_ids(files, src):
     spec = {}

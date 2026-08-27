@@ -11,6 +11,12 @@ import (
 // stubRuntime stands in for the DA runtime so the mapping can be exercised
 // without a DA server.
 type stubRuntime struct {
+	available      map[string][]opcda.AvailableProperty
+	propertyValues map[opcda.PropertyID]opcda.ItemPropertyValue
+	propertyErr    error
+	availableCalls int
+	propertyCalls  int
+
 	readRequest  opcda.ReadRequest
 	readResults  []opcda.ReadResult
 	readErr      error
@@ -1027,12 +1033,33 @@ func TestTheWriteTypeCheckAcceptsWhatTheCoreAccepts(t *testing.T) {
 	}
 }
 
-// This source offers no OPC DA item properties. PROPERTIES_UNSUPPORTED is the
-// same answer a real source without IOPCItemProperties gives.
-func (stubRuntime) AvailableItemProperties(context.Context, string) ([]opcda.AvailableProperty, error) {
-	return nil, opcda.NewAdapterError(opcda.CodePropertiesUnsupported, "this source offers no item properties")
+// By default this source offers no OPC DA item properties, which is the answer
+// a real source without IOPCItemProperties gives. A test that needs properties
+// sets available and propertyValues.
+func (r *stubRuntime) AvailableItemProperties(_ context.Context, itemID string) ([]opcda.AvailableProperty, error) {
+	if r.available == nil {
+		return nil, opcda.NewAdapterError(opcda.CodePropertiesUnsupported, "this source offers no item properties")
+	}
+	r.availableCalls++
+	return r.available[itemID], nil
 }
 
-func (stubRuntime) ItemProperties(context.Context, opcda.ItemPropertiesRequest) ([]opcda.ItemPropertyValue, error) {
-	return nil, opcda.NewAdapterError(opcda.CodePropertiesUnsupported, "this source offers no item properties")
+func (r *stubRuntime) ItemProperties(_ context.Context, request opcda.ItemPropertiesRequest) ([]opcda.ItemPropertyValue, error) {
+	if r.propertyValues == nil {
+		return nil, opcda.NewAdapterError(opcda.CodePropertiesUnsupported, "this source offers no item properties")
+	}
+	r.propertyCalls++
+	if r.propertyErr != nil {
+		return nil, r.propertyErr
+	}
+	values := make([]opcda.ItemPropertyValue, 0, len(request.Properties))
+	for _, id := range request.Properties {
+		value, ok := r.propertyValues[id]
+		if !ok {
+			value = opcda.ItemPropertyValue{ID: id, HRESULT: -1073479674, HRESULTPresent: true}
+		}
+		value.ID = id
+		values = append(values, value)
+	}
+	return values, nil
 }

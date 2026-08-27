@@ -48,10 +48,11 @@ const (
 // OPC Foundation StatusCode list published for the UA namespace; none is
 // derived by hand from the bit layout.
 //
-// This block is the package's only declaration of a StatusCode value. A file
-// that needs a status adds it here rather than declaring its own, so that no
-// code can be declared twice under two spellings of the same name; spec-check
-// fails the build if a second declaration of a value appears anywhere.
+// This block holds the statuses the DA mapping itself answers with. Other files
+// declare the statuses of their own protocol layer beside the code that raises
+// them, which is deliberate; what is not allowed is declaring the same value
+// twice, under two spellings of one name, as 0x80350000 once was. spec-check
+// fails on a second declaration of any value, wherever the two appear.
 const (
 	StatusGood      StatusCode = 0x00000000
 	StatusUncertain StatusCode = 0x40000000
@@ -83,6 +84,10 @@ const (
 	StatusBadOutOfMemory        StatusCode = 0x80030000
 	StatusBadWriteNotSupported  StatusCode = 0x80730000
 	StatusBadUnexpectedError    StatusCode = 0x80010000
+
+	// BadNoData is what a property whose source succeeded and reported no
+	// value answers. Nothing is substituted for it.
+	StatusBadNoData StatusCode = 0x809B0000
 
 	StatusBadIndexRangeInvalid StatusCode = 0x80360000
 	StatusBadInvalidArgument   StatusCode = 0x80AB0000
