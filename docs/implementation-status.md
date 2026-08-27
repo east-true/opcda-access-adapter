@@ -122,48 +122,44 @@ release-promotion gate.
 
 ## In progress
 
-- The audit that ran from 2026-08-26 to 2026-08-27 is complete for everything
-  reachable from a Linux workstation. It began from coverage data and from the
-  question of what a path had never executed, and it found, in order: a
-  concurrent-map fault that killed the process when two clients connected at
-  once (#59), DA groups leaked when a session timed out (#59), a quiet
-  subscription outliving its own session (#59), a session that could not move to
-  a new SecureChannel so a client could not reconnect (#60), a `Shutdown` that
-  ignored its context and released nothing (#60), a node declaring one type
-  while delivering another (#61), thirteen unfuzzed request decoders (#62), and
-  two Windows comments stating invariants that were not the ones holding
-  (#63, #65).
+- Specification conformance of the transcribed constants was verified on
+  2026-08-27 against the OPC Foundation's own machine-readable schema, and the
+  check is now runnable as `scripts/spec-check/check.py` rather than something
+  done once.
 
-  Static review of the Windows DA code, which cannot be executed here and is
-  covered only by the real-DA workflow, is now complete for the STA thread, the
-  callback path, the COM watchdog, and local detection. **No behavioural defect
-  was found there**; the two findings were comments. What was checked and holds:
+  **No defect was found.** What was compared, all matching:
 
-  - the `IOPCDataCallback` vtable is a package-level `var`, so its
-    `syscall.NewCallback` trampolines are created once for the process rather
-    than per subscription, which is the exhaustion hazard that pattern carries;
-  - the STA is initialised, given a message queue before any server can need
-    one, and waits with `MsgWaitForMultipleObjectsEx` under
-    `MWMO_INPUTAVAILABLE`, pumping unconditionally whenever a message wakes it
-    and draining the queue with `PeekMessage(PM_REMOVE)`, so a callback
-    marshalled as a window message cannot be stranded;
-  - the COM watchdog marks the runtime degraded and does not attempt to kill the
-    owning thread, which matches the recorded known issue rather than
-    contradicting it;
-  - `releaseCOM` unadvises before releasing anything the callback reads,
-    unregisters the callback id before unpinning, and unpins only once the COM
-    reference count has come back down;
-  - the callback path makes no COM interface call at all, only `SysStringLen`,
-    so it cannot violate apartment affinity;
-  - `disconnect` removes the DA group before dropping the registration cache, so
-    the items registered on the server go with the group rather than being
-    orphaned;
-  - local detection activates only the OS component category manager, never the
-    vendor server, and bounds both the result count and each ProgID.
+  | | Checked | Source |
+  | --- | --- | --- |
+  | status code values | 87 | `StatusCode.csv` |
+  | well-known node identifiers | 57 | `NodeIds.csv` |
+  | service encoding identifiers | 32 | `NodeIds.csv` |
+  | attribute identifiers | 12 | `AttributeIds.csv` |
+  | built-in type identifiers | 26 | `NodeIds.csv` |
+  | enumerations | 9 | NodeSet2 and the clause text |
+  | structure encoder field order | 13 | `Opc.Ua.Types.bsd` |
+  | request decoder field order | 16 | `Opc.Ua.Types.bsd` |
 
-  What remains unverified is unchanged and is not reachable from here: a
-  third-party vendor DA server (ADR-0017, undecided), UA Expert (account
-  required), and the local VM destructive review below.
+  Also read against the clause and matching: the NodeId DataEncoding values and
+  the 0x3F mask that separates them from the ExpandedNodeId flags (10000-6
+  Table 17); `TimestampsToReturn` including `NEITHER` and `INVALID`, which the
+  code both declares and handles (Table 180); the StatusCode InfoType at bits
+  10:11 and LimitBits at 8:9, which `WithLimitBits` sets together so a limit is
+  never attached without the InfoType that gives it meaning (Table 176 and
+  Table 177); and the DA quality masks, where the limit bits and the
+  vendor-specific high byte are both excluded before the QQSSSS comparison and
+  an unrecognised substatus still falls back on the QQ bits.
+
+  The checker was verified by mutating a status code value, a service encoding
+  identifier and a decoder field order in turn, and confirming each is reported.
+  It pins the upstream schema by SHA-256, so upstream moving is an event to
+  review rather than a silent change in what conformant means. It is not in CI,
+  because it fetches from a third-party repository and the ordinary build should
+  not acquire that dependency silently.
+
+  What it cannot check is recorded with it: OPC 10000-8 Tables A.2 to A.5, the
+  DA quality bit layout, and prose rules, none of which any machine-readable
+  source publishes. Those stay covered by tests that quote the clause.
 
 - The local KVM/libvirt destructive-validation gate is paused. The dedicated
   `opcda-destructive-review` VM and all of its dedicated host resources were
