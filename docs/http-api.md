@@ -93,8 +93,19 @@ The runtime also applies the hard per-batch, Browse, ItemID, BSTR, command
 queue, and registration limits recorded in ADR-0001. No recent operation or
 process-value history is retained in memory, so there is no unbounded
 diagnostic ring. Logs go directly to the configured process output and never
-include process values by default; deployment-level collection and rotation
-remain the operator's responsibility.
+include process values; deployment-level collection and rotation remain the
+operator's responsibility.
+
+"By default" would be the wrong hedge here: there is no setting that turns
+value logging on. The guarantee is structural. The packages that handle values
+-- `internal/opcda`, `internal/opcua` and the frontends -- do not log at all.
+Every logging call in the adapter is in `cmd/adapter`, and none carries a value:
+they log an address, a frontend name, a CLI argument, and errors. So the only
+route a value could take into a log is inside an error message, and no error
+message carries one -- they carry the VARTYPE, which is the part worth
+reporting. `TestValueHandlingPackagesDoNotLog` fails the build if a
+value-handling package acquires a logging import, which is what keeps that
+reasoning true rather than merely currently accurate.
 
 Individually valid settings must also fit the aggregate memory ceilings in
 [ADR-0008](adr/0008-http-origin-and-aggregate-bounds.md). This prevents, for
