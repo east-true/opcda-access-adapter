@@ -468,6 +468,7 @@ observation rather than used to change source semantics.
 | Variation | What to record | Adapter behavior today |
 |---|---|---|
 | No `IOPCDataCallback` connection point | `capabilities.subscribe` false | Probed at connect; Subscribe refused as `SUBSCRIBE_UNSUPPORTED`. Over OPC UA this is `Bad_ServiceUnsupported`. |
+| No `IOPCItemProperties` | `capabilities.properties` `unsupported` | Probed at connect. Property reads are refused as `PROPERTIES_UNSUPPORTED`; the source is working correctly and simply has no properties to offer. OPC 10000-8 Table A.1 cannot be mapped for such a source, and nothing about the item's value, quality, timestamp or access rights is affected — those come from Read, Subscribe and `AddItems`. |
 | No `IOPCBrowseServerAddressSpace` | `capabilities.browse` `unsupported` | Browse refused as `BROWSE_UNSUPPORTED`, and over OPC UA as `Bad_ServiceUnsupported`. The UA address space stays empty, but a client that knows its ItemIDs can still read, write and monitor them: a UA node identifier carries the exact ItemID. |
 | An item's canonical type or access rights never reported | the node's `DataType` and `AccessLevel` before any Read | DA reports both in `AddItems` rather than Browse, so a browsed node knows neither. The source decides both until a Read or notification teaches the adapter. |
 | Different revised update rate, or a rate the server refuses | requested and revised values | The server's revised rate is reported unchanged, including as a UA MonitoredItem's `revisedSamplingInterval` |
