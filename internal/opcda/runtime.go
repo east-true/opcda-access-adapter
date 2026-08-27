@@ -16,6 +16,10 @@ type Runtime interface {
 	WriteBatch(context.Context, []WriteItem) ([]WriteResult, error)
 	Subscribe(context.Context, SubscribeRequest) (Subscription, error)
 	Unsubscribe(context.Context, SubscriptionID) error
+	// Shutdown must tolerate being called more than once. The application
+	// shuts the runtime down from its own Shutdown, which a caller may invoke
+	// again, and both implementations already behave this way; stating it
+	// keeps that true rather than accidental.
 	Shutdown(context.Context) error
 }
 

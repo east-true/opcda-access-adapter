@@ -2,8 +2,12 @@ package opcua
 
 import (
 	"bytes"
+	"context"
+	"errors"
 	"testing"
 	"time"
+
+	"github.com/east-true/opcda-access-adapter/internal/opcda"
 )
 
 // FuzzDecodeUABinary drives the decoder with arbitrary bytes. A malformed
@@ -398,3 +402,164 @@ func FuzzDecodeDateTime(f *testing.F) {
 		}
 	})
 }
+
+// FuzzDispatchService drives arbitrary bytes through the service dispatch a
+// real client's MSG chunk reaches, rather than through one decoder chosen by
+// hand.
+//
+// The targets above fuzz the framing layers and two SecureChannel services. The
+// other thirteen request decoders — CreateSession, ActivateSession, Browse,
+// BrowseNext, Read, Write, CreateSubscription, CreateMonitoredItems,
+// DeleteMonitoredItems, DeleteSubscriptions, SetPublishingMode, Publish,
+// CloseSession — had none, and GetEndpoints is reachable before a session
+// exists at all. Design §35.5 requires the hand-written parser to bound what a
+// peer can make it do, and those are the majority of it.
+//
+// They were missed because the targets were written per layer, so a decoder
+// added afterwards inherited nothing. Fuzzing the dispatch instead of a list of
+// decoders is what fixes that: a service added to dispatchService is covered
+// here without anyone remembering to extend this file.
+func FuzzDispatchService(f *testing.F) {
+	listener, err := NewListenerWithRuntime(testListenerConfig(), &fuzzRuntime{}, 1000, 2000)
+	if err != nil {
+		f.Fatal(err)
+	}
+
+	// Seeds: one well-formed body per service the dispatch answers, so the
+	// fuzzer starts inside each decoder rather than having to find it.
+	seeds := [][]byte{
+		{}, {0x00}, bytes.Repeat([]byte{0xFF}, 64),
+	}
+	add := func(write func(*Encoder)) {
+		encoder, encodeErr := NewEncoder(DefaultBinaryLimits())
+		if encodeErr != nil {
+			f.Fatal(encodeErr)
+		}
+		write(encoder)
+		body, bodyErr := encoder.Bytes()
+		if bodyErr != nil {
+			f.Fatal(bodyErr)
+		}
+		seeds = append(seeds, body)
+	}
+	header := RequestHeader{
+		AuthenticationToken: NodeID{Namespace: 1, Type: NodeIDTypeOpaque, Opaque: bytes.Repeat([]byte{7}, 32)},
+		AdditionalHeader:    NullExtensionObject(),
+	}
+	add(func(e *Encoder) { e.WriteGetEndpointsRequest(GetEndpointsRequest{Header: header}) })
+	add(func(e *Encoder) { e.WriteCreateSessionRequest(CreateSessionRequest{Header: header}) })
+	add(func(e *Encoder) {
+		e.WriteActivateSessionRequest(ActivateSessionRequest{Header: header, UserIdentityToken: NullExtensionObject()})
+	})
+	add(func(e *Encoder) { e.WriteCloseSessionRequest(CloseSessionRequest{Header: header}) })
+	add(func(e *Encoder) {
+		e.WriteBrowseRequest(BrowseRequest{Header: header, NodesToBrowse: []BrowseDescription{browseAll(NumericNodeID(0, NodeIDObjectsFolder))}})
+	})
+	add(func(e *Encoder) { e.WriteBrowseNextRequest(BrowseNextRequest{Header: header}) })
+	add(func(e *Encoder) {
+		e.WriteReadRequest(ReadRequest{Header: header, TimestampsToReturn: TimestampsBoth,
+			NodesToRead: []ReadValueID{{NodeID: ItemNodeID("Test/Int32"), AttributeID: AttributeValue}}})
+	})
+	add(func(e *Encoder) {
+		e.WriteWriteRequest(WriteRequest{Header: header, NodesToWrite: []WriteValue{{
+			NodeID: ItemNodeID("Test/Int32"), AttributeID: AttributeValue,
+			Value: DataValue{Value: Variant{Type: BuiltInInt32, Value: int32(1)}}}}})
+	})
+	add(func(e *Encoder) {
+		e.WriteCreateSubscriptionRequest(CreateSubscriptionRequest{Header: header,
+			RequestedPublishingInterval: 250, RequestedMaxKeepAliveCount: 3, PublishingEnabled: true})
+	})
+	add(func(e *Encoder) {
+		e.WriteCreateMonitoredItemsRequest(CreateMonitoredItemsRequest{Header: header,
+			TimestampsToReturn: TimestampsBoth,
+			ItemsToCreate: []MonitoredItemCreateRequest{{
+				ItemToMonitor:       ReadValueID{NodeID: ItemNodeID("Test/Int32"), AttributeID: AttributeValue},
+				MonitoringMode:      MonitoringModeReporting,
+				RequestedParameters: MonitoringParameters{Filter: NullExtensionObject()}}}})
+	})
+	add(func(e *Encoder) {
+		e.WriteDeleteMonitoredItemsRequest(DeleteMonitoredItemsRequest{Header: header})
+	})
+	add(func(e *Encoder) { e.WriteDeleteSubscriptionsRequest(DeleteSubscriptionsRequest{Header: header}) })
+	add(func(e *Encoder) { e.WriteSetPublishingModeRequest(SetPublishingModeRequest{Header: header}) })
+	add(func(e *Encoder) { e.WritePublishRequest(PublishRequest{Header: header}) })
+	for _, seed := range seeds {
+		f.Add(seed)
+	}
+
+	f.Fuzz(func(t *testing.T, data []byte) {
+		decoder, err := NewDecoder(data, listener.config.Binary)
+		if err != nil {
+			return
+		}
+		identifier, err := decoder.ReadServiceTypeID()
+		if err != nil {
+			if _, ok := err.(*CodecError); !ok {
+				t.Fatalf("TypeId error %v is not a CodecError", err)
+			}
+			return
+		}
+		// Publish is the one service the dispatch does not answer, because the
+		// listener holds it; its decoder is driven directly.
+		if identifier == PublishRequestEncodingID {
+			if _, readErr := decoder.ReadPublishRequest(); readErr != nil {
+				if _, ok := readErr.(*CodecError); !ok {
+					t.Fatalf("decode error %v is not a CodecError", readErr)
+				}
+			}
+			return
+		}
+		_, _, serviceErr, fatal := listener.dispatchService(1, identifier, decoder)
+		// A decoding failure closes the connection and must always carry a UA
+		// status, so a peer is never answered with an untyped error.
+		if fatal != nil {
+			if _, ok := fatal.(*CodecError); !ok {
+				t.Fatalf("fatal error %v is not a CodecError", fatal)
+			}
+		}
+		if serviceErr != nil {
+			var codecErr *CodecError
+			if !errors.As(serviceErr, &codecErr) {
+				t.Fatalf("service error %v carries no UA status", serviceErr)
+			}
+		}
+		if decoder.Remaining() < 0 {
+			t.Fatal("a reader consumed past the end of the buffer")
+		}
+	})
+}
+
+// fuzzRuntime answers every DA call without touching a source, so the fuzzer
+// exercises the decoders rather than a stub's behaviour.
+type fuzzRuntime struct{}
+
+func (fuzzRuntime) Status(context.Context) opcda.RuntimeStatus {
+	return opcda.RuntimeStatus{State: opcda.RuntimeStateConnected}
+}
+
+func (fuzzRuntime) Browse(context.Context, opcda.BrowseRequest) (opcda.BrowseResult, error) {
+	return opcda.BrowseResult{}, nil
+}
+
+func (fuzzRuntime) ReadBatch(_ context.Context, request opcda.ReadRequest) ([]opcda.ReadResult, error) {
+	results := make([]opcda.ReadResult, 0, len(request.Items))
+	for _, item := range request.Items {
+		results = append(results, opcda.ReadResult{ItemID: item, HRESULTPresent: true})
+	}
+	return results, nil
+}
+
+func (fuzzRuntime) WriteBatch(_ context.Context, items []opcda.WriteItem) ([]opcda.WriteResult, error) {
+	results := make([]opcda.WriteResult, 0, len(items))
+	for _, item := range items {
+		results = append(results, opcda.WriteResult{ItemID: item.ItemID, HRESULTPresent: true})
+	}
+	return results, nil
+}
+
+func (fuzzRuntime) Subscribe(context.Context, opcda.SubscribeRequest) (opcda.Subscription, error) {
+	return nil, opcda.NewAdapterError(opcda.CodeSubscribeUnsupported, "not exposed to the fuzzer")
+}
+
+func (fuzzRuntime) Unsubscribe(context.Context, opcda.SubscriptionID) error { return nil }
+func (fuzzRuntime) Shutdown(context.Context) error                          { return nil }
