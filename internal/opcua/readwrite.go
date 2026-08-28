@@ -739,6 +739,15 @@ func (s *DataAccessService) Write(ctx context.Context, request WriteRequest, now
 			results[index] = StatusBadAttributeIDInvalid
 			continue
 		}
+		// A Table A.1 property node carries the ItemID of the item it
+		// describes. The access level below would refuse it anyway, since a
+		// property is created read-only, but that is a side effect of how the
+		// node was built rather than a rule. This is the rule: a property
+		// describes an item and is not a place to put a value.
+		if node.IsItemPropertyNode() {
+			results[index] = StatusBadNotWritable
+			continue
+		}
 		if node.AccessRightsKnown && node.AccessLevel&AccessLevelCurrentWrite == 0 {
 			results[index] = StatusBadNotWritable
 			continue

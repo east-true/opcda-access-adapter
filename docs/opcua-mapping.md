@@ -272,6 +272,23 @@ A per-property HRESULT is a result rather than a failure, so it maps through
 Table A.4 like every other read error: a source that refuses one property
 answers `Bad_NotReadable` for that property alone.
 
+### A property is read, never monitored or written
+
+A Table A.1 property node carries the **ItemID of the item it describes**, which
+is what lets it be addressed without browsing. That also means every path which
+turns a node into a DA item has to exclude it, and two did not:
+
+- **Monitoring** one would have subscribed to the item's value and delivered a
+  process value under the property's client handle — a live reading reported as
+  an engineering range. It now answers `Bad_NotSupported`. OPC DA has no change
+  notification for item properties: a group notifies on item values only, so
+  monitoring one would mean the adapter inventing a sampling loop the source
+  never agreed to. A client that wants a property reads it.
+- **Writing** one answers `Bad_NotWritable`. A property node is created
+  read-only, so the access-level check refused it already, but that was a side
+  effect of how the node was built rather than a rule. The rule is now stated: a
+  property describes an item and is not a place to put a value.
+
 ### A source without the interface
 
 `IOPCItemProperties` is optional. A source that does not implement it is working

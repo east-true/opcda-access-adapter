@@ -85,6 +85,10 @@ const (
 	StatusBadWriteNotSupported  StatusCode = 0x80730000
 	StatusBadUnexpectedError    StatusCode = 0x80010000
 
+	// BadNotSupported is what an operation the adapter cannot perform on a
+	// node answers, as distinct from one the node does not allow.
+	StatusBadNotSupported StatusCode = 0x803D0000
+
 	// BadNoData is what a property whose source succeeded and reported no
 	// value answers. Nothing is substituted for it.
 	StatusBadNoData StatusCode = 0x809B0000
