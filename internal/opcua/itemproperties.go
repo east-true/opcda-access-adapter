@@ -1,6 +1,7 @@
 package opcua
 
 import (
+	"fmt"
 	"strings"
 
 	"github.com/east-true/opcda-access-adapter/internal/opcda"
@@ -258,14 +259,28 @@ func ItemPropertyForNode(id NodeID) (opcda.DAItemID, itemPropertyBinding, bool) 
 // property is built from. Values are never stored here: a property node knows
 // which item and which DA properties it stands for, and its value is read from
 // the source when a client asks for it.
-func (s *AddressSpace) AttachItemProperties(itemID opcda.DAItemID, available []opcda.AvailableProperty, maxNodes int) bool {
+//
+// The node budget is checked over the whole set before anything is changed, the
+// way a branch is, so a set that does not fit is refused rather than attached in
+// part. A client cannot tell a truncated property list from a complete one.
+func (s *AddressSpace) AttachItemProperties(itemID opcda.DAItemID, available []opcda.AvailableProperty, maxNodes int) error {
 	bindings := bindingsForAvailable(available)
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	item, ok := s.nodes[nodeKey(ItemNodeID(itemID))]
 	if !ok || item.Class != NodeClassVariable || item.ItemID != itemID {
-		return false
+		return fmt.Errorf("no DA item node for %q", itemID)
+	}
+	needed := 0
+	for _, binding := range bindings {
+		if _, exists := s.nodes[nodeKey(ItemPropertyNodeID(itemID, binding.BrowseName))]; !exists {
+			needed++
+		}
+	}
+	if maxNodes > 0 && len(s.nodes)-s.standardNodeCount+needed > maxNodes {
+		return fmt.Errorf("%d property nodes for %q would exceed the %d node limit",
+			needed, itemID, maxNodes)
 	}
 	// Re-attaching replaces the previous set rather than adding to it, so a
 	// source that stops offering a property stops reporting it.
@@ -274,9 +289,6 @@ func (s *AddressSpace) AttachItemProperties(itemID opcda.DAItemID, available []o
 	for _, binding := range bindings {
 		id := ItemPropertyNodeID(itemID, binding.BrowseName)
 		if _, exists := s.nodes[nodeKey(id)]; !exists {
-			if maxNodes > 0 && len(s.nodes)-s.standardNodeCount >= maxNodes {
-				return false
-			}
 			s.nodes[nodeKey(id)] = &Node{
 				ID:             id,
 				Class:          NodeClassVariable,
@@ -299,7 +311,7 @@ func (s *AddressSpace) AttachItemProperties(itemID opcda.DAItemID, available []o
 			addInverse(property, NumericNodeID(0, NodeIDHasProperty), item)
 		}
 	}
-	return true
+	return nil
 }
 
 // keepNonPropertyReferences drops the HasProperty references a previous attach

@@ -296,6 +296,18 @@ actually is: a DA item, one of its properties, something else in the address
 space, or nothing. Read, Write, Subscribe and Browse all go through it, so a
 fifth caller inherits the distinction rather than having to remember it.
 
+### A property set that does not fit is refused, not trimmed
+
+The address space has a node budget, and a property set is checked against it
+**as a whole, before anything changes** — the same rule a browsed branch
+follows, and for the same reason. A client cannot tell a truncated property list
+from a complete one, so attaching three of five and stopping would be reporting
+an answer that looks finished.
+
+A refusal is also not remembered. The discovery is not recorded, so the next
+browse asks again rather than serving the truncation for the length of the
+refresh interval.
+
 ### A source without the interface
 
 `IOPCItemProperties` is optional. A source that does not implement it is working

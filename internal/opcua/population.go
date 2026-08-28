@@ -280,7 +280,11 @@ func (p *Populator) discoverItemProperties(ctx context.Context, itemID opcda.DAI
 		}
 		return err
 	}
-	p.space.AttachItemProperties(itemID, available, p.limits.MaxNodes)
+	if err := p.space.AttachItemProperties(itemID, available, p.limits.MaxNodes); err != nil {
+		// The discovery is not recorded, so the next browse tries again rather
+		// than serving whatever partial answer a truncation would have left.
+		return uacpError(StatusBadTooManyOperations, "%s", err.Error())
+	}
 	p.mu.Lock()
 	p.browsed[key] = now
 	p.mu.Unlock()
