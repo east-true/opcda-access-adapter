@@ -420,11 +420,16 @@ func validateItemProperties(ctx context.Context, client opcdav1.OPCDAAccessClien
 			return fmt.Errorf("property %d carried no HRESULT", result.PropertyId)
 		}
 		if result.Ok {
-			if result.Value == nil || result.DataType == nil {
-				return fmt.Errorf("property %d succeeded without a value or type", result.PropertyId)
-			}
 			if result.Hresult.Value < 0 {
 				return fmt.Errorf("property %d succeeded with a failed HRESULT", result.PropertyId)
+			}
+			// A source can answer a property and give nothing. Presence is its
+			// own bit, so absence is reported rather than turned into a refusal.
+			if result.ValuePresent != (result.Value != nil) {
+				return fmt.Errorf("property %d disagreed with its own value presence", result.PropertyId)
+			}
+			if result.ValuePresent && result.DataType == nil {
+				return fmt.Errorf("property %d carried a value without a type", result.PropertyId)
 			}
 			continue
 		}
@@ -443,10 +448,13 @@ func validateItemProperties(ctx context.Context, client opcdav1.OPCDAAccessClien
 	// HRESULT appeared under "refused" because the value was an array the
 	// adapter does not carry.
 	granted := make([]string, 0, len(ids))
+	empty := make([]string, 0, len(ids))
 	refused := make([]string, 0, len(ids))
 	unrepresentable := make([]string, 0, len(ids))
 	for index, result := range values.Results {
 		switch {
+		case result.Ok && !result.ValuePresent:
+			empty = append(empty, fmt.Sprintf("%d", ids[index]))
 		case result.Ok:
 			granted = append(granted, fmt.Sprintf("%d", ids[index]))
 		case result.Hresult.Value < 0:
@@ -460,8 +468,8 @@ func validateItemProperties(ctx context.Context, client opcdav1.OPCDAAccessClien
 			unrepresentable = append(unrepresentable, fmt.Sprintf("%d:%s", ids[index], result.ErrorCode))
 		}
 	}
-	fmt.Printf("grpc item properties offered=%s read=%s sourceRefused=%s unrepresentable=%s valuesLogged=false\n",
-		joinOrNone(offeredNames(ids)), joinOrNone(granted),
+	fmt.Printf("grpc item properties offered=%s read=%s empty=%s sourceRefused=%s unrepresentable=%s valuesLogged=false\n",
+		joinOrNone(offeredNames(ids)), joinOrNone(granted), joinOrNone(empty),
 		joinOrNone(refused), joinOrNone(unrepresentable))
 	return validateItemPropertyRefusals(ctx, client)
 }

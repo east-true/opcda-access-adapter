@@ -59,6 +59,11 @@ message DAItemPropertyResult {
   DAScalarValue value = 4;
   DAHRESULT hresult = 5;
   string error_code = 6;
+  // Whether a value is carried. A source can answer a property successfully
+  // and give nothing -- an empty VARIANT is an answer. Presence is its own bit
+  // for the same reason a Read timestamp's is: absence is absence, and it must
+  // not be reported as a failure the source did not report.
+  bool value_present = 7;
 }
 
 message DAStatusRequest {}
