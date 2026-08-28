@@ -14,6 +14,51 @@ service OPCDAAccess {
   // client cancels, the source is lost, or the adapter stops. The stream
   // never replays a missed value and never resubscribes on its own.
   rpc Subscribe(DASubscribeRequest) returns (stream DASubscribeResponse);
+  // AvailableItemProperties reports which OPC DA properties a source offers
+  // for one item, in the source's own order. It is IOPCItemProperties'
+  // QueryAvailableProperties, passed through.
+  rpc AvailableItemProperties(DAAvailableItemPropertiesRequest) returns (DAAvailableItemPropertiesResponse);
+  // ItemProperties reads named OPC DA properties of one item. Results match
+  // the requested identifiers in size and order, and a per-property HRESULT
+  // stays a result rather than failing the batch.
+  //
+  // The item's value, quality and timestamp are properties 2, 3 and 4 and are
+  // refused here: Read and Subscribe deliver a value together with its
+  // timestamp and its raw quality, and answering the same question a second
+  // way without them could produce a different answer.
+  rpc ItemProperties(DAItemPropertiesRequest) returns (DAItemPropertiesResponse);
+}
+
+message DAAvailableItemPropertiesRequest {
+  string item_id = 1;
+}
+message DAAvailableItemPropertiesResponse {
+  string item_id = 1;
+  repeated DAAvailableProperty properties = 2;
+}
+// DAAvailableProperty is one property a source reports for an item. The
+// description is the server's own text, passed through unchanged.
+message DAAvailableProperty {
+  uint32 property_id = 1;
+  string description = 2;
+  DAVarType data_type = 3;
+}
+
+message DAItemPropertiesRequest {
+  string item_id = 1;
+  repeated uint32 property_ids = 2;
+}
+message DAItemPropertiesResponse {
+  string item_id = 1;
+  repeated DAItemPropertyResult results = 2;
+}
+message DAItemPropertyResult {
+  uint32 property_id = 1;
+  bool ok = 2;
+  DAVarType data_type = 3;
+  DAScalarValue value = 4;
+  DAHRESULT hresult = 5;
+  string error_code = 6;
 }
 
 message DAStatusRequest {}

@@ -19,11 +19,13 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	OPCDAAccess_Status_FullMethodName    = "/opcda.access.v1.OPCDAAccess/Status"
-	OPCDAAccess_Browse_FullMethodName    = "/opcda.access.v1.OPCDAAccess/Browse"
-	OPCDAAccess_Read_FullMethodName      = "/opcda.access.v1.OPCDAAccess/Read"
-	OPCDAAccess_Write_FullMethodName     = "/opcda.access.v1.OPCDAAccess/Write"
-	OPCDAAccess_Subscribe_FullMethodName = "/opcda.access.v1.OPCDAAccess/Subscribe"
+	OPCDAAccess_Status_FullMethodName                  = "/opcda.access.v1.OPCDAAccess/Status"
+	OPCDAAccess_Browse_FullMethodName                  = "/opcda.access.v1.OPCDAAccess/Browse"
+	OPCDAAccess_Read_FullMethodName                    = "/opcda.access.v1.OPCDAAccess/Read"
+	OPCDAAccess_Write_FullMethodName                   = "/opcda.access.v1.OPCDAAccess/Write"
+	OPCDAAccess_Subscribe_FullMethodName               = "/opcda.access.v1.OPCDAAccess/Subscribe"
+	OPCDAAccess_AvailableItemProperties_FullMethodName = "/opcda.access.v1.OPCDAAccess/AvailableItemProperties"
+	OPCDAAccess_ItemProperties_FullMethodName          = "/opcda.access.v1.OPCDAAccess/ItemProperties"
 )
 
 // OPCDAAccessClient is the client API for OPCDAAccess service.
@@ -40,6 +42,19 @@ type OPCDAAccessClient interface {
 	// client cancels, the source is lost, or the adapter stops. The stream
 	// never replays a missed value and never resubscribes on its own.
 	Subscribe(ctx context.Context, in *DASubscribeRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[DASubscribeResponse], error)
+	// AvailableItemProperties reports which OPC DA properties a source offers
+	// for one item, in the source's own order. It is IOPCItemProperties'
+	// QueryAvailableProperties, passed through.
+	AvailableItemProperties(ctx context.Context, in *DAAvailableItemPropertiesRequest, opts ...grpc.CallOption) (*DAAvailableItemPropertiesResponse, error)
+	// ItemProperties reads named OPC DA properties of one item. Results match
+	// the requested identifiers in size and order, and a per-property HRESULT
+	// stays a result rather than failing the batch.
+	//
+	// The item's value, quality and timestamp are properties 2, 3 and 4 and are
+	// refused here: Read and Subscribe deliver a value together with its
+	// timestamp and its raw quality, and answering the same question a second
+	// way without them could produce a different answer.
+	ItemProperties(ctx context.Context, in *DAItemPropertiesRequest, opts ...grpc.CallOption) (*DAItemPropertiesResponse, error)
 }
 
 type oPCDAAccessClient struct {
@@ -109,6 +124,26 @@ func (c *oPCDAAccessClient) Subscribe(ctx context.Context, in *DASubscribeReques
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type OPCDAAccess_SubscribeClient = grpc.ServerStreamingClient[DASubscribeResponse]
 
+func (c *oPCDAAccessClient) AvailableItemProperties(ctx context.Context, in *DAAvailableItemPropertiesRequest, opts ...grpc.CallOption) (*DAAvailableItemPropertiesResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(DAAvailableItemPropertiesResponse)
+	err := c.cc.Invoke(ctx, OPCDAAccess_AvailableItemProperties_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *oPCDAAccessClient) ItemProperties(ctx context.Context, in *DAItemPropertiesRequest, opts ...grpc.CallOption) (*DAItemPropertiesResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(DAItemPropertiesResponse)
+	err := c.cc.Invoke(ctx, OPCDAAccess_ItemProperties_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // OPCDAAccessServer is the server API for OPCDAAccess service.
 // All implementations must embed UnimplementedOPCDAAccessServer
 // for forward compatibility.
@@ -123,6 +158,19 @@ type OPCDAAccessServer interface {
 	// client cancels, the source is lost, or the adapter stops. The stream
 	// never replays a missed value and never resubscribes on its own.
 	Subscribe(*DASubscribeRequest, grpc.ServerStreamingServer[DASubscribeResponse]) error
+	// AvailableItemProperties reports which OPC DA properties a source offers
+	// for one item, in the source's own order. It is IOPCItemProperties'
+	// QueryAvailableProperties, passed through.
+	AvailableItemProperties(context.Context, *DAAvailableItemPropertiesRequest) (*DAAvailableItemPropertiesResponse, error)
+	// ItemProperties reads named OPC DA properties of one item. Results match
+	// the requested identifiers in size and order, and a per-property HRESULT
+	// stays a result rather than failing the batch.
+	//
+	// The item's value, quality and timestamp are properties 2, 3 and 4 and are
+	// refused here: Read and Subscribe deliver a value together with its
+	// timestamp and its raw quality, and answering the same question a second
+	// way without them could produce a different answer.
+	ItemProperties(context.Context, *DAItemPropertiesRequest) (*DAItemPropertiesResponse, error)
 	mustEmbedUnimplementedOPCDAAccessServer()
 }
 
@@ -147,6 +195,12 @@ func (UnimplementedOPCDAAccessServer) Write(context.Context, *DAWriteRequest) (*
 }
 func (UnimplementedOPCDAAccessServer) Subscribe(*DASubscribeRequest, grpc.ServerStreamingServer[DASubscribeResponse]) error {
 	return status.Error(codes.Unimplemented, "method Subscribe not implemented")
+}
+func (UnimplementedOPCDAAccessServer) AvailableItemProperties(context.Context, *DAAvailableItemPropertiesRequest) (*DAAvailableItemPropertiesResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method AvailableItemProperties not implemented")
+}
+func (UnimplementedOPCDAAccessServer) ItemProperties(context.Context, *DAItemPropertiesRequest) (*DAItemPropertiesResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ItemProperties not implemented")
 }
 func (UnimplementedOPCDAAccessServer) mustEmbedUnimplementedOPCDAAccessServer() {}
 func (UnimplementedOPCDAAccessServer) testEmbeddedByValue()                     {}
@@ -252,6 +306,42 @@ func _OPCDAAccess_Subscribe_Handler(srv interface{}, stream grpc.ServerStream) e
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type OPCDAAccess_SubscribeServer = grpc.ServerStreamingServer[DASubscribeResponse]
 
+func _OPCDAAccess_AvailableItemProperties_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(DAAvailableItemPropertiesRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(OPCDAAccessServer).AvailableItemProperties(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: OPCDAAccess_AvailableItemProperties_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(OPCDAAccessServer).AvailableItemProperties(ctx, req.(*DAAvailableItemPropertiesRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _OPCDAAccess_ItemProperties_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(DAItemPropertiesRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(OPCDAAccessServer).ItemProperties(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: OPCDAAccess_ItemProperties_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(OPCDAAccessServer).ItemProperties(ctx, req.(*DAItemPropertiesRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // OPCDAAccess_ServiceDesc is the grpc.ServiceDesc for OPCDAAccess service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -274,6 +364,14 @@ var OPCDAAccess_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "Write",
 			Handler:    _OPCDAAccess_Write_Handler,
+		},
+		{
+			MethodName: "AvailableItemProperties",
+			Handler:    _OPCDAAccess_AvailableItemProperties_Handler,
+		},
+		{
+			MethodName: "ItemProperties",
+			Handler:    _OPCDAAccess_ItemProperties_Handler,
 		},
 	},
 	Streams: []grpc.StreamDesc{

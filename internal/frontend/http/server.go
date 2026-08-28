@@ -23,6 +23,7 @@ type Config struct {
 	MaxBrowseEntries    int
 	MaxBrowseDepth      int
 	MaxItemIDBytes      int
+	MaxItemProperties   int
 	MaxJSONDepth        int
 	RequireLoopbackHost bool
 }
@@ -40,6 +41,9 @@ func New(runtime opcda.Runtime, config Config) *Server {
 	}
 	if config.MaxWriteItems <= 0 {
 		config.MaxWriteItems = opcda.DefaultLimits().MaxWriteItems
+	}
+	if config.MaxItemProperties <= 0 {
+		config.MaxItemProperties = opcda.DefaultLimits().MaxItemProperties
 	}
 	if config.MaxItemIDBytes <= 0 {
 		config.MaxItemIDBytes = opcda.DefaultLimits().MaxItemIDBytes
@@ -116,6 +120,24 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.handleBrowse(ctx, w, r)
+	case "/v1/properties/available":
+		if r.Method != http.MethodPost {
+			writeMethodNotAllowed(w, http.MethodPost)
+			return
+		}
+		if !validateBrowserBoundary(w, r) {
+			return
+		}
+		s.handleAvailableProperties(ctx, w, r)
+	case "/v1/properties":
+		if r.Method != http.MethodPost {
+			writeMethodNotAllowed(w, http.MethodPost)
+			return
+		}
+		if !validateBrowserBoundary(w, r) {
+			return
+		}
+		s.handleItemProperties(ctx, w, r)
 	case "/v1/write":
 		if r.Method != http.MethodPost {
 			writeMethodNotAllowed(w, http.MethodPost)

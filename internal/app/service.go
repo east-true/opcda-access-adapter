@@ -72,6 +72,7 @@ func New(config Config, runtime opcda.Runtime) (*Service, error) {
 			MaxBrowseEntries:    config.Runtime.Limits.MaxBrowseEntries,
 			MaxBrowseDepth:      config.Runtime.Limits.MaxBrowseDepth,
 			MaxItemIDBytes:      config.Runtime.Limits.MaxItemIDBytes,
+			MaxItemProperties:   config.Runtime.Limits.MaxItemProperties,
 			MaxJSONDepth:        config.MaxJSONDepth,
 			RequireLoopbackHost: listenAddressIsLoopback(config.HTTPListenAddress),
 		})
@@ -102,6 +103,7 @@ func New(config Config, runtime opcda.Runtime) (*Service, error) {
 			MaxBrowseEntries:    config.Runtime.Limits.MaxBrowseEntries,
 			MaxBrowseDepth:      config.Runtime.Limits.MaxBrowseDepth,
 			MaxItemIDBytes:      config.Runtime.Limits.MaxItemIDBytes,
+			MaxItemProperties:   config.Runtime.Limits.MaxItemProperties,
 
 			MaxSubscribeItems:      config.Runtime.Limits.MaxSubscriptionItems,
 			MaxSubscriptionStreams: config.Runtime.Limits.MaxSubscriptions,
