@@ -308,6 +308,12 @@ A refusal is also not remembered. The discovery is not recorded, so the next
 browse asks again rather than serving the truncation for the length of the
 refresh interval.
 
+There is no unlimited budget. A non-positive one creates nothing, so a caller
+that forgets to pass one is refused rather than quietly allowed to grow the
+address space without bound. Browse does not resolve at all: it asks what a node
+**is**, which never creates, because Browse has no budget to pass and a client
+browsing ItemIDs it invented would otherwise add a node for each.
+
 ### A source without the interface
 
 `IOPCItemProperties` is optional. A source that does not implement it is working

@@ -2,6 +2,7 @@ package opcua
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -135,7 +136,7 @@ func TestReadingAPropertyGoesToTheSourceEveryTime(t *testing.T) {
 		},
 	}
 	service, space := testDataService(t, runtime)
-	if err := space.AttachItemProperties("Test/Float", runtime.available["Test/Float"], 0); err != nil {
+	if err := space.AttachItemProperties("Test/Float", runtime.available["Test/Float"], testNodeBudget); err != nil {
 		t.Fatalf("AttachItemProperties: %v", err)
 	}
 
@@ -203,7 +204,7 @@ func TestDescriptionIsAnsweredOnlyWhenTheSourceOffersIt(t *testing.T) {
 		t.Fatalf("before discovery the attribute answered %s", response.Results[0].Status.Hex())
 	}
 
-	space.AttachItemProperties("Test/Float", runtime.available["Test/Float"], 0)
+	space.AttachItemProperties("Test/Float", runtime.available["Test/Float"], testNodeBudget)
 	response, err = service.Read(context.Background(), readRequestFor(described), time.Now())
 	if err != nil {
 		t.Fatalf("Read: %v", err)
@@ -329,7 +330,7 @@ func TestAPropertyNodeCannotBeMonitored(t *testing.T) {
 	service, space := testSubscriptionService(t, runtime)
 	space.AttachItemProperties("Test/Float", []opcda.AvailableProperty{
 		{ID: opcda.PropertyLowEU}, {ID: opcda.PropertyHighEU},
-	}, 0)
+	}, testNodeBudget)
 
 	id := createSubscription(t, service)
 	response, err := service.CreateMonitoredItems(context.Background(), testSession, CreateMonitoredItemsRequest{
@@ -377,7 +378,7 @@ func TestAPropertyNodeCannotBeWritten(t *testing.T) {
 	service, space := testDataService(t, runtime)
 	space.AttachItemProperties("Test/Float", []opcda.AvailableProperty{
 		{ID: opcda.PropertyEUUnits},
-	}, 0)
+	}, testNodeBudget)
 	property, ok := space.Node(ItemPropertyNodeID("Test/Float", "EngineeringUnits"))
 	if !ok {
 		t.Fatal("the property node was not created")
@@ -416,12 +417,12 @@ func TestAPropertyTheSourceStopsOfferingStopsBeingReported(t *testing.T) {
 	both := []opcda.AvailableProperty{
 		{ID: opcda.PropertyEUUnits}, {ID: opcda.PropertyLowEU}, {ID: opcda.PropertyHighEU},
 	}
-	space.AttachItemProperties("Test/Float", both, 0)
+	space.AttachItemProperties("Test/Float", both, testNodeBudget)
 	if names := propertyNames(t, space); !names["EURange"] || !names["EngineeringUnits"] {
 		t.Fatalf("first attach reported %v", names)
 	}
 
-	space.AttachItemProperties("Test/Float", []opcda.AvailableProperty{{ID: opcda.PropertyEUUnits}}, 0)
+	space.AttachItemProperties("Test/Float", []opcda.AvailableProperty{{ID: opcda.PropertyEUUnits}}, testNodeBudget)
 	names := propertyNames(t, space)
 	if names["EURange"] {
 		t.Fatal("a property the source stopped offering is still reported")
@@ -460,7 +461,7 @@ func TestResolveNodeSeparatesItemsFromTheirProperties(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	space.AttachItemProperties("Test/Float", []opcda.AvailableProperty{{ID: opcda.PropertyEUUnits}}, 0)
+	space.AttachItemProperties("Test/Float", []opcda.AvailableProperty{{ID: opcda.PropertyEUUnits}}, testNodeBudget)
 
 	for _, testCase := range []struct {
 		name string
@@ -478,7 +479,7 @@ func TestResolveNodeSeparatesItemsFromTheirProperties(t *testing.T) {
 		{"nothing at all", StringNodeID(AdapterNamespaceIndex, "neither:one\x1fnor/the/other"), NodeKindUnknown},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
-			node, kind := space.ResolveNode(testCase.id, 0)
+			node, kind := space.ResolveNode(testCase.id, testNodeBudget)
 			if kind != testCase.want {
 				t.Fatalf("kind = %d, want %d", kind, testCase.want)
 			}
@@ -559,5 +560,75 @@ func TestARefusedDiscoveryIsRetriedRatherThanRemembered(t *testing.T) {
 	}
 	if runtime.availableCalls != 2 {
 		t.Fatalf("the source was asked %d times, want 2", runtime.availableCalls)
+	}
+}
+
+// Browsing asks what a node is; it must not create one. A client that browses
+// ItemIDs it invents would otherwise grow the address space without bound,
+// because the node budget is what Read, Write and Subscribe pass and Browse has
+// none to pass.
+func TestBrowsingAnUnknownItemDoesNotCreateIt(t *testing.T) {
+	runtime := &stubRuntime{}
+	space := testAddressSpace(t)
+	populator, err := NewPopulator(space, runtime, DefaultPopulationLimits())
+	if err != nil {
+		t.Fatalf("NewPopulator: %v", err)
+	}
+	browse, err := NewBrowseService(space, DefaultBrowseLimits())
+	if err != nil {
+		t.Fatalf("NewBrowseService: %v", err)
+	}
+	browse.AttachPopulator(populator)
+
+	before := space.SourceNodeCount()
+	for index := 0; index < 25; index++ {
+		if _, err := browse.Browse(context.Background(), BrowseRequest{
+			NodesToBrowse: []BrowseDescription{{
+				NodeID:          ItemNodeID(opcda.DAItemID(fmt.Sprintf("Invented/Item%d", index))),
+				BrowseDirection: BrowseDirectionForward,
+				ResultMask:      ResultMaskAll,
+			}},
+		}, time.Now()); err != nil {
+			t.Fatalf("Browse: %v", err)
+		}
+	}
+	if grew := space.SourceNodeCount() - before; grew != 0 {
+		t.Fatalf("browsing 25 invented ItemIDs added %d nodes", grew)
+	}
+}
+
+// testNodeBudget is a budget large enough for any test here. Tests name one
+// rather than passing zero: zero is not "unlimited", it is "create nothing".
+const testNodeBudget = 1000
+
+// There is no unlimited node budget. A caller that passes a non-positive one
+// creates nothing, so forgetting to pass a budget is refused rather than
+// quietly allowed to grow the address space without bound -- which is what let
+// a Browse create a node for every ItemID a client cared to invent.
+func TestANonPositiveNodeBudgetCreatesNothing(t *testing.T) {
+	space := testAddressSpace(t)
+	if err := space.PopulateBranch(nil, []opcda.BrowseEntry{
+		{Kind: opcda.BrowseEntryItem, Name: "Float", ItemID: itemID("Test/Float"),
+			CanonicalType: varType(opcda.VTR4)},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	before := space.SourceNodeCount()
+
+	for _, budget := range []int{0, -1} {
+		if _, ok := space.ResolveVariable(ItemNodeID("Never/Seen"), budget); ok {
+			t.Fatalf("a budget of %d created an item node", budget)
+		}
+		if _, kind := space.ResolveNode(ItemNodeID("Never/Seen"), budget); kind != NodeKindUnknown {
+			t.Fatalf("a budget of %d resolved an item that does not exist", budget)
+		}
+		err := space.AttachItemProperties("Test/Float",
+			[]opcda.AvailableProperty{{ID: opcda.PropertyEUUnits}}, budget)
+		if err == nil {
+			t.Fatalf("a budget of %d attached a property node", budget)
+		}
+	}
+	if grew := space.SourceNodeCount() - before; grew != 0 {
+		t.Fatalf("a non-positive budget added %d nodes", grew)
 	}
 }

@@ -481,8 +481,10 @@ func (s *AddressSpace) ResolveVariable(id NodeID, maxNodes int) (*Node, bool) {
 		return node, true
 	}
 	// Addressing items directly must not let a client grow the space without
-	// limit, so the same node budget applies.
-	if maxNodes > 0 && len(s.nodes)-s.standardNodeCount >= maxNodes {
+	// limit, so the same node budget applies. A non-positive budget creates
+	// nothing: there is no unlimited, and a caller that passes one by mistake
+	// is refused rather than quietly allowed to grow the space without bound.
+	if len(s.nodes)-s.standardNodeCount >= max(maxNodes, 0) {
 		return nil, false
 	}
 	node := &Node{
