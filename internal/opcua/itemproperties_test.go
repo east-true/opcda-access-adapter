@@ -135,8 +135,8 @@ func TestReadingAPropertyGoesToTheSourceEveryTime(t *testing.T) {
 		},
 	}
 	service, space := testDataService(t, runtime)
-	if !space.AttachItemProperties("Test/Float", runtime.available["Test/Float"], 0) {
-		t.Fatal("AttachItemProperties did not attach to a known item")
+	if err := space.AttachItemProperties("Test/Float", runtime.available["Test/Float"], 0); err != nil {
+		t.Fatalf("AttachItemProperties: %v", err)
 	}
 
 	units := ItemPropertyNodeID("Test/Float", "EngineeringUnits")
@@ -491,5 +491,73 @@ func TestResolveNodeSeparatesItemsFromTheirProperties(t *testing.T) {
 				t.Fatal("a property resolved as a node that does not know it is one")
 			}
 		})
+	}
+}
+
+// The node budget must refuse a property set it cannot hold, not attach part of
+// it. A client cannot tell a short list from a complete one, and the populator
+// would record the truncated answer as the discovered one.
+func TestAPropertySetThatDoesNotFitIsNotAttachedInPart(t *testing.T) {
+	space := testAddressSpace(t)
+	if err := space.PopulateBranch(nil, []opcda.BrowseEntry{
+		{Kind: opcda.BrowseEntryItem, Name: "Float", ItemID: itemID("Test/Float"),
+			CanonicalType: varType(opcda.VTR4)},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	available := []opcda.AvailableProperty{
+		{ID: opcda.PropertyEUUnits}, {ID: opcda.PropertyLowEU}, {ID: opcda.PropertyHighEU},
+		{ID: opcda.PropertyCloseLabel}, {ID: opcda.PropertyOpenLabel},
+	}
+	// One item node exists, and the set needs four more. A budget of three
+	// cannot hold them.
+	budget := space.SourceNodeCount() + 3
+	if err := space.AttachItemProperties("Test/Float", available, budget); err == nil {
+		t.Fatal("a property set that does not fit the node budget was accepted")
+	}
+	if names := propertyNames(t, space); len(names) != 0 {
+		t.Fatalf("a refused attach left %v behind", names)
+	}
+}
+
+// A discovery that could not be attached must not be recorded as done, or the
+// refresh interval would keep a client from ever seeing the properties.
+func TestARefusedDiscoveryIsRetriedRatherThanRemembered(t *testing.T) {
+	runtime := &stubRuntime{
+		available: map[string][]opcda.AvailableProperty{
+			"Test/Float": {
+				{ID: opcda.PropertyEUUnits}, {ID: opcda.PropertyLowEU}, {ID: opcda.PropertyHighEU},
+				{ID: opcda.PropertyCloseLabel}, {ID: opcda.PropertyOpenLabel},
+			},
+		},
+	}
+	space := testAddressSpace(t)
+	if err := space.PopulateBranch(nil, []opcda.BrowseEntry{
+		{Kind: opcda.BrowseEntryItem, Name: "Float", ItemID: itemID("Test/Float"),
+			CanonicalType: varType(opcda.VTR4)},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	limits := DefaultPopulationLimits()
+	limits.MaxNodes = space.SourceNodeCount() + 3
+	populator, err := NewPopulator(space, runtime, limits)
+	if err != nil {
+		t.Fatalf("NewPopulator: %v", err)
+	}
+
+	now := time.Now()
+	if err := populator.EnsureItemProperties(context.Background(), "Test/Float", now); err == nil {
+		t.Fatal("a property set that does not fit was reported as discovered")
+	}
+	if names := propertyNames(t, space); len(names) != 0 {
+		t.Fatalf("a refused discovery left %v behind", names)
+	}
+	// Immediately afterwards, well inside the refresh interval, it tries again
+	// rather than serving the refusal as a remembered answer.
+	if err := populator.EnsureItemProperties(context.Background(), "Test/Float", now); err == nil {
+		t.Fatal("the second attempt was answered from the cache")
+	}
+	if runtime.availableCalls != 2 {
+		t.Fatalf("the source was asked %d times, want 2", runtime.availableCalls)
 	}
 }
