@@ -402,31 +402,22 @@ func (s *DataAccessService) Read(ctx context.Context, request ReadRequest, now t
 			results[index] = failedDataValue(StatusBadIndexRangeInvalid)
 			continue
 		}
-		// A property node identifier is self-describing in the same way an
-		// item's is: it carries the exact ItemID and the property it stands
-		// for, so it can be read without having been browsed.
-		if itemID, binding, ok := ItemPropertyForNode(target.NodeID); ok {
-			if target.AttributeID != AttributeValue {
-				node, known := s.space.Node(target.NodeID)
-				if !known {
-					results[index] = failedDataValue(StatusBadNodeIdUnknown)
-					continue
-				}
-				results[index] = s.readAttribute(ctx, node, target.AttributeID, now, request.TimestampsToReturn)
-				continue
-			}
+		// An item and a property identifier are both self-describing, so
+		// either can be read without having been browsed. A source need not
+		// implement Browse at all.
+		node, kind := s.space.ResolveNode(target.NodeID, s.limits.MaxNodes)
+		if kind == NodeKindUnknown {
+			results[index] = failedDataValue(StatusBadNodeIdUnknown)
+			continue
+		}
+		if kind == NodeKindItemProperty && target.AttributeID == AttributeValue {
+			itemID, binding, _ := ItemPropertyForNode(target.NodeID)
 			propertyTargets = append(propertyTargets, propertyTarget{index: index, itemID: itemID, binding: binding})
 			continue
 		}
-		node, ok := s.space.Node(target.NodeID)
-		if !ok {
-			// A node identifier that names a DA item is self-describing, so it
-			// can be read without having been browsed. A source need not
-			// implement Browse at all.
-			if node, ok = s.space.ResolveVariable(target.NodeID, s.limits.MaxNodes); !ok {
-				results[index] = failedDataValue(StatusBadNodeIdUnknown)
-				continue
-			}
+		if node == nil {
+			results[index] = failedDataValue(StatusBadNodeIdUnknown)
+			continue
 		}
 		if target.AttributeID != AttributeValue {
 			results[index] = s.readAttribute(ctx, node, target.AttributeID, now, request.TimestampsToReturn)
@@ -441,7 +432,7 @@ func (s *DataAccessService) Read(ctx context.Context, request ReadRequest, now t
 			results[index] = localDataValue(node.LocalValue(now), request.TimestampsToReturn, now)
 			continue
 		}
-		if node.Class != NodeClassVariable || node.ItemID == "" {
+		if kind != NodeKindItem {
 			results[index] = failedDataValue(StatusBadAttributeIDInvalid)
 			continue
 		}
@@ -723,29 +714,26 @@ func (s *DataAccessService) Write(ctx context.Context, request WriteRequest, now
 			results[index] = StatusBadWriteNotSupported
 			continue
 		}
-		node, ok := s.space.Node(target.NodeID)
-		if !ok {
-			if node, ok = s.space.ResolveVariable(target.NodeID, s.limits.MaxNodes); !ok {
-				results[index] = StatusBadNodeIdUnknown
-				continue
-			}
+		node, kind := s.space.ResolveNode(target.NodeID, s.limits.MaxNodes)
+		if kind == NodeKindUnknown {
+			results[index] = StatusBadNodeIdUnknown
+			continue
 		}
 		if target.AttributeID != AttributeValue {
 			// Every other attribute this adapter exposes is read-only.
 			results[index] = StatusBadNotWritable
 			continue
 		}
-		if node.Class != NodeClassVariable || node.ItemID == "" {
-			results[index] = StatusBadAttributeIDInvalid
+		// A property describes an item and is not a place to put a value. The
+		// access level would refuse it anyway, since a property node is created
+		// read-only, but that is a side effect of how the node was built rather
+		// than a rule.
+		if kind == NodeKindItemProperty {
+			results[index] = StatusBadNotWritable
 			continue
 		}
-		// A Table A.1 property node carries the ItemID of the item it
-		// describes. The access level below would refuse it anyway, since a
-		// property is created read-only, but that is a side effect of how the
-		// node was built rather than a rule. This is the rule: a property
-		// describes an item and is not a place to put a value.
-		if node.IsItemPropertyNode() {
-			results[index] = StatusBadNotWritable
+		if kind != NodeKindItem {
+			results[index] = StatusBadAttributeIDInvalid
 			continue
 		}
 		if node.AccessRightsKnown && node.AccessLevel&AccessLevelCurrentWrite == 0 {

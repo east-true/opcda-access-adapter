@@ -325,3 +325,55 @@ func (n *Node) IsItemPropertyNode() bool {
 	_, _, ok := ItemPropertyForNode(n.ID)
 	return ok
 }
+
+// NodeKind classifies what a node identifier stands for, so that "is this a DA
+// item I can read, write or monitor?" is answered once.
+//
+// It used to be re-derived at each call site as Class == Variable && ItemID
+// != "", which a Table A.1 property node satisfies: it is a variable and it
+// carries the ItemID of the item it describes. Two of the three call sites got
+// that wrong, and the Subscribe one monitored the item's value and reported it
+// as a property.
+type NodeKind int
+
+const (
+	// NodeKindUnknown is a node identifier the address space does not resolve.
+	NodeKindUnknown NodeKind = iota
+	// NodeKindItem is a variable standing for a DA item, which can be read,
+	// written and monitored.
+	NodeKindItem
+	// NodeKindItemProperty is a Table A.1 property of a DA item, which can
+	// only be read.
+	NodeKindItemProperty
+	// NodeKindOther is a node that is not a DA item at all: a folder, the
+	// Server object, or one of the server's own variables.
+	NodeKindOther
+)
+
+// ResolveNode classifies a node identifier and returns the node behind it.
+//
+// A DA item is created on demand from its self-describing identifier, because a
+// source need not implement Browse and a client of such a source knows its
+// ItemIDs from elsewhere. A property is not created here: it exists only once
+// the source has said the item has it.
+func (s *AddressSpace) ResolveNode(id NodeID, maxNodes int) (*Node, NodeKind) {
+	if node, ok := s.Node(id); ok {
+		switch {
+		case node.IsItemPropertyNode():
+			return node, NodeKindItemProperty
+		case node.Class == NodeClassVariable && node.ItemID != "":
+			return node, NodeKindItem
+		default:
+			return node, NodeKindOther
+		}
+	}
+	if _, _, ok := ItemPropertyForNode(id); ok {
+		// The identifier names a property, but the source has not said the
+		// item has it. Reading it will ask the source, which is the authority.
+		return nil, NodeKindItemProperty
+	}
+	if node, ok := s.ResolveVariable(id, maxNodes); ok {
+		return node, NodeKindItem
+	}
+	return nil, NodeKindUnknown
+}

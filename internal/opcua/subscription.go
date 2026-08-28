@@ -1053,29 +1053,20 @@ func (s *SubscriptionService) prepareMonitoredItem(subscription *uaSubscription,
 	if !create.RequestedParameters.Filter.TypeID.IsNull() {
 		return failed(StatusBadFilterNotAllowed), nil
 	}
-	node, ok := s.space.Node(create.ItemToMonitor.NodeID)
-	if !ok {
-		// A node identifier naming a DA item can be monitored without having
-		// been browsed, since a source need not implement Browse at all.
-		if node, ok = s.space.ResolveVariable(create.ItemToMonitor.NodeID, s.limits.MaxNodes); !ok {
-			return failed(StatusBadNodeIdUnknown), nil
-		}
-	}
-	if node.Class != NodeClassVariable || node.ItemID == "" {
-		return failed(StatusBadAttributeIDInvalid), nil
-	}
-	// A Table A.1 property node carries the ItemID of the item it describes,
-	// so without this it would pass every check below and the subscription
-	// would monitor the item's value and deliver it under the property's
-	// client handle -- a process value reported as an engineering range.
-	//
-	// OPC DA has no change notification for item properties: a group notifies
-	// on item values only. Monitoring one would mean the adapter inventing a
-	// sampling loop of its own, which is a source of updates the source never
-	// agreed to. It is refused instead, and a client that wants a property
-	// reads it.
-	if node.IsItemPropertyNode() {
+	// A node identifier naming a DA item can be monitored without having been
+	// browsed, since a source need not implement Browse at all.
+	node, kind := s.space.ResolveNode(create.ItemToMonitor.NodeID, s.limits.MaxNodes)
+	switch kind {
+	case NodeKindUnknown:
+		return failed(StatusBadNodeIdUnknown), nil
+	case NodeKindItemProperty:
+		// OPC DA has no change notification for item properties: a group
+		// notifies on item values only. Monitoring one would mean the adapter
+		// inventing a sampling loop of its own, which is a source of updates
+		// the source never agreed to. A client that wants a property reads it.
 		return failed(StatusBadNotSupported), nil
+	case NodeKindOther:
+		return failed(StatusBadAttributeIDInvalid), nil
 	}
 	if node.AccessRightsKnown && node.AccessLevel&AccessLevelCurrentRead == 0 {
 		return failed(StatusBadNotReadable), nil

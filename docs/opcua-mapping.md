@@ -275,8 +275,8 @@ answers `Bad_NotReadable` for that property alone.
 ### A property is read, never monitored or written
 
 A Table A.1 property node carries the **ItemID of the item it describes**, which
-is what lets it be addressed without browsing. That also means every path which
-turns a node into a DA item has to exclude it, and two did not:
+is what lets it be addressed without browsing. That also meant every path which
+turned a node into a DA item had to exclude it, and two did not:
 
 - **Monitoring** one would have subscribed to the item's value and delivered a
   process value under the property's client handle — a live reading reported as
@@ -288,6 +288,13 @@ turns a node into a DA item has to exclude it, and two did not:
   read-only, so the access-level check refused it already, but that was a side
   effect of how the node was built rather than a rule. The rule is now stated: a
   property describes an item and is not a place to put a value.
+
+The root of both was that "is this a DA item?" was re-derived at each call site
+as `Class == Variable && ItemID != ""` — which a property node satisfies. It is
+now asked once, by `AddressSpace.ResolveNode`, which answers with what the node
+actually is: a DA item, one of its properties, something else in the address
+space, or nothing. Read, Write, Subscribe and Browse all go through it, so a
+fifth caller inherits the distinction rather than having to remember it.
 
 ### A source without the interface
 
