@@ -537,8 +537,8 @@ func (s *BrowseService) ensurePopulated(ctx context.Context, id NodeID, now time
 	// 10000-8 Table A.1 properties are part of that answer. They are discovered
 	// here rather than when the item node is created, so an item nobody browses
 	// costs no call to the source.
-	if itemID, ok := s.space.VariableItemID(id); ok {
-		return s.populator.EnsureItemProperties(ctx, itemID, now)
+	if node, kind := s.space.ResolveNode(id, 0); kind == NodeKindItem {
+		return s.populator.EnsureItemProperties(ctx, node.ItemID, now)
 	}
 	path, ok := PathForNode(id)
 	if !ok {

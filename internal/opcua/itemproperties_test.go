@@ -446,3 +446,50 @@ func propertyNames(t *testing.T, space *AddressSpace) map[string]bool {
 	}
 	return names
 }
+
+// "Is this a DA item?" is one question, and ResolveNode is the one place that
+// answers it. It used to be re-derived at three call sites as Class ==
+// Variable && ItemID != "", which a property node satisfies, and two of the
+// three got it wrong.
+func TestResolveNodeSeparatesItemsFromTheirProperties(t *testing.T) {
+	space := testAddressSpace(t)
+	if err := space.PopulateBranch(nil, []opcda.BrowseEntry{
+		{Kind: opcda.BrowseEntryItem, Name: "Float", ItemID: itemID("Test/Float"),
+			CanonicalType: varType(opcda.VTR4)},
+		{Kind: opcda.BrowseEntryBranch, Name: "Folder"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	space.AttachItemProperties("Test/Float", []opcda.AvailableProperty{{ID: opcda.PropertyEUUnits}}, 0)
+
+	for _, testCase := range []struct {
+		name string
+		id   NodeID
+		want NodeKind
+	}{
+		{"a browsed item", ItemNodeID("Test/Float"), NodeKindItem},
+		{"an item never browsed", ItemNodeID("Never/Browsed"), NodeKindItem},
+		{"an attached property", ItemPropertyNodeID("Test/Float", "EngineeringUnits"), NodeKindItemProperty},
+		// A property identifier resolves as a property even before the source
+		// has said the item has it: reading it asks the source, which decides.
+		{"a property never attached", ItemPropertyNodeID("Test/Float", "EURange"), NodeKindItemProperty},
+		{"the source folder", space.SourceFolderID(), NodeKindOther},
+		{"the Server object", NumericNodeID(0, NodeIDServer), NodeKindOther},
+		{"nothing at all", StringNodeID(AdapterNamespaceIndex, "neither:one\x1fnor/the/other"), NodeKindUnknown},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			node, kind := space.ResolveNode(testCase.id, 0)
+			if kind != testCase.want {
+				t.Fatalf("kind = %d, want %d", kind, testCase.want)
+			}
+			if kind == NodeKindItem && (node == nil || node.ItemID == "") {
+				t.Fatal("an item resolved without an ItemID")
+			}
+			// A property must never come back as something a caller would
+			// hand to the DA runtime as an item.
+			if kind == NodeKindItemProperty && node != nil && !node.IsItemPropertyNode() {
+				t.Fatal("a property resolved as a node that does not know it is one")
+			}
+		})
+	}
+}
