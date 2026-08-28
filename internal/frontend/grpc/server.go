@@ -838,9 +838,16 @@ func encodeItemPropertyResult(value opcda.ItemPropertyValue) *opcdav1.DAItemProp
 		varType := value.VarType
 		encoded.DataType = encodeVarType(&varType)
 	}
-	if !value.OK || !value.ValuePresent {
-		// A property the source refused, or answered without a value, keeps
-		// its HRESULT and carries nothing else. Nothing is substituted for it.
+	if !value.OK {
+		// A property the source refused keeps its HRESULT and carries nothing
+		// else. Nothing is substituted for it.
+		return encoded
+	}
+	if !value.ValuePresent {
+		// The source answered and gave no value. That is an answer, not a
+		// failure, and reporting it as one would invent a refusal the source
+		// never made.
+		encoded.Ok = true
 		return encoded
 	}
 	scalar, err := encodeScalar(value.VarType, value.Value)
@@ -849,6 +856,7 @@ func encodeItemPropertyResult(value opcda.ItemPropertyValue) *opcdav1.DAItemProp
 		return encoded
 	}
 	encoded.Value = scalar
+	encoded.ValuePresent = true
 	encoded.Ok = true
 	return encoded
 }

@@ -34,6 +34,7 @@ type itemPropertyHTTPResult struct {
 	DataType      *opcda.DAVarTypeInfo `json:"dataType,omitempty"`
 	ValueEncoding string               `json:"valueEncoding,omitempty"`
 	Value         json.RawMessage      `json:"value,omitempty"`
+	ValuePresent  bool                 `json:"valuePresent"`
 	HRESULT       *opcda.HRESULTValue  `json:"hresult"`
 	ErrorCode     string               `json:"errorCode,omitempty"`
 }
@@ -143,9 +144,15 @@ func encodeItemPropertyHTTP(value opcda.ItemPropertyValue) itemPropertyHTTPResul
 		information := value.VarType.Information()
 		encoded.DataType = &information
 	}
-	if !value.OK || !value.ValuePresent {
-		// A property the source refused, or answered without a value, keeps its
-		// HRESULT and carries nothing else. Nothing is substituted for it.
+	if !value.OK {
+		// A property the source refused keeps its HRESULT and carries nothing
+		// else. Nothing is substituted for it.
+		return encoded
+	}
+	if !value.ValuePresent {
+		// The source answered and gave no value. Absence is absence; reporting
+		// it as a failure would invent a refusal the source never made.
+		encoded.OK = true
 		return encoded
 	}
 	encodedValue, encoding, err := encodeDAValue(value.VarType, value.Value)
@@ -156,6 +163,7 @@ func encodeItemPropertyHTTP(value opcda.ItemPropertyValue) itemPropertyHTTPResul
 	encoded.OK = true
 	encoded.Value = encodedValue
 	encoded.ValueEncoding = encoding
+	encoded.ValuePresent = true
 	return encoded
 }
 

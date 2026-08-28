@@ -425,13 +425,18 @@ func (x *DAItemPropertiesResponse) GetResults() []*DAItemPropertyResult {
 }
 
 type DAItemPropertyResult struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	PropertyId    uint32                 `protobuf:"varint,1,opt,name=property_id,json=propertyId,proto3" json:"property_id,omitempty"`
-	Ok            bool                   `protobuf:"varint,2,opt,name=ok,proto3" json:"ok,omitempty"`
-	DataType      *DAVarType             `protobuf:"bytes,3,opt,name=data_type,json=dataType,proto3" json:"data_type,omitempty"`
-	Value         *DAScalarValue         `protobuf:"bytes,4,opt,name=value,proto3" json:"value,omitempty"`
-	Hresult       *DAHRESULT             `protobuf:"bytes,5,opt,name=hresult,proto3" json:"hresult,omitempty"`
-	ErrorCode     string                 `protobuf:"bytes,6,opt,name=error_code,json=errorCode,proto3" json:"error_code,omitempty"`
+	state      protoimpl.MessageState `protogen:"open.v1"`
+	PropertyId uint32                 `protobuf:"varint,1,opt,name=property_id,json=propertyId,proto3" json:"property_id,omitempty"`
+	Ok         bool                   `protobuf:"varint,2,opt,name=ok,proto3" json:"ok,omitempty"`
+	DataType   *DAVarType             `protobuf:"bytes,3,opt,name=data_type,json=dataType,proto3" json:"data_type,omitempty"`
+	Value      *DAScalarValue         `protobuf:"bytes,4,opt,name=value,proto3" json:"value,omitempty"`
+	Hresult    *DAHRESULT             `protobuf:"bytes,5,opt,name=hresult,proto3" json:"hresult,omitempty"`
+	ErrorCode  string                 `protobuf:"bytes,6,opt,name=error_code,json=errorCode,proto3" json:"error_code,omitempty"`
+	// Whether a value is carried. A source can answer a property successfully
+	// and give nothing -- an empty VARIANT is an answer. Presence is its own bit
+	// for the same reason a Read timestamp's is: absence is absence, and it must
+	// not be reported as a failure the source did not report.
+	ValuePresent  bool `protobuf:"varint,7,opt,name=value_present,json=valuePresent,proto3" json:"value_present,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -506,6 +511,13 @@ func (x *DAItemPropertyResult) GetErrorCode() string {
 		return x.ErrorCode
 	}
 	return ""
+}
+
+func (x *DAItemPropertyResult) GetValuePresent() bool {
+	if x != nil {
+		return x.ValuePresent
+	}
+	return false
 }
 
 type DAStatusRequest struct {
@@ -2637,7 +2649,7 @@ const file_api_opcda_v1_opcda_access_proto_rawDesc = "" +
 	"\fproperty_ids\x18\x02 \x03(\rR\vpropertyIds\"t\n" +
 	"\x18DAItemPropertiesResponse\x12\x17\n" +
 	"\aitem_id\x18\x01 \x01(\tR\x06itemId\x12?\n" +
-	"\aresults\x18\x02 \x03(\v2%.opcda.access.v1.DAItemPropertyResultR\aresults\"\x8b\x02\n" +
+	"\aresults\x18\x02 \x03(\v2%.opcda.access.v1.DAItemPropertyResultR\aresults\"\xb0\x02\n" +
 	"\x14DAItemPropertyResult\x12\x1f\n" +
 	"\vproperty_id\x18\x01 \x01(\rR\n" +
 	"propertyId\x12\x0e\n" +
@@ -2646,7 +2658,8 @@ const file_api_opcda_v1_opcda_access_proto_rawDesc = "" +
 	"\x05value\x18\x04 \x01(\v2\x1e.opcda.access.v1.DAScalarValueR\x05value\x124\n" +
 	"\ahresult\x18\x05 \x01(\v2\x1a.opcda.access.v1.DAHRESULTR\ahresult\x12\x1d\n" +
 	"\n" +
-	"error_code\x18\x06 \x01(\tR\terrorCode\"\x11\n" +
+	"error_code\x18\x06 \x01(\tR\terrorCode\x12#\n" +
+	"\rvalue_present\x18\a \x01(\bR\fvaluePresent\"\x11\n" +
 	"\x0fDAStatusRequest\"\xd3\x02\n" +
 	"\x10DAStatusResponse\x12#\n" +
 	"\rruntime_state\x18\x01 \x01(\tR\fruntimeState\x121\n" +

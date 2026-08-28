@@ -31,14 +31,16 @@ func TestLocalDetectionGUIDsAndVTableLayouts(t *testing.T) {
 }
 
 func TestLocalDetectionInitializesAndCleansCOM(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
 	// The machine-wide registration inventory may change independently on a
 	// shared runner. Repeated success and structurally valid results exercise
 	// COM initialization, interface release, and task-memory cleanup without
 	// assuming that external registry state is immutable.
+	//
+	// Each enumeration gets its own deadline. One deadline over the whole loop
+	// made the test measure how loaded the runner was rather than whether COM
+	// is initialised and released correctly, and it failed a run on that.
 	for iteration := 0; iteration < 20; iteration++ {
-		servers, err := DetectLocalServers(ctx, LocalDetectionLimits{})
+		servers, err := detectWithinDeadline(t)
 		if err != nil {
 			t.Fatalf("iteration %d: %v", iteration, err)
 		}
@@ -48,4 +50,11 @@ func TestLocalDetectionInitializesAndCleansCOM(t *testing.T) {
 			}
 		}
 	}
+}
+
+func detectWithinDeadline(t *testing.T) ([]DetectedLocalServer, error) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	return DetectLocalServers(ctx, LocalDetectionLimits{})
 }

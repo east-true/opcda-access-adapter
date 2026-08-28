@@ -181,6 +181,39 @@ written; the added work ahead of it made it lose, on 386, with Browse correctly
 answering `Bad_NotConnected`. It now waits through that status for a bounded
 30 s.
 
+### DA item property result
+
+PR #82 exercised the DA item property path against the fixture on both native
+x86/386 and x64/amd64. Both reported the same thing:
+
+```
+grpc item properties offered=5,6,7,8 read=5,6,7 empty=8 sourceRefused=none unrepresentable=none
+```
+
+This is the first time the COM code behind it ran against a real server at all.
+`IOPCItemProperties::QueryAvailableProperties` and `::GetItemProperties`, the
+`VARIANT` array the second returns, the per-property `HRESULT` array beside it,
+and the release of both had never executed: the OPC UA path stops before them
+because this fixture offers nothing Table A.1 maps, and the DA-native endpoints
+were new.
+
+| Property | Result |
+|---|---|
+| 5 Access Rights, 6 Scan Rate, 7 EU Type | answered with a value |
+| 8 EU Info | **answered successfully with no value** |
+
+The last row is the interesting one, and it found a defect. A source can offer a
+property, be asked for it, succeed, and give nothing — an empty VARIANT is an
+answer. Both frontends were collapsing that into the same shape as a refusal,
+reporting `ok=false` with a successful HRESULT and no error code to explain it.
+Value presence is now its own bit, for the same reason a Read timestamp's is.
+
+The probe records the identifiers rather than counts, and separates the three
+ways a property can fail to carry a value — the source refused it, the source
+answered with nothing, or the adapter cannot represent what it said. An earlier
+run printed `refused=8:0x00000000`, a refusal with a successful HRESULT, which
+is what prompted the split.
+
 ### Table A.1 item property result
 
 PR #76 ran `opcuaprobe`'s Table A.1 check against the fixture on both native

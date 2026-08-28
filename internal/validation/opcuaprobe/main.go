@@ -160,11 +160,7 @@ func run(ctx context.Context, address, endpointURL, policyURI string, writeEnabl
 	}
 	fmt.Print("opcua session created and activated\n")
 
-	sourceFolder, err := c.waitForSourceFolder(token, session)
-	if err != nil {
-		return err
-	}
-	items, err := c.browseForItems(token, session, sourceFolder)
+	items, err := c.waitForSourceItems(token, session)
 	if err != nil {
 		return err
 	}
@@ -863,31 +859,42 @@ func (c *client) browse(token opcua.ChannelSecurityToken, session opcua.NodeID, 
 	return response.Results[0].References, nil
 }
 
-// waitForSourceFolder browses for the source folder, waiting through the window
-// in which the UA listener is up but the DA source is still connecting.
+// waitForSourceItems populates the address space from the source, waiting
+// through the window in which the UA listener is up but the DA source is still
+// connecting.
 //
-// grpcprobe has always done this, in waitConnected; this probe did not, and
-// asserted against the source the instant its session activated. That raced,
-// and lost on the 32-bit runner: Browse answered Bad_NotConnected, which was
-// the correct answer to a question asked too early.
-func (c *client) waitForSourceFolder(token opcua.ChannelSecurityToken, session opcua.NodeID) (opcua.NodeID, error) {
+// The wait covers the whole phase rather than one call. An earlier version
+// wrapped only the walk down to the source folder, and the run that found this
+// failed on the browse after it: the address space is populated from the source
+// by more than one Browse, and any of them can be the one that asks too early.
+// Every step is retried together, because a partially populated space is not a
+// state worth keeping.
+func (c *client) waitForSourceItems(token opcua.ChannelSecurityToken, session opcua.NodeID) ([]opcua.NodeID, error) {
 	deadline := time.Now().Add(sourceConnectBound)
 	for attempt := 1; ; attempt++ {
-		folder, err := c.browseRoot(token, session)
+		items, err := c.browseSourceItems(token, session)
 		if err == nil {
 			if attempt > 1 {
 				fmt.Printf("opcua waited for the DA source to connect attempts=%d\n", attempt)
 			}
-			return folder, nil
+			return items, nil
 		}
 		if !errors.Is(err, errSourceNotConnected) {
-			return opcua.NodeID{}, err
+			return nil, err
 		}
 		if time.Now().After(deadline) {
-			return opcua.NodeID{}, fmt.Errorf("the DA source did not connect within %s", sourceConnectBound)
+			return nil, fmt.Errorf("the DA source did not connect within %s", sourceConnectBound)
 		}
 		time.Sleep(250 * time.Millisecond)
 	}
+}
+
+func (c *client) browseSourceItems(token opcua.ChannelSecurityToken, session opcua.NodeID) ([]opcua.NodeID, error) {
+	folder, err := c.browseRoot(token, session)
+	if err != nil {
+		return nil, err
+	}
+	return c.browseForItems(token, session, folder)
 }
 
 // browseRoot walks Root to Objects to the source folder, which is what a real
