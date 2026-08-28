@@ -412,7 +412,6 @@ func validateItemProperties(ctx context.Context, client opcdav1.OPCDAAccessClien
 	if len(values.Results) != len(ids) {
 		return fmt.Errorf("ItemProperties returned %d results for %d identifiers", len(values.Results), len(ids))
 	}
-	answered := 0
 	for index, result := range values.Results {
 		if result.PropertyId != ids[index] {
 			return fmt.Errorf("ItemProperties returned results out of request order")
@@ -427,7 +426,6 @@ func validateItemProperties(ctx context.Context, client opcdav1.OPCDAAccessClien
 			if result.Hresult.Value < 0 {
 				return fmt.Errorf("property %d succeeded with a failed HRESULT", result.PropertyId)
 			}
-			answered++
 			continue
 		}
 		// A property the source refuses keeps its HRESULT and carries nothing.
@@ -435,9 +433,22 @@ func validateItemProperties(ctx context.Context, client opcdav1.OPCDAAccessClien
 			return fmt.Errorf("property %d carried a value behind a failure", result.PropertyId)
 		}
 	}
-	// No property value is printed: the probes claim valuesLogged=false and
-	// that claim is kept whole rather than argued about per field.
-	fmt.Printf("grpc item properties offered=%d read=%d valuesLogged=false\n", len(ids), answered)
+	// The identifiers are recorded, not just the counts: "offered=4 read=3"
+	// leaves the next reader unable to tell what this source did. A property
+	// identifier is metadata, not process data. No value is printed -- the
+	// probes claim valuesLogged=false and that claim is kept whole rather than
+	// argued about per field.
+	refused := make([]string, 0, len(ids))
+	granted := make([]string, 0, len(ids))
+	for index, result := range values.Results {
+		if result.Ok {
+			granted = append(granted, fmt.Sprintf("%d", ids[index]))
+			continue
+		}
+		refused = append(refused, fmt.Sprintf("%d:%s", ids[index], result.Hresult.Hex))
+	}
+	fmt.Printf("grpc item properties offered=%s read=%s refused=%s valuesLogged=false\n",
+		joinOrNone(offeredNames(ids)), joinOrNone(granted), joinOrNone(refused))
 	return validateItemPropertyRefusals(ctx, client)
 }
 
@@ -461,4 +472,19 @@ func validateItemPropertyRefusals(ctx context.Context, client opcdav1.OPCDAAcces
 		return fmt.Errorf("an unknown ItemID reported %d properties", len(unknown.Properties))
 	}
 	return nil
+}
+
+func offeredNames(ids []uint32) []string {
+	names := make([]string, 0, len(ids))
+	for _, id := range ids {
+		names = append(names, fmt.Sprintf("%d", id))
+	}
+	return names
+}
+
+func joinOrNone(values []string) string {
+	if len(values) == 0 {
+		return "none"
+	}
+	return strings.Join(values, ",")
 }
