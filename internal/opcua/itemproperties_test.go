@@ -315,3 +315,134 @@ func TestBrowsingAnItemExposesItsTableA1Properties(t *testing.T) {
 		t.Error("browsing the item never asked the source which properties it has")
 	}
 }
+
+// A Table A.1 property node carries the ItemID of the item it describes, so
+// every path that turns a node into a DA item has to exclude it. Monitoring one
+// would otherwise subscribe to the item's value and deliver a process value
+// under the property's client handle, reported as an engineering range.
+//
+// OPC DA has no change notification for item properties -- a group notifies on
+// item values only -- so the refusal is honest rather than a limitation being
+// hidden.
+func TestAPropertyNodeCannotBeMonitored(t *testing.T) {
+	runtime := &subscribingRuntime{}
+	service, space := testSubscriptionService(t, runtime)
+	space.AttachItemProperties("Test/Float", []opcda.AvailableProperty{
+		{ID: opcda.PropertyLowEU}, {ID: opcda.PropertyHighEU},
+	}, 0)
+
+	id := createSubscription(t, service)
+	response, err := service.CreateMonitoredItems(context.Background(), testSession, CreateMonitoredItemsRequest{
+		Header:             RequestHeader{RequestHandle: 2, AdditionalHeader: NullExtensionObject()},
+		SubscriptionID:     id,
+		TimestampsToReturn: TimestampsBoth,
+		ItemsToCreate: []MonitoredItemCreateRequest{{
+			ItemToMonitor:  ReadValueID{NodeID: ItemPropertyNodeID("Test/Float", "EURange"), AttributeID: AttributeValue},
+			MonitoringMode: MonitoringModeReporting,
+			RequestedParameters: MonitoringParameters{
+				ClientHandle: 7, SamplingInterval: 250, QueueSize: 10,
+				Filter: NullExtensionObject(),
+			},
+		}},
+	}, channelEpoch)
+	if err != nil {
+		t.Fatalf("CreateMonitoredItems: %v", err)
+	}
+	if len(response.Results) != 1 {
+		t.Fatalf("results = %d", len(response.Results))
+	}
+	if response.Results[0].StatusCode != StatusBadNotSupported {
+		t.Fatalf("status = %s, want Bad_NotSupported", response.Results[0].StatusCode.Hex())
+	}
+	// The refusal has to happen before the source is involved. A subscription
+	// created here would be one nobody asked for.
+	runtime.mu.Lock()
+	created := len(runtime.subscriptions)
+	runtime.mu.Unlock()
+	if created != 0 {
+		t.Fatalf("a refused property monitor still created %d DA subscriptions", created)
+	}
+}
+
+// A property describes an item; it is not a place to put a value.
+//
+// A property node is created read-only, so the access-level check refuses this
+// on its own -- which means asserting the ordinary case proves nothing about
+// the rule. The node is therefore given write access first, so what is being
+// tested is that a property is refused because it is a property. Without that,
+// the ItemID a property node carries would send the value to the item it
+// describes.
+func TestAPropertyNodeCannotBeWritten(t *testing.T) {
+	runtime := &stubRuntime{}
+	service, space := testDataService(t, runtime)
+	space.AttachItemProperties("Test/Float", []opcda.AvailableProperty{
+		{ID: opcda.PropertyEUUnits},
+	}, 0)
+	property, ok := space.Node(ItemPropertyNodeID("Test/Float", "EngineeringUnits"))
+	if !ok {
+		t.Fatal("the property node was not created")
+	}
+	property.AccessLevel = AccessLevelCurrentRead | AccessLevelCurrentWrite
+
+	response, err := service.Write(context.Background(), WriteRequest{
+		Header: RequestHeader{RequestHandle: 1, AdditionalHeader: NullExtensionObject()},
+		NodesToWrite: []WriteValue{{
+			NodeID:      ItemPropertyNodeID("Test/Float", "EngineeringUnits"),
+			AttributeID: AttributeValue,
+			Value:       DataValue{Value: Variant{Type: BuiltInString, Value: "degF"}, Status: StatusGood},
+		}},
+	}, time.Now())
+	if err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+	if response.Results[0] != StatusBadNotWritable {
+		t.Fatalf("status = %s, want Bad_NotWritable", response.Results[0].Hex())
+	}
+	if len(runtime.writeItems) != 0 {
+		t.Fatalf("a refused property write reached the source as %d items", len(runtime.writeItems))
+	}
+}
+
+// Re-attaching replaces the property set rather than adding to it, so a source
+// that stops offering a property stops reporting it.
+func TestAPropertyTheSourceStopsOfferingStopsBeingReported(t *testing.T) {
+	space := testAddressSpace(t)
+	if err := space.PopulateBranch(nil, []opcda.BrowseEntry{
+		{Kind: opcda.BrowseEntryItem, Name: "Float", ItemID: itemID("Test/Float"),
+			CanonicalType: varType(opcda.VTR4)},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	both := []opcda.AvailableProperty{
+		{ID: opcda.PropertyEUUnits}, {ID: opcda.PropertyLowEU}, {ID: opcda.PropertyHighEU},
+	}
+	space.AttachItemProperties("Test/Float", both, 0)
+	if names := propertyNames(t, space); !names["EURange"] || !names["EngineeringUnits"] {
+		t.Fatalf("first attach reported %v", names)
+	}
+
+	space.AttachItemProperties("Test/Float", []opcda.AvailableProperty{{ID: opcda.PropertyEUUnits}}, 0)
+	names := propertyNames(t, space)
+	if names["EURange"] {
+		t.Fatal("a property the source stopped offering is still reported")
+	}
+	if !names["EngineeringUnits"] {
+		t.Fatal("re-attaching dropped a property the source still offers")
+	}
+}
+
+func propertyNames(t *testing.T, space *AddressSpace) map[string]bool {
+	t.Helper()
+	node, ok := space.Node(ItemNodeID("Test/Float"))
+	if !ok {
+		t.Fatal("the item is missing")
+	}
+	names := map[string]bool{}
+	hasProperty := NumericNodeID(0, NodeIDHasProperty)
+	for _, reference := range node.References {
+		if reference.IsForward && reference.ReferenceTypeID.Equal(hasProperty) {
+			names[reference.BrowseName.Name] = true
+		}
+	}
+	return names
+}

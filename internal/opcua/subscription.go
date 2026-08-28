@@ -1064,6 +1064,19 @@ func (s *SubscriptionService) prepareMonitoredItem(subscription *uaSubscription,
 	if node.Class != NodeClassVariable || node.ItemID == "" {
 		return failed(StatusBadAttributeIDInvalid), nil
 	}
+	// A Table A.1 property node carries the ItemID of the item it describes,
+	// so without this it would pass every check below and the subscription
+	// would monitor the item's value and deliver it under the property's
+	// client handle -- a process value reported as an engineering range.
+	//
+	// OPC DA has no change notification for item properties: a group notifies
+	// on item values only. Monitoring one would mean the adapter inventing a
+	// sampling loop of its own, which is a source of updates the source never
+	// agreed to. It is refused instead, and a client that wants a property
+	// reads it.
+	if node.IsItemPropertyNode() {
+		return failed(StatusBadNotSupported), nil
+	}
 	if node.AccessRightsKnown && node.AccessLevel&AccessLevelCurrentRead == 0 {
 		return failed(StatusBadNotReadable), nil
 	}
