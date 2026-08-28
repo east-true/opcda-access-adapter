@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -19,7 +20,10 @@ func newJSONRequest(method, target string, body io.Reader) *http.Request {
 	return request
 }
 
-type statusRuntime struct{}
+type statusRuntime struct {
+	available      []opcda.AvailableProperty
+	propertyValues map[opcda.PropertyID]opcda.ItemPropertyValue
+}
 
 func (statusRuntime) Status(context.Context) opcda.RuntimeStatus {
 	return opcda.RuntimeStatus{
@@ -235,12 +239,72 @@ func contains(value, required string) bool {
 	return false
 }
 
-// This source offers no OPC DA item properties. PROPERTIES_UNSUPPORTED is the
-// same answer a real source without IOPCItemProperties gives.
-func (statusRuntime) AvailableItemProperties(context.Context, string) ([]opcda.AvailableProperty, error) {
-	return nil, opcda.NewAdapterError(opcda.CodePropertiesUnsupported, "this source offers no item properties")
+func (r statusRuntime) AvailableItemProperties(context.Context, string) ([]opcda.AvailableProperty, error) {
+	if r.available == nil {
+		return nil, opcda.NewAdapterError(opcda.CodePropertiesUnsupported, "this source offers no item properties")
+	}
+	return r.available, nil
 }
 
-func (statusRuntime) ItemProperties(context.Context, opcda.ItemPropertiesRequest) ([]opcda.ItemPropertyValue, error) {
-	return nil, opcda.NewAdapterError(opcda.CodePropertiesUnsupported, "this source offers no item properties")
+func (r statusRuntime) ItemProperties(_ context.Context, request opcda.ItemPropertiesRequest) ([]opcda.ItemPropertyValue, error) {
+	if r.propertyValues == nil {
+		return nil, opcda.NewAdapterError(opcda.CodePropertiesUnsupported, "this source offers no item properties")
+	}
+	values := make([]opcda.ItemPropertyValue, 0, len(request.Properties))
+	for _, id := range request.Properties {
+		value := r.propertyValues[id]
+		value.ID = id
+		values = append(values, value)
+	}
+	return values, nil
+}
+
+func postJSON(t *testing.T, server *Server, target, body string, wantStatus int) string {
+	t.Helper()
+	recorder := httptest.NewRecorder()
+	server.ServeHTTP(recorder, newJSONRequest(http.MethodPost, target, strings.NewReader(body)))
+	if recorder.Code != wantStatus {
+		t.Fatalf("%s answered %d, want %d: %s", target, recorder.Code, wantStatus, recorder.Body.String())
+	}
+	return recorder.Body.String()
+}
+
+// The HTTP frontend publishes capabilities.properties too, so it exposes the
+// same two DA operations. Being DA-native it passes the source's identifiers,
+// VARTYPEs and HRESULTs through rather than mapping them onto anything.
+func TestHTTPItemPropertiesArePassedThrough(t *testing.T) {
+	runtime := statusRuntime{
+		available: []opcda.AvailableProperty{
+			{ID: opcda.PropertyEUUnits, Description: "EU Units", VarType: opcda.VTBSTR},
+		},
+		propertyValues: map[opcda.PropertyID]opcda.ItemPropertyValue{
+			opcda.PropertyEUUnits: {OK: true, VarType: opcda.VTBSTR, VarTypePresent: true,
+				Value: "degC", ValuePresent: true, HRESULTPresent: true},
+			opcda.PropertyHighEU: {HRESULT: -1073479674, HRESULTPresent: true},
+		},
+	}
+	config := Config{MaxBodyBytes: 4096, MaxConcurrent: 4, RequestDeadline: time.Second, MaxJSONDepth: 8}
+	server := New(runtime, config)
+
+	body := postJSON(t, server, "/v1/properties/available", `{"itemId":"Test/Float"}`, http.StatusOK)
+	if !strings.Contains(body, `"propertyId":100`) || !strings.Contains(body, `"EU Units"`) {
+		t.Fatalf("available properties = %s", body)
+	}
+
+	body = postJSON(t, server, "/v1/properties", `{"itemId":"Test/Float","propertyIds":[100,102]}`, http.StatusOK)
+	if !strings.Contains(body, `"degC"`) {
+		t.Fatalf("property values = %s", body)
+	}
+	// The refused property keeps the source's exact HRESULT and no value.
+	if !strings.Contains(body, `"0xC0040006"`) {
+		t.Fatalf("a refused property lost its HRESULT: %s", body)
+	}
+
+	postJSON(t, server, "/v1/properties", `{"itemId":"Test/Float"}`, http.StatusBadRequest)
+	postJSON(t, server, "/v1/properties/available", `{"itemId":""}`, http.StatusBadRequest)
+
+	// A source without IOPCItemProperties is working correctly, and answers the
+	// way one without IOPCBrowseServerAddressSpace does.
+	postJSON(t, New(statusRuntime{}, config), "/v1/properties/available",
+		`{"itemId":"Test/Float"}`, http.StatusUnprocessableEntity)
 }

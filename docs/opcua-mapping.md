@@ -314,6 +314,19 @@ address space without bound. Browse does not resolve at all: it asks what a node
 **is**, which never creates, because Browse has no budget to pass and a client
 browsing ItemIDs it invented would otherwise add a node for each.
 
+### The DA-native frontends expose the properties themselves
+
+Table A.1 is the OPC UA frontend's mapping. The gRPC and HTTP frontends are
+DA-native and expose the two DA operations directly instead —
+`AvailableItemProperties`/`ItemProperties` and `POST /v1/properties/available`
+and `/v1/properties` — reporting the source's own property identifiers,
+description text, VARTYPEs and HRESULTs without mapping them onto anything.
+
+That is not duplication: a DA client asking what a source offers wants
+`PropertyID 102`, and a UA client wants `EURange`. Both frontends publish
+`capabilities.properties`, so a client told a source supports item properties
+can now act on it whichever frontend it speaks.
+
 ### A source without the interface
 
 `IOPCItemProperties` is optional. A source that does not implement it is working

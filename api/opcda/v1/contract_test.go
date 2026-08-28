@@ -27,6 +27,11 @@ func TestProtocolUsesDANativeVocabularyAndPhaseSevenSurface(t *testing.T) {
 		{"Read", false},
 		{"Write", false},
 		{"Subscribe", true},
+		// OPC DA item properties, which OPC 10000-8 Table A.1 is mapped from.
+		// Two calls because they are two questions: what does this source
+		// offer for this item, and what are those properties' values.
+		{"AvailableItemProperties", false},
+		{"ItemProperties", false},
 	}
 	if service.Methods().Len() != len(wantMethods) {
 		t.Fatalf("methods = %d", service.Methods().Len())

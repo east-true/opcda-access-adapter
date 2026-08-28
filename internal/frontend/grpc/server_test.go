@@ -15,6 +15,9 @@ import (
 )
 
 type testRuntime struct {
+	available      []opcda.AvailableProperty
+	propertyValues map[opcda.PropertyID]opcda.ItemPropertyValue
+
 	status     opcda.RuntimeStatus
 	browse     func(context.Context, opcda.BrowseRequest) (opcda.BrowseResult, error)
 	read       func(context.Context, opcda.ReadRequest) ([]opcda.ReadResult, error)
@@ -291,12 +294,114 @@ func assertGRPCDetail(t *testing.T, err error, code codes.Code, errorCode string
 	return nil
 }
 
-// This source offers no OPC DA item properties. PROPERTIES_UNSUPPORTED is the
-// same answer a real source without IOPCItemProperties gives.
-func (*testRuntime) AvailableItemProperties(context.Context, string) ([]opcda.AvailableProperty, error) {
-	return nil, opcda.NewAdapterError(opcda.CodePropertiesUnsupported, "this source offers no item properties")
+func (r *testRuntime) AvailableItemProperties(context.Context, string) ([]opcda.AvailableProperty, error) {
+	if r.available == nil {
+		return nil, opcda.NewAdapterError(opcda.CodePropertiesUnsupported, "this source offers no item properties")
+	}
+	return r.available, nil
 }
 
-func (*testRuntime) ItemProperties(context.Context, opcda.ItemPropertiesRequest) ([]opcda.ItemPropertyValue, error) {
-	return nil, opcda.NewAdapterError(opcda.CodePropertiesUnsupported, "this source offers no item properties")
+func (r *testRuntime) ItemProperties(_ context.Context, request opcda.ItemPropertiesRequest) ([]opcda.ItemPropertyValue, error) {
+	if r.propertyValues == nil {
+		return nil, opcda.NewAdapterError(opcda.CodePropertiesUnsupported, "this source offers no item properties")
+	}
+	values := make([]opcda.ItemPropertyValue, 0, len(request.Properties))
+	for _, id := range request.Properties {
+		value := r.propertyValues[id]
+		value.ID = id
+		values = append(values, value)
+	}
+	return values, nil
+}
+
+// The DA-native frontends publish capabilities.properties, so a client told a
+// source supports item properties has to be able to ask for them. Before this
+// the capability named something only the OPC UA frontend could use.
+//
+// Being DA-native, the frontend passes the source's property identifiers,
+// VARTYPEs, description text and HRESULTs through rather than mapping them.
+func TestItemPropertiesArePassedThroughUnchanged(t *testing.T) {
+	runtime := &testRuntime{
+		available: []opcda.AvailableProperty{
+			{ID: opcda.PropertyEUUnits, Description: "EU Units", VarType: opcda.VTBSTR},
+			{ID: opcda.PropertyHighEU, Description: "High EU", VarType: opcda.VTR8},
+		},
+		propertyValues: map[opcda.PropertyID]opcda.ItemPropertyValue{
+			opcda.PropertyEUUnits: {OK: true, VarType: opcda.VTBSTR, VarTypePresent: true,
+				Value: "degC", ValuePresent: true, HRESULTPresent: true},
+			// A property the source refuses is a result, not a failure.
+			opcda.PropertyHighEU: {HRESULT: -1073479674, HRESULTPresent: true},
+		},
+	}
+	server := New(runtime, Config{})
+
+	available, err := server.AvailableItemProperties(context.Background(),
+		&opcdav1.DAAvailableItemPropertiesRequest{ItemId: "Test/Float"})
+	if err != nil {
+		t.Fatalf("AvailableItemProperties: %v", err)
+	}
+	if available.ItemId != "Test/Float" || len(available.Properties) != 2 {
+		t.Fatalf("available = %+v", available)
+	}
+	// The source's own order, its own identifiers, its own description text.
+	if available.Properties[0].PropertyId != 100 || available.Properties[0].Description != "EU Units" {
+		t.Fatalf("first property = %+v", available.Properties[0])
+	}
+	if available.Properties[0].DataType == nil || available.Properties[0].DataType.Raw != uint32(opcda.VTBSTR) {
+		t.Fatalf("first property data type = %+v", available.Properties[0].DataType)
+	}
+
+	values, err := server.ItemProperties(context.Background(), &opcdav1.DAItemPropertiesRequest{
+		ItemId: "Test/Float", PropertyIds: []uint32{100, 102},
+	})
+	if err != nil {
+		t.Fatalf("ItemProperties: %v", err)
+	}
+	if len(values.Results) != 2 {
+		t.Fatalf("results = %d", len(values.Results))
+	}
+	granted, refused := values.Results[0], values.Results[1]
+	if !granted.Ok || granted.PropertyId != 100 || granted.GetValue().GetBstrValue() != "degC" {
+		t.Fatalf("granted = %+v", granted)
+	}
+	// The source's exact HRESULT survives, and nothing is substituted for the
+	// value it did not give.
+	if refused.Ok || refused.PropertyId != 102 {
+		t.Fatalf("refused = %+v", refused)
+	}
+	if refused.Hresult == nil || refused.Hresult.Raw != 0xC0040006 || refused.Value != nil {
+		t.Fatalf("refused HRESULT = %+v value = %+v", refused.Hresult, refused.Value)
+	}
+}
+
+// The frontend bounds what it forwards, the way every other request is bounded,
+// and a source that offers no properties says so rather than failing.
+func TestItemPropertyRequestsAreBoundedAndCapabilityAware(t *testing.T) {
+	runtime := &testRuntime{propertyValues: map[opcda.PropertyID]opcda.ItemPropertyValue{}}
+	server := New(runtime, Config{})
+	ctx := context.Background()
+
+	if _, err := server.AvailableItemProperties(ctx, &opcdav1.DAAvailableItemPropertiesRequest{ItemId: ""}); err == nil {
+		t.Fatal("an empty ItemID was accepted")
+	}
+	if _, err := server.ItemProperties(ctx, &opcdav1.DAItemPropertiesRequest{ItemId: "Test/Float"}); err == nil {
+		t.Fatal("an empty property list was accepted")
+	}
+	tooMany := make([]uint32, opcda.DefaultLimits().MaxItemProperties+1)
+	for index := range tooMany {
+		tooMany[index] = 100
+	}
+	if _, err := server.ItemProperties(ctx, &opcdav1.DAItemPropertiesRequest{
+		ItemId: "Test/Float", PropertyIds: tooMany,
+	}); err == nil {
+		t.Fatal("a property list over the configured limit was accepted")
+	}
+
+	// A source without IOPCItemProperties is working correctly, and the error
+	// carries that rather than looking like a runtime failure.
+	// A source without IOPCItemProperties is the same situation as one without
+	// IOPCBrowseServerAddressSpace, and answers the same way.
+	unsupported := New(&testRuntime{}, Config{})
+	_, err := unsupported.AvailableItemProperties(ctx, &opcdav1.DAAvailableItemPropertiesRequest{ItemId: "Test/Float"})
+	assertGRPCDetail(t, err, codes.Unimplemented, string(opcda.CodePropertiesUnsupported))
 }

@@ -371,7 +371,8 @@ func writeOperationError(w stdhttp.ResponseWriter, err error) {
 			status = stdhttp.StatusForbidden
 		case opcda.CodeRuntimeDeadline:
 			status = stdhttp.StatusGatewayTimeout
-		case opcda.CodeBrowseUnsupported, opcda.CodeBrowseResultLimitExceeded, opcda.CodeUnsupportedVarType:
+		case opcda.CodeBrowseUnsupported, opcda.CodePropertiesUnsupported,
+			opcda.CodeBrowseResultLimitExceeded, opcda.CodeUnsupportedVarType:
 			status = stdhttp.StatusUnprocessableEntity
 		}
 		writeLayerError(w, status, "adapter", adapterError.Code, adapterError.Message, nil)

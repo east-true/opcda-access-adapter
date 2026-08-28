@@ -36,6 +36,7 @@ type Config struct {
 	MaxBrowseEntries    int
 	MaxBrowseDepth      int
 	MaxItemIDBytes      int
+	MaxItemProperties   int
 	// MaxSubscribeItems bounds one Subscribe request. MaxSubscriptionStreams
 	// bounds concurrent Subscribe streams; the DA core enforces its own
 	// subscription ceiling independently.
@@ -97,6 +98,9 @@ func New(runtime opcda.Runtime, config Config) *Server {
 	}
 	if config.MaxBrowseEntries <= 0 {
 		config.MaxBrowseEntries = defaults.MaxBrowseEntries
+	}
+	if config.MaxItemProperties <= 0 {
+		config.MaxItemProperties = defaults.MaxItemProperties
 	}
 	if config.MaxBrowseDepth <= 0 {
 		config.MaxBrowseDepth = defaults.MaxBrowseDepth
@@ -727,7 +731,7 @@ func mapOperationError(err error) error {
 			code = codes.PermissionDenied
 		case opcda.CodeRuntimeDeadline:
 			code = codes.DeadlineExceeded
-		case opcda.CodeBrowseUnsupported, opcda.CodeUnsupportedVarType:
+		case opcda.CodeBrowseUnsupported, opcda.CodePropertiesUnsupported, opcda.CodeUnsupportedVarType:
 			code = codes.Unimplemented
 		case opcda.CodeInternalResultMismatch:
 			code = codes.Internal
@@ -751,4 +755,100 @@ func mapOperationError(err error) error {
 		return grpcOperationError(codes.Canceled, "adapter", string(opcda.CodeRuntimeDeadline), "request canceled", "", nil)
 	}
 	return grpcOperationError(codes.Internal, "adapter", "INTERNAL_ERROR", "internal adapter error", "", nil)
+}
+
+// AvailableItemProperties reports which OPC DA properties a source offers for
+// one item, in the source's own order.
+func (s *Server) AvailableItemProperties(ctx context.Context, request *opcdav1.DAAvailableItemPropertiesRequest) (*opcdav1.DAAvailableItemPropertiesResponse, error) {
+	if request == nil {
+		return nil, invalidRequest("AvailableItemProperties request is required")
+	}
+	if err := validateText(request.ItemId, "AvailableItemProperties ItemID", s.config.MaxItemIDBytes); err != nil {
+		return nil, err
+	}
+	available, err := s.runtime.AvailableItemProperties(ctx, request.ItemId)
+	if err != nil {
+		return nil, mapOperationError(err)
+	}
+	response := &opcdav1.DAAvailableItemPropertiesResponse{
+		ItemId:     request.ItemId,
+		Properties: make([]*opcdav1.DAAvailableProperty, len(available)),
+	}
+	for index, property := range available {
+		varType := property.VarType
+		response.Properties[index] = &opcdav1.DAAvailableProperty{
+			PropertyId:  uint32(property.ID),
+			Description: property.Description,
+			DataType:    encodeVarType(&varType),
+		}
+	}
+	return response, nil
+}
+
+// ItemProperties reads named OPC DA properties of one item. Results match the
+// requested identifiers in size and order.
+func (s *Server) ItemProperties(ctx context.Context, request *opcdav1.DAItemPropertiesRequest) (*opcdav1.DAItemPropertiesResponse, error) {
+	if request == nil {
+		return nil, invalidRequest("ItemProperties request is required")
+	}
+	if err := validateText(request.ItemId, "ItemProperties ItemID", s.config.MaxItemIDBytes); err != nil {
+		return nil, err
+	}
+	if len(request.PropertyIds) == 0 {
+		return nil, invalidRequest("ItemProperties propertyIds must contain at least one entry")
+	}
+	if len(request.PropertyIds) > s.config.MaxItemProperties {
+		return nil, requestLimit("ItemProperties property limit exceeded")
+	}
+	properties := make([]opcda.PropertyID, len(request.PropertyIds))
+	for index, id := range request.PropertyIds {
+		properties[index] = opcda.PropertyID(id)
+	}
+	values, err := s.runtime.ItemProperties(ctx, opcda.ItemPropertiesRequest{
+		ItemID: request.ItemId, Properties: properties,
+	})
+	if err != nil {
+		return nil, mapOperationError(err)
+	}
+	if len(values) != len(properties) {
+		return nil, internalResultMismatch("runtime returned a different number of item property results")
+	}
+	response := &opcdav1.DAItemPropertiesResponse{
+		ItemId:  request.ItemId,
+		Results: make([]*opcdav1.DAItemPropertyResult, len(values)),
+	}
+	for index, value := range values {
+		if value.ID != properties[index] {
+			return nil, internalResultMismatch("runtime returned item property results out of request order")
+		}
+		response.Results[index] = encodeItemPropertyResult(value)
+	}
+	return response, nil
+}
+
+func encodeItemPropertyResult(value opcda.ItemPropertyValue) *opcdav1.DAItemPropertyResult {
+	encoded := &opcdav1.DAItemPropertyResult{
+		PropertyId: uint32(value.ID),
+		ErrorCode:  value.ErrorCode,
+	}
+	if value.HRESULTPresent {
+		encoded.Hresult = encodeHRESULT(value.HRESULT)
+	}
+	if value.VarTypePresent {
+		varType := value.VarType
+		encoded.DataType = encodeVarType(&varType)
+	}
+	if !value.OK || !value.ValuePresent {
+		// A property the source refused, or answered without a value, keeps
+		// its HRESULT and carries nothing else. Nothing is substituted for it.
+		return encoded
+	}
+	scalar, err := encodeScalar(value.VarType, value.Value)
+	if err != nil {
+		encoded.ErrorCode = string(opcda.CodeUnsupportedVarType)
+		return encoded
+	}
+	encoded.Value = scalar
+	encoded.Ok = true
+	return encoded
 }
