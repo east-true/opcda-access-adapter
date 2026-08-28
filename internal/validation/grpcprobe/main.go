@@ -171,6 +171,9 @@ func validateScenario(ctx context.Context, client opcdav1.OPCDAAccessClient, exp
 	if err != nil || len(denied.Results) != 1 || denied.Results[0].Ok || denied.Results[0].Hresult == nil || denied.Results[0].Hresult.Raw != 0xC0040006 {
 		return "", fmt.Errorf("source-denied Write did not preserve OPC_E_BADRIGHTS")
 	}
+	if err := validateItemProperties(ctx, client); err != nil {
+		return "", err
+	}
 	return properties, validateSubscribeStream(ctx, client)
 }
 
@@ -363,4 +366,99 @@ func hasDAError(err error, code codes.Code, errorCode string) bool {
 func fail(operation string, err error) {
 	fmt.Fprintf(os.Stderr, "%s: %v\n", operation, err)
 	os.Exit(1)
+}
+
+// validateItemProperties exercises the DA item property path against the real
+// source. Nothing else does: the COM marshalling in properties_windows.go --
+// the VARIANT array GetItemProperties returns, the per-property HRESULT array,
+// and freeing both -- runs nowhere but here.
+//
+// What a source offers is its own decision, so which properties come back is
+// reported rather than required. What is required is that the adapter reports
+// them faithfully and that reading them works.
+func validateItemProperties(ctx context.Context, client opcdav1.OPCDAAccessClient) error {
+	available, err := client.AvailableItemProperties(ctx,
+		&opcdav1.DAAvailableItemPropertiesRequest{ItemId: "Test/Float"})
+	if err != nil {
+		return fmt.Errorf("AvailableItemProperties: %w", err)
+	}
+	if available.ItemId != "Test/Float" {
+		return fmt.Errorf("AvailableItemProperties answered for a different ItemID")
+	}
+	ids := make([]uint32, 0, len(available.Properties))
+	for _, property := range available.Properties {
+		if property.PropertyId == 0 {
+			return fmt.Errorf("the source reported a property with identifier 0")
+		}
+		// The value, quality and timestamp have a path of their own. A source
+		// offering them as properties is normal; asking for them is refused,
+		// which is checked below.
+		if property.PropertyId <= 4 {
+			continue
+		}
+		ids = append(ids, property.PropertyId)
+	}
+	if len(ids) == 0 {
+		fmt.Print("grpc item properties offered=none valuesLogged=false\n")
+		return validateItemPropertyRefusals(ctx, client)
+	}
+
+	values, err := client.ItemProperties(ctx, &opcdav1.DAItemPropertiesRequest{
+		ItemId: "Test/Float", PropertyIds: ids,
+	})
+	if err != nil {
+		return fmt.Errorf("ItemProperties: %w", err)
+	}
+	if len(values.Results) != len(ids) {
+		return fmt.Errorf("ItemProperties returned %d results for %d identifiers", len(values.Results), len(ids))
+	}
+	answered := 0
+	for index, result := range values.Results {
+		if result.PropertyId != ids[index] {
+			return fmt.Errorf("ItemProperties returned results out of request order")
+		}
+		if result.Hresult == nil {
+			return fmt.Errorf("property %d carried no HRESULT", result.PropertyId)
+		}
+		if result.Ok {
+			if result.Value == nil || result.DataType == nil {
+				return fmt.Errorf("property %d succeeded without a value or type", result.PropertyId)
+			}
+			if result.Hresult.Value < 0 {
+				return fmt.Errorf("property %d succeeded with a failed HRESULT", result.PropertyId)
+			}
+			answered++
+			continue
+		}
+		// A property the source refuses keeps its HRESULT and carries nothing.
+		if result.Value != nil {
+			return fmt.Errorf("property %d carried a value behind a failure", result.PropertyId)
+		}
+	}
+	// No property value is printed: the probes claim valuesLogged=false and
+	// that claim is kept whole rather than argued about per field.
+	fmt.Printf("grpc item properties offered=%d read=%d valuesLogged=false\n", len(ids), answered)
+	return validateItemPropertyRefusals(ctx, client)
+}
+
+// validateItemPropertyRefusals checks the two rules that are the adapter's
+// rather than the source's.
+func validateItemPropertyRefusals(ctx context.Context, client opcdav1.OPCDAAccessClient) error {
+	// The item's value, quality and timestamp are properties 2, 3 and 4 and are
+	// refused here, because Read and Subscribe deliver a value together with
+	// its timestamp and its raw quality.
+	for _, id := range []uint32{2, 3, 4} {
+		if _, err := client.ItemProperties(ctx, &opcdav1.DAItemPropertiesRequest{
+			ItemId: "Test/Float", PropertyIds: []uint32{id},
+		}); !hasDAError(err, codes.InvalidArgument, string(opcda.CodeInvalidRequest)) {
+			return fmt.Errorf("property %d was readable as a property", id)
+		}
+	}
+	// An ItemID the source does not have is the source's answer, not a crash.
+	unknown, err := client.AvailableItemProperties(ctx,
+		&opcdav1.DAAvailableItemPropertiesRequest{ItemId: "__opcda_adapter_unknown_item__"})
+	if err == nil && len(unknown.Properties) != 0 {
+		return fmt.Errorf("an unknown ItemID reported %d properties", len(unknown.Properties))
+	}
+	return nil
 }
