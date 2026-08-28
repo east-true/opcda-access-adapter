@@ -278,7 +278,8 @@ func (s *AddressSpace) AttachItemProperties(itemID opcda.DAItemID, available []o
 			needed++
 		}
 	}
-	if maxNodes > 0 && len(s.nodes)-s.standardNodeCount+needed > maxNodes {
+	// The same rule as ResolveVariable: a non-positive budget attaches nothing.
+	if len(s.nodes)-s.standardNodeCount+needed > max(maxNodes, 0) {
 		return fmt.Errorf("%d property nodes for %q would exceed the %d node limit",
 			needed, itemID, maxNodes)
 	}
@@ -362,13 +363,14 @@ const (
 	NodeKindOther
 )
 
-// ResolveNode classifies a node identifier and returns the node behind it.
+// ClassifyNode says what a node identifier stands for **without creating
+// anything**. A caller that only wants to know what it is asking about uses
+// this; a caller that will then act on a DA item uses ResolveNode.
 //
-// A DA item is created on demand from its self-describing identifier, because a
-// source need not implement Browse and a client of such a source knows its
-// ItemIDs from elsewhere. A property is not created here: it exists only once
-// the source has said the item has it.
-func (s *AddressSpace) ResolveNode(id NodeID, maxNodes int) (*Node, NodeKind) {
+// The distinction matters because the node budget is passed by the callers that
+// resolve. Browse has none to pass, so a Browse that resolved would let a client
+// grow the address space without bound by browsing ItemIDs it invented.
+func (s *AddressSpace) ClassifyNode(id NodeID) (*Node, NodeKind) {
 	if node, ok := s.Node(id); ok {
 		switch {
 		case node.IsItemPropertyNode():
@@ -383,6 +385,20 @@ func (s *AddressSpace) ResolveNode(id NodeID, maxNodes int) (*Node, NodeKind) {
 		// The identifier names a property, but the source has not said the
 		// item has it. Reading it will ask the source, which is the authority.
 		return nil, NodeKindItemProperty
+	}
+	return nil, NodeKindUnknown
+}
+
+// ResolveNode classifies a node identifier and returns the node behind it,
+// creating a DA item on demand from its self-describing identifier.
+//
+// The creation is deliberate: a source need not implement Browse, and a client
+// of such a source knows its ItemIDs from elsewhere. maxNodes bounds it. A
+// property is never created here -- it exists only once the source has said the
+// item has it.
+func (s *AddressSpace) ResolveNode(id NodeID, maxNodes int) (*Node, NodeKind) {
+	if node, kind := s.ClassifyNode(id); kind != NodeKindUnknown {
+		return node, kind
 	}
 	if node, ok := s.ResolveVariable(id, maxNodes); ok {
 		return node, NodeKindItem
