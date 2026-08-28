@@ -438,17 +438,31 @@ func validateItemProperties(ctx context.Context, client opcdav1.OPCDAAccessClien
 	// identifier is metadata, not process data. No value is printed -- the
 	// probes claim valuesLogged=false and that claim is kept whole rather than
 	// argued about per field.
-	refused := make([]string, 0, len(ids))
+	// A property the source refused and one the adapter cannot represent are
+	// different facts, and the first run of this conflated them: a successful
+	// HRESULT appeared under "refused" because the value was an array the
+	// adapter does not carry.
 	granted := make([]string, 0, len(ids))
+	refused := make([]string, 0, len(ids))
+	unrepresentable := make([]string, 0, len(ids))
 	for index, result := range values.Results {
-		if result.Ok {
+		switch {
+		case result.Ok:
 			granted = append(granted, fmt.Sprintf("%d", ids[index]))
-			continue
+		case result.Hresult.Value < 0:
+			refused = append(refused, fmt.Sprintf("%d:%s", ids[index], result.Hresult.Hex))
+		default:
+			// The source answered; the adapter could not represent what it
+			// said, and reports that against the property alone.
+			if result.ErrorCode == "" {
+				return fmt.Errorf("property %d failed with a successful HRESULT and no error code", ids[index])
+			}
+			unrepresentable = append(unrepresentable, fmt.Sprintf("%d:%s", ids[index], result.ErrorCode))
 		}
-		refused = append(refused, fmt.Sprintf("%d:%s", ids[index], result.Hresult.Hex))
 	}
-	fmt.Printf("grpc item properties offered=%s read=%s refused=%s valuesLogged=false\n",
-		joinOrNone(offeredNames(ids)), joinOrNone(granted), joinOrNone(refused))
+	fmt.Printf("grpc item properties offered=%s read=%s sourceRefused=%s unrepresentable=%s valuesLogged=false\n",
+		joinOrNone(offeredNames(ids)), joinOrNone(granted),
+		joinOrNone(refused), joinOrNone(unrepresentable))
 	return validateItemPropertyRefusals(ctx, client)
 }
 
