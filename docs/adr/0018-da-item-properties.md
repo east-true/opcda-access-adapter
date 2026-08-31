@@ -124,8 +124,19 @@ than the UA property's type reconciles them — and that reading is the one
 A.3.1.3 forces. `docs/opcua-mapping.md` records the current choice as following
 A.1; that note needs revisiting with this, not independently of it.
 
-**Status: undecided, and now with a cost on both sides.** Implementing it means
-the type hierarchy, `EUInformation` and `Range` encodings, `EnumStrings`, and a
-rule for what happens when a source stops offering the properties a claimed type
-requires. Not implementing it means the adapter's items are typed as something
-Annex A never mentions, which a Part 8-aware client may reasonably not expect.
+**Decided: implemented.** The floor is `DataItemType`, `AnalogItemType` and
+`TwoStateDiscreteType` are chosen from the properties the source offers, and the
+property types are the standard types' rather than A.1's column.
+
+Two departures, both from the rule that a claimed type is a promise. An item
+whose EU Type is Analog but which offers neither EU bound is **not** promoted,
+because `EURange` is mandatory on `AnalogItemType` and there is no range to
+publish. `MultiStateDiscreteType` is never claimed, because its mandatory
+`EnumStrings` comes from EU Info, an array of strings, and the DA layer does not
+carry array VARIANTs. Both are recorded in `docs/opcua-mapping.md`.
+
+What is still open is what happens if a source stops offering the properties a
+claimed type requires. Today a re-attach recomputes the type, so an item can
+change type between browses. That is visible to a client and is not obviously
+better than keeping a stale type; it is the honest behaviour for now because the
+alternative is reporting a range that no longer exists.

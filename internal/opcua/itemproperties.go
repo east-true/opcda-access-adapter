@@ -29,10 +29,79 @@ import (
 
 const (
 	// NodeIDRange is the Range DataType, and NodeIDRangeEncodingDefaultBinary
-	// the encoding a Range in a Variant names. Both come from NodeIds.csv.
+	// the encoding a Range in a Variant names. Both come from NodeIds.csv, as
+	// do the rest of these.
 	NodeIDRange                      uint32 = 884
 	NodeIDRangeEncodingDefaultBinary uint32 = 886
+
+	NodeIDLocalizedText                      uint32 = 21
+	NodeIDEUInformation                      uint32 = 887
+	NodeIDEUInformationEncodingDefaultBinary uint32 = 889
+
+	// The VariableTypes Annex A.3.1.3 chooses between.
+	NodeIDDataItemType           uint32 = 2365
+	NodeIDAnalogItemType         uint32 = 2368
+	NodeIDTwoStateDiscreteType   uint32 = 2373
+	NodeIDMultiStateDiscreteType uint32 = 2376
 )
+
+// itemVariableType is one row of OPC 10000-8 Annex A.3.1.3, which chooses a DA
+// item's UA VariableType from the properties the source offers for it.
+//
+// The adapter used to give every item BaseDataVariableType, which A.3.1.3 does
+// not offer as a choice and which appears nowhere in Annex A.
+type itemVariableType struct {
+	Name       string
+	TypeID     uint32
+	Properties []itemPropertyBinding
+}
+
+// variableTypeFor applies A.3.1.3, in the order it lists.
+//
+// It departs from the clause in one way, deliberately. A.3.1.3 says an item is
+// AnalogItemType if it has High and Low EU **or** its EU Type is Analog, and
+// clause 5.3.2.3 says AnalogItemType requires EURange. An item whose EU Type is
+// Analog but which offers no High and Low EU cannot have an EURange built for
+// it, so claiming the type would mean claiming one whose mandatory property the
+// adapter knows it cannot supply. Such an item is given DataItemType instead.
+//
+// MultiStateDiscreteType is never claimed, for the same reason: its mandatory
+// EnumStrings comes from EU Info, whose DA value is an array of strings, and
+// the DA layer does not carry array VARIANTs. A type is a promise, and the
+// adapter does not make one it cannot keep.
+func variableTypeFor(available []opcda.AvailableProperty, euType opcda.EUType) itemVariableType {
+	offered := make(map[opcda.PropertyID]struct{}, len(available))
+	for _, property := range available {
+		offered[property.ID] = struct{}{}
+	}
+	has := func(ids ...opcda.PropertyID) bool {
+		for _, id := range ids {
+			if _, ok := offered[id]; !ok {
+				return false
+			}
+		}
+		return true
+	}
+
+	switch {
+	case has(opcda.PropertyHighEU, opcda.PropertyLowEU):
+		analog := itemVariableType{Name: "AnalogItemType", TypeID: NodeIDAnalogItemType,
+			Properties: []itemPropertyBinding{euRangeBinding}}
+		if has(opcda.PropertyEUUnits) {
+			analog.Properties = append(analog.Properties, engineeringUnitsBinding)
+		}
+		if has(opcda.PropertyHighIR, opcda.PropertyLowIR) {
+			analog.Properties = append(analog.Properties, instrumentRangeBinding)
+		}
+		return analog
+	case has(opcda.PropertyCloseLabel, opcda.PropertyOpenLabel):
+		return itemVariableType{Name: "TwoStateDiscreteType", TypeID: NodeIDTwoStateDiscreteType,
+			Properties: []itemPropertyBinding{trueStateBinding, falseStateBinding}}
+	default:
+		_ = euType
+		return itemVariableType{Name: "DataItemType", TypeID: NodeIDDataItemType}
+	}
+}
 
 // itemPropertyBinding is one row of Table A.1 that becomes a property node.
 type itemPropertyBinding struct {
@@ -48,75 +117,63 @@ type itemPropertyBinding struct {
 	build func(space *AddressSpace, values []opcda.ItemPropertyValue) (Variant, StatusCode)
 }
 
-// tableA1 is the mapping, in the table's own order.
-var tableA1 = []itemPropertyBinding{
-	{
-		BrowseName: "EngineeringUnits",
-		DataType:   NodeIDString,
-		Sources:    []opcda.PropertyID{opcda.PropertyEUUnits},
-		build:      buildStringProperty,
-	},
-	{
+// The properties Annex A.3.1.3 puts on each type. Their UA types are the ones
+// the standard VariableTypes carry, not Table A.1's third column: A.1 gives
+// "String" for EU Units and the two labels, and A.3.1.3 assigns those same
+// values to EngineeringUnits, TrueState and FalseState, where the standard
+// types define EUInformation and LocalizedText. Reading A.1's column as the DA
+// value's mapped type rather than the UA property's reconciles the two, and
+// A.3.1.3 is the clause that forces the reading.
+var (
+	euRangeBinding = itemPropertyBinding{
 		BrowseName: "EURange",
 		DataType:   NodeIDRange,
 		// Low first, so the Range fields are built in the order the structure
 		// encodes them rather than the order the table lists them.
 		Sources: []opcda.PropertyID{opcda.PropertyLowEU, opcda.PropertyHighEU},
 		build:   buildRangeProperty,
-	},
-	{
+	}
+	instrumentRangeBinding = itemPropertyBinding{
 		BrowseName: "InstrumentRange",
 		DataType:   NodeIDRange,
 		Sources:    []opcda.PropertyID{opcda.PropertyLowIR, opcda.PropertyHighIR},
 		build:      buildRangeProperty,
-	},
-	{
+	}
+	engineeringUnitsBinding = itemPropertyBinding{
+		BrowseName: "EngineeringUnits",
+		DataType:   NodeIDEUInformation,
+		Sources:    []opcda.PropertyID{opcda.PropertyEUUnits},
+		build:      buildEngineeringUnits,
+	}
+	trueStateBinding = itemPropertyBinding{
 		BrowseName: "TrueState",
-		DataType:   NodeIDString,
+		DataType:   NodeIDLocalizedText,
 		Sources:    []opcda.PropertyID{opcda.PropertyCloseLabel},
-		build:      buildStringProperty,
-	},
-	{
+		build:      buildLocalizedTextProperty,
+	}
+	falseStateBinding = itemPropertyBinding{
 		BrowseName: "FalseState",
-		DataType:   NodeIDString,
+		DataType:   NodeIDLocalizedText,
 		Sources:    []opcda.PropertyID{opcda.PropertyOpenLabel},
-		build:      buildStringProperty,
-	},
-}
+		build:      buildLocalizedTextProperty,
+	}
+
+	// Every binding, for resolving a property node identifier back to what it
+	// stands for. A BrowseName belongs to at most one binding.
+	allItemPropertyBindings = []itemPropertyBinding{
+		euRangeBinding, instrumentRangeBinding, engineeringUnitsBinding,
+		trueStateBinding, falseStateBinding,
+	}
+)
 
 // bindingForBrowseName finds the Table A.1 row a property node stands for.
 func bindingForBrowseName(name string) (itemPropertyBinding, bool) {
-	for _, binding := range tableA1 {
+	for _, binding := range allItemPropertyBindings {
 		if binding.BrowseName == name {
 			return binding, true
 		}
 	}
 	return itemPropertyBinding{}, false
-}
-
-// bindingsForAvailable reports which Table A.1 property nodes an item has,
-// given what the source said it offers. A row appears only when the source
-// offers every DA property that row is built from: a Range with one end
-// missing is not a Range, and inventing the other end would be synthesis.
-func bindingsForAvailable(available []opcda.AvailableProperty) []itemPropertyBinding {
-	offered := make(map[opcda.PropertyID]struct{}, len(available))
-	for _, property := range available {
-		offered[property.ID] = struct{}{}
-	}
-	bindings := make([]itemPropertyBinding, 0, len(tableA1))
-	for _, binding := range tableA1 {
-		complete := true
-		for _, source := range binding.Sources {
-			if _, ok := offered[source]; !ok {
-				complete = false
-				break
-			}
-		}
-		if complete {
-			bindings = append(bindings, binding)
-		}
-	}
-	return bindings
 }
 
 // itemDescriptionOffered reports whether the source offers Item Description,
@@ -128,6 +185,44 @@ func itemDescriptionOffered(available []opcda.AvailableProperty) bool {
 		}
 	}
 	return false
+}
+
+// buildLocalizedTextProperty carries a DA string as the LocalizedText the
+// standard TwoStateDiscreteType properties are defined to hold. No locale is
+// invented: DA supplies text without one, so the LocalizedText has text only.
+func buildLocalizedTextProperty(space *AddressSpace, values []opcda.ItemPropertyValue) (Variant, StatusCode) {
+	text, status := buildStringProperty(space, values)
+	if status != StatusGood {
+		return text, status
+	}
+	return Variant{Type: BuiltInLocalizedText, Value: LocalizedText{Text: text.Value.(string)}}, StatusGood
+}
+
+// buildEngineeringUnits carries the DA EU Units string as the DisplayName of an
+// EUInformation, which is what AnalogItemType's EngineeringUnits holds.
+//
+// DA supplies a unit string and nothing else. The NamespaceUri and UnitId of a
+// UNECE code are not derived from it: guessing a code from a unit's name would
+// be inventing an identity the source never gave, and a client that reads
+// UnitId would then act on it.
+func buildEngineeringUnits(space *AddressSpace, values []opcda.ItemPropertyValue) (Variant, StatusCode) {
+	text, status := buildStringProperty(space, values)
+	if status != StatusGood {
+		return text, status
+	}
+	if space == nil {
+		return NullVariant(), StatusBadInternalError
+	}
+	variant, ok := space.extensionObject(NodeIDEUInformationEncodingDefaultBinary, func(e *Encoder) {
+		e.WriteString("")
+		e.WriteInt32(0)
+		e.WriteLocalizedText(LocalizedText{Text: text.Value.(string)})
+		e.WriteLocalizedText(LocalizedText{})
+	})
+	if !ok {
+		return NullVariant(), StatusBadEncodingLimitsExceeded
+	}
+	return variant, StatusGood
 }
 
 func buildStringProperty(_ *AddressSpace, values []opcda.ItemPropertyValue) (Variant, StatusCode) {
@@ -263,8 +358,9 @@ func ItemPropertyForNode(id NodeID) (opcda.DAItemID, itemPropertyBinding, bool) 
 // The node budget is checked over the whole set before anything is changed, the
 // way a branch is, so a set that does not fit is refused rather than attached in
 // part. A client cannot tell a truncated property list from a complete one.
-func (s *AddressSpace) AttachItemProperties(itemID opcda.DAItemID, available []opcda.AvailableProperty, maxNodes int) error {
-	bindings := bindingsForAvailable(available)
+func (s *AddressSpace) AttachItemProperties(itemID opcda.DAItemID, available []opcda.AvailableProperty, euType opcda.EUType, maxNodes int) error {
+	variableType := variableTypeFor(available, euType)
+	bindings := variableType.Properties
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -287,6 +383,10 @@ func (s *AddressSpace) AttachItemProperties(itemID opcda.DAItemID, available []o
 	// source that stops offering a property stops reporting it.
 	item.References = keepNonPropertyReferences(item.References)
 	item.DescriptionOffered = itemDescriptionOffered(available)
+	// Annex A.3.1.3 chooses the type from the properties the source offers, so
+	// the type is set here, where those are known, rather than at item creation
+	// where they are not.
+	item.TypeDefinition = NumericNodeID(0, variableType.TypeID)
 	for _, binding := range bindings {
 		id := ItemPropertyNodeID(itemID, binding.BrowseName)
 		if _, exists := s.nodes[nodeKey(id)]; !exists {

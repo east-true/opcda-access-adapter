@@ -294,6 +294,28 @@ def idl_constants(text):
     return values, stripped
 
 
+def idl_enums(stripped):
+    """Enumerator values, including the implicit successors C leaves unwritten.
+
+    OPCEUTYPE writes only its first value, so a parser that reads assignments
+    alone sees one of three constants and silently checks nothing.
+    """
+    values = {}
+    for match in re.finditer(r'typedef\s+enum\s+\w*\s*\{(.*?)\}', stripped, re.S):
+        next_value = 0
+        for enumerator in match.group(1).split(","):
+            enumerator = enumerator.strip()
+            if not enumerator:
+                continue
+            parts = enumerator.split("=", 1)
+            name = parts[0].strip()
+            if len(parts) == 2:
+                next_value = int(parts[1].strip(), 0)
+            values[name] = next_value
+            next_value += 1
+    return values
+
+
 def idl_interfaces(stripped):
     """Method order per interface, which is the vtable slot order."""
     interfaces = {}
@@ -348,6 +370,7 @@ def check_da(files):
     src = da_sources() + go_sources()
     values, stripped = idl_constants(files["opcda.idl"])
     values.update(idl_constants(files["opcerror.h"])[0])
+    values.update(idl_enums(stripped))
     interfaces = idl_interfaces(stripped)
 
     checked = 0
@@ -361,6 +384,21 @@ def check_da(files):
         if got != want:
             fail(f"{go_name}: code 0x{got:04X}, {idl_name} 0x{want:04X}")
     print(f"  {checked} DA quality values")
+
+    checked = 0
+    # OPCEUTYPE, which Annex A.3.1.3 chooses a VariableType from.
+    for go_name, idl_name in (("EUTypeNoEnum", "OPC_NOENUM"),
+                              ("EUTypeAnalog", "OPC_ANALOG"),
+                              ("EUTypeEnumerated", "OPC_ENUMERATED")):
+        match = re.search(r'\b' + go_name + r'\s+EUType\s*=\s*(\d+)', src)
+        want = values.get(idl_name)
+        if match is None or want is None:
+            fail(f"{go_name} or {idl_name} could not be read")
+            continue
+        checked += 1
+        if int(match.group(1)) != want:
+            fail(f"{go_name}: value {match.group(1)}, {idl_name} {want}")
+    print(f"  {checked} DA EU types")
 
     checked = 0
     # The item property identifiers OPC 10000-8 Table A.1 is written in terms

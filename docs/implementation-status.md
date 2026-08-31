@@ -210,16 +210,18 @@ question without rotting.
   listed that interface in the DA baseline, so the code now matches the
   document.
 
-  What remains is larger than it was recorded as. Annex A.3.1.3 prescribes the
-  VariableType a source item gets — `AnalogItemType`, `TwoStateDiscreteType`,
-  `MultiStateDiscreteType` or `DataItemType`, chosen by which DA properties the
-  item has — and this adapter gives every item `BaseDataVariableType`, which
-  Annex A never mentions. That was recorded as an undecided improvement and is
-  actually an unidentified deviation. [ADR-0018](adr/0018-da-item-properties.md)
-  carries the rule, the cost of implementing it, and a second reading it
-  exposed: the property types currently follow Table A.1's "String" column,
-  while A.3.1.3 puts the same values on standard types where they are
-  `EUInformation` and `LocalizedText`.
+  Annex A.3.1.3's VariableType selection is implemented: `DataItemType` as the
+  floor, `AnalogItemType` and `TwoStateDiscreteType` chosen from the properties
+  the source offers. Every item used to be `BaseDataVariableType`, which Annex A
+  never mentions; that was recorded as an undecided improvement and was actually
+  an unidentified deviation. The property types follow the standard
+  VariableTypes rather than Table A.1's "String" column, which A.3.1.3 forces.
+
+  Two types are deliberately not claimed, because a claimed type is a promise:
+  an item whose EU Type is Analog but which offers neither EU bound has no
+  mandatory `EURange` to publish, and `MultiStateDiscreteType` needs
+  `EnumStrings` from an array-valued DA property the DA layer does not carry.
+  [ADR-0018](adr/0018-da-item-properties.md) records both.
 
 - The local KVM/libvirt destructive-validation gate is paused. The dedicated
   `opcda-destructive-review` VM and all of its dedicated host resources were
