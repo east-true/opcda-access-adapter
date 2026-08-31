@@ -24,9 +24,15 @@ disconnect. This is not a broad vendor-compatibility claim.
 UA server for `SecurityPolicy None` passed all eight PR checks and completed the
 connection sequence, secure channel, `GetEndpoints`, session, Browse and Read
 against the source-built OPC Foundation fixture on both architectures. Only
-`SecurityMode` `None` is implemented and it is not production ready. **No
-third-party UA client has been tested**, and no conformance or interoperability
-claim is made.
+`SecurityMode` `None` is implemented and it is not production ready.
+
+**Three third-party UA clients now run against the frontend** — asyncua,
+open62541 and the OPC Foundation .NET stack, 401 checks in total, recorded in
+docs/compatibility.md. Three clients are not conformance and no conformance or
+interoperability claim is made; ADR-0016 forbids describing this as certified or
+compliant. What they establish is narrower and worth having: two of the six
+defects they found came from the second and third client against a server the
+first had already passed.
 
 **PHASE 7 gRPC SUBSCRIBE STREAMING IMPLEMENTED AND FIXTURE-VALIDATED** — the
 DA core is exposed as a server-streaming `Subscribe` RPC and passed all eight
@@ -36,12 +42,16 @@ releases the DA group, and an invalidated subscription ends the stream with
 `Aborted` and requires an explicit resubscribe. HTTP still exposes no
 Subscribe.
 
-## Current main SHA
+## Release state
 
-`85bbcc59f63e3d495274d1fefd95394a24f32fc9` — protected `main` after the
-Subscribe capability probe (PR #35, squash-merged). No public tag or GitHub
-Release has been created. The local destructive review below remains a
-release-promotion gate.
+No public tag or GitHub Release has been created. The local destructive review
+below remains a release-promotion gate, and it applies to whatever `main` is at
+the moment of promotion.
+
+This section used to pin a `main` SHA. It was forty-eight merges out of date
+before anyone noticed, because a recorded commit hash cannot stay true and
+nothing was going to keep updating it. `git rev-parse main` answers that
+question without rotting.
 
 ## Completed
 
@@ -130,15 +140,27 @@ release-promotion gate.
   are checked against the source the test server itself was built from. What was
   compared, all matching:
 
-  | | Checked |
-  | --- | --- |
-  | COM vtable slot order | 5 interfaces, 24 methods |
-  | DA quality values | 16 |
-  | quality masks, access rights, data source | 6 |
-  | DA HRESULT values | 2 |
-  | interface and category GUIDs | 10 |
-  | struct field order and type widths | 3 |
-  | browse and namespace enumerations | 4 |
+  The check has grown since. What `scripts/spec-check/check.py` compares today,
+  all matching:
+
+  | | Source | Checked |
+  | --- | --- | --- |
+  | status code values | `StatusCode.csv` | 78 |
+  | service encoding ids | `NodeIds.csv` | 32 |
+  | standard node ids | `NodeIds.csv` | 59 |
+  | attribute ids | `AttributeIds.csv` | 12 |
+  | request decoder field order | `Opc.Ua.Types.bsd` | 14 |
+  | DA quality values | `opcda.idl` | 16 |
+  | DA item property identifiers | `opcda.idl` | 16 |
+  | DA masks, access rights, data source | `opcda.idl` | 4 |
+  | **DA COM vtable slot order** | `opcda.idl` | 6 |
+  | DA error mappings | Part 8 Tables A.4/A.5 | 19 |
+  | DA data type mappings | Part 8 Table A.2 | 14 |
+  | DA quality mappings | Part 8 Table A.3 | 16 |
+
+  Interface and category GUIDs, struct field order and type widths, and the
+  browse and namespace enumerations are checked by Go tests instead, which can
+  see sizes and offsets a text comparison cannot.
 
   The vtable check is the one worth having: a slot in the wrong position calls a
   different method entirely, with arguments shaped for the one that was

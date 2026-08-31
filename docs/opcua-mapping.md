@@ -561,13 +561,12 @@ wrap-around. The identifier seeds are supplied by the caller because Table 57
 advises that the first `SecureChannelId` after a restart should be unlikely to
 collide with one a previously connected client still holds.
 
-### What is deliberately not bound yet
-
-`SecurityTokenRequestType`'s wire values are not bound. Its value table was not
-obtainable in a transcribable form, and the encoding is only needed once the
-`OpenSecureChannel` service **body** is decoded — which additionally depends on
-`NodeId` and `ExtensionObject`, neither of which the codec implements yet. The
-lifecycle above is complete and testable without them.
+`SecurityTokenRequestType`'s wire values are bound: `Issue` 0 and `Renew` 1,
+taken from the OPC Foundation UA NodeSet's DataType definition. This section
+used to say they were not, on the grounds that the `OpenSecureChannel` body was
+not decoded and that `NodeId` and `ExtensionObject` were unimplemented. All
+three became untrue, and the paragraph immediately below this one has listed
+`NodeId` and `ExtensionObject` as implemented the whole time it stayed.
 
 ## Structured types and service headers
 
