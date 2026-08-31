@@ -289,7 +289,7 @@ func TestBrowseServicePopulatesOnDemand(t *testing.T) {
 	}
 	service.AttachPopulator(populator)
 
-	response, err := service.Browse(context.Background(),
+	response, err := service.Browse(context.Background(), testSession,
 		browseRequest(browseAll(space.SourceFolderID())), channelEpoch)
 	if err != nil {
 		t.Fatal(err)
@@ -318,7 +318,7 @@ func TestBrowsePopulationFailureIsPerNode(t *testing.T) {
 	}
 	service.AttachPopulator(populator)
 
-	response, err := service.Browse(context.Background(), browseRequest(
+	response, err := service.Browse(context.Background(), testSession, browseRequest(
 		browseAll(space.SourceFolderID()),
 		browseAll(NumericNodeID(0, NodeIDObjectsFolder)),
 	), channelEpoch)
@@ -342,7 +342,7 @@ func TestBrowseWithoutAPopulator(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	response, err := service.Browse(context.Background(),
+	response, err := service.Browse(context.Background(), testSession,
 		browseRequest(browseAll(NumericNodeID(0, NodeIDRootFolder))), channelEpoch)
 	if err != nil {
 		t.Fatal(err)
