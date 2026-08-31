@@ -10,8 +10,31 @@ Nothing here is derived from recollection. Where the specification has no row
 for something the DA core can produce, that is stated as an adapter decision
 rather than presented as standard behavior.
 
-There is no UA frontend yet. This document and `internal/opcua` define the
-semantics; the wire protocol is a later slice.
+The UA frontend is implemented and runs against the OPC Foundation fixture on
+both architectures; `docs/compatibility.md` carries the executed results. Only
+`SecurityMode` `None` is served and ADR-0016 forbids describing it as production
+ready.
+
+## Where this adapter departs from Part 8
+
+Every departure below is deliberate, and each says which clause it departs from
+and why. They are collected here because a reader deciding whether this adapter
+suits their source should not have to find them scattered through the document.
+
+| Clause | What it asks | What this adapter does, and why |
+|---|---|---|
+| A.3.1.2 | the root branch's BrowseName "should" be the Server ProgId | named from `OPCDA_OPCUA_SOURCE_FOLDER`, default `Source` — a source may be configured by CLSID, where there is no ProgID, and an operator who wants the clause's behaviour can configure it |
+| A.3.1.3 | `AnalogItemType` if the item has High and Low EU **or** an Analog EU Type | the EU Type alone does not promote, because 5.3.2.3 makes `EURange` mandatory and there would be no range to publish |
+| A.3.1.3 | `MultiStateDiscreteType` for an enumerated EU Type | never claimed: its mandatory `EnumStrings` comes from EU Info, an array, and the DA layer carries no array VARIANTs |
+| A.3.1.4 | an array-valued property is exposed with `ValueRank` `OneOrMoreDimensions` | not exposed at all — it could be browsed and never read, and a property that cannot answer is worse than one that is absent |
+| Table A.3 | DA `LAST_KNOWN` → `Bad_OutOfService` | `Uncertain_NoCommunicationLastUsableValue`, because Table 61 says so and explains why: a Bad severity must return a Null value, which discards the last known value the quality exists to carry |
+| 5.2 | the `SemanticsChanged` bit is set when a semantic property changes | set when the adapter **observes** a change, which is when a property is read; a change nobody reads is not detected, and detecting every one means polling the source |
+| 5.4 | a DataItem is never "defined by itself" | an item addressed without being browsed has no parent, because the adapter does not know where it sits in the source's hierarchy and inventing a place would point clients at the wrong one |
+
+`scripts/spec-check/check.py` carries the Table A.3 row as a recorded deviation:
+it is still checked, against the value written here rather than the table's, so
+drifting away from the deviation fails as loudly as drifting away from the
+specification.
 
 ## Value types
 
@@ -1267,6 +1290,24 @@ browsed, so Browse must not report it as a child of anything — and it draws on
 the same node budget browsing does, so addressing items directly cannot grow the
 space without limit. An identifier that names no DA item at all is still
 `Bad_NodeIdUnknown`.
+
+**This is a deviation from clause 5.4**, and it is one this adapter chooses.
+5.4 says DataItems "are always defined as data components of other Nodes in the
+AddressSpace. They are never defined by themselves." A node with no parent is
+defined by itself.
+
+The alternative is worse. To give such a node a parent the adapter would have to
+pick one, and it does not know where the item sits in the source's hierarchy —
+that is what browsing would have told it. Hanging it off the source folder would
+claim the item is top-level, which for a nested item is simply false, and a
+client walking the hierarchy would be led to the wrong place rather than to
+none.
+
+So the node is reachable by identifier and invisible to Browse, which is
+accurate: the adapter knows the item exists and does not know where it belongs.
+Satisfying 5.4 for such an item needs the source's hierarchy, and a source that
+does not implement Browse cannot supply it — the case this whole section is
+about.
 
 A source that does not implement Browse, or that has no `IOPCDataCallback`
 connection point, reports `Bad_ServiceUnsupported`: both interfaces are optional,
