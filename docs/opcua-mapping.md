@@ -341,6 +341,25 @@ reports `unsupported`, browsing its items succeeds with the references they do
 have, and no property node is created. The answer is recorded once rather than
 re-asked for every browse of every item.
 
+### Branches, leaves, and the references between them
+
+Annex A.3.1.2 is specific about the hierarchy a wrapper builds. A DA branch is
+an Object of `FolderType`, and it references **child branches with `Organizes`
+and DA leaves with `HasComponent`**.
+
+The adapter used `Organizes` for both. A client that filters a Browse by
+reference type — which is what a Part 8-aware client does — asked for
+`HasComponent` and found **no items at all**. Both types are subtypes of
+`HierarchicalReferences`, so a client that did not filter never saw the
+difference, which is why it went unnoticed.
+
+A.3.1.2 also says the root branch "should be represented by an Object where the
+BrowseName is the Server ProgId". This adapter names it from
+`OPCDA_OPCUA_SOURCE_FOLDER`, default `Source`. That is a deliberate deviation
+from a *should*: the source may be configured by CLSID, in which case there is
+no ProgID to use, and an operator who wants the clause's behaviour can configure
+it. It is recorded here rather than left for a client to discover.
+
 ### The VariableType, from Annex A.3.1.3
 
 A DA item's UA VariableType is chosen from the properties its source offers, as

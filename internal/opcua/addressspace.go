@@ -531,15 +531,23 @@ func (s *AddressSpace) PopulateBranch(path []string, entries []opcda.BrowseEntry
 	}
 	parent.References = retained
 
-	organizes := NumericNodeID(0, NodeIDOrganizes)
 	for _, entry := range entries {
 		child, err := s.nodeForEntry(path, entry)
 		if err != nil {
 			return err
 		}
 		s.nodes[nodeKey(child.ID)] = child
-		addForward(parent, organizes, child)
-		addInverse(child, organizes, parent)
+		// Annex A.3.1.2: a folder standing for a DA branch references child
+		// branches with Organizes and DA leaves with HasComponent. The
+		// distinction is visible to any client that filters a Browse by
+		// reference type, which is what a Part 8-aware client does -- one
+		// asking for HasComponent used to find no items at all.
+		reference := NumericNodeID(0, NodeIDOrganizes)
+		if entry.Kind == opcda.BrowseEntryItem {
+			reference = NumericNodeID(0, NodeIDHasComponent)
+		}
+		addForward(parent, reference, child)
+		addInverse(child, reference, parent)
 	}
 	return nil
 }
