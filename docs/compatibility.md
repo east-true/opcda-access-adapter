@@ -236,6 +236,26 @@ answered with nothing, or the adapter cannot represent what it said. An earlier
 run printed `refused=8:0x00000000`, a refusal with a successful HRESULT, which
 is what prompted the split.
 
+### Table A.1 "Other Properties" result
+
+With Table A.1's last row implemented, the fixture's items expose their DA
+properties over OPC UA and the probe reads every one:
+
+```
+opcua item properties tableA1=none unnamed=9 described=0 valuesLogged=false
+```
+
+Nine property nodes across three items — Scan Rate and EU Type on each, plus
+Access Rights where the source offers it as a property the nine named rows do
+not claim. Every one is a `PropertyType` variable that answers a Read; a bad
+status carries no value and a good one carries a value.
+
+`tableA1=none` beside it is not a contradiction. It counts the **nine named**
+rows, and this fixture offers none of the DA properties they are built from —
+which is what the row below records. The two numbers together are the fixture's
+whole answer about Table A.1: nothing for the named rows, everything for the
+unnamed one.
+
 ### Table A.1 item property result
 
 PR #76 ran `opcuaprobe`'s Table A.1 check against the fixture on both native

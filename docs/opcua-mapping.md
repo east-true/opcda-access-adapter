@@ -220,9 +220,8 @@ value against `opcerror.h` — for the four Windows codes, against
 ## Item properties: Table A.1
 
 Part 8 Table A.1 maps the OPC COM DA item properties onto UA attributes and
-properties. Nine of its ten rows are implemented; they do not all become
-property nodes, because the table does not ask them to. The tenth is not, and
-what that costs is set out below.
+properties. All ten rows are implemented; they do not all become property
+nodes, because the table does not ask them to.
 
 | DA property | UA target | UA type |
 |---|---|---|
@@ -253,35 +252,41 @@ and `LocalizedText`, which is what A.3.1.3 assigns them to — so A.1's column i
 the DA value's mapped type, not the UA property's. That reading is worked
 through below, under the VariableType.
 
-### Not implemented: Table A.1's "Other Properties" row
+### Table A.1's "Other Properties" row
 
-Table A.1's last row maps everything else — *"Other Properties (include Vendor
-specific Properties)"* — onto a Variable of `PropertyType`, typed from the DA
-property's own DataType. A.3.1.4 says how:
+Everything a source offers that the nine named rows do not claim becomes a
+Variable of `PropertyType`, following A.3.1.4:
 
-- the DA property's **description** becomes the BrowseName and DisplayName;
-- its **PropertyID and ItemID** become part of the NodeId;
-- its **DataType** becomes the `DataType` attribute;
-- `ValueRank` is `OneOrMoreDimensions` for an array property and `Scalar`
-  otherwise;
-- `AccessLevel` is readable **and writable** when the property has its own
-  ItemID in the DA server, and readable when it does not.
+- the DA property's **description** is the BrowseName and DisplayName; a
+  property offered without one is named from its identifier, because a node
+  needs a name and that is the only other thing that names it;
+- its **PropertyID** is part of the NodeId — the identifier rather than the
+  description, because a description is the server's prose and can change
+  without the property changing;
+- its **DataType** comes from its own VARTYPE through Table A.2;
+- `ValueRank` is `Scalar`;
+- `AccessLevel` is readable.
 
-**None of this is implemented.** A source's Scan Rate, EU Type, EU Info and any
-vendor-specific property are reachable over the DA-native frontends and are
-absent from the UA address space. Every property node the adapter creates is
-`Scalar` and readable, which is right for the nine named rows and is not the
-rule A.3.1.4 states.
+This is what a client browsing a real source actually finds: Scan Rate, EU Type,
+and whatever a vendor adds. Access Rights and Item Description are **not** among
+them — Table A.1 maps those onto attributes, and exposing them as properties as
+well would answer the same question twice. Nor are Value, Quality and Timestamp,
+which belong to Read and Subscribe.
 
-Two things stand between here and there. `AccessLevel` needs
-`IOPCItemProperties::LookupItemIDs`, which the adapter does not call. And the
-`ValueRank` rule exists because property values can be arrays — EU Info is an
-array of strings — while the DA layer does not carry array VARIANTs at all, so
-an array property could be named but never read.
+**Two of A.3.1.4's rules are not applied, and both are the source's shape rather
+than a choice.**
 
-This is the one part of Table A.1 the OPC Foundation fixture could actually
-exercise: it offers Scan Rate, EU Type and EU Info for its items and none of the
-nine named properties.
+`AccessLevel` is readable, never writable. A.3.1.4 makes a property writable
+when it has its own ItemID in the DA server, which needs
+`IOPCItemProperties::LookupItemIDs`; the adapter does not call it, so it reports
+what it knows rather than guessing at more.
+
+An **array-valued property is not exposed at all**. A.3.1.4 would have it
+carried with `ValueRank` `OneOrMoreDimensions`, but Table A.2 gives no scalar
+type for an array and the DA layer does not carry array VARIANTs — so the node
+could be browsed and never read. A property that exists and cannot answer is
+worse than one that is absent. EU Info is the property this excludes on a real
+source.
 
 **A property belongs to the type its item was given.** `EngineeringUnits` and
 `InstrumentRange` exist on an analog item; `TrueState` and `FalseState` on a

@@ -411,8 +411,17 @@ func (s *DataAccessService) Read(ctx context.Context, request ReadRequest, now t
 			continue
 		}
 		if kind == NodeKindItemProperty && target.AttributeID == AttributeValue {
-			itemID, binding, _ := ItemPropertyForNode(target.NodeID)
-			propertyTargets = append(propertyTargets, propertyTarget{index: index, itemID: itemID, binding: binding})
+			if itemID, binding, named := ItemPropertyForNode(target.NodeID); named {
+				propertyTargets = append(propertyTargets,
+					propertyTarget{index: index, itemID: itemID, binding: binding})
+				continue
+			}
+			// Table A.1's last row: a property the table does not name is
+			// read as itself, with the source's own value and no mapping.
+			itemID, id, _ := OtherPropertyForNode(target.NodeID)
+			propertyTargets = append(propertyTargets, propertyTarget{
+				index: index, itemID: itemID, binding: rawPropertyBinding(id),
+			})
 			continue
 		}
 		if node == nil {

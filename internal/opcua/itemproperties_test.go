@@ -793,10 +793,13 @@ func TestAClaimedTypeAlwaysCarriesItsMandatoryProperty(t *testing.T) {
 				t.Fatalf("TwoStateDiscreteType without its mandatory states: %v", names)
 			}
 		case NodeIDDataItemType:
-			// DataItemType has no mandatory property, and must not be left
-			// carrying one that belongs to a type it is not.
-			if len(names) != 0 {
-				t.Fatalf("DataItemType kept %v", names)
+			// DataItemType has no mandatory property. It may still carry the
+			// unnamed properties of Table A.1's last row; what it must not
+			// carry is one that belongs to a type it is not.
+			for _, forbidden := range []string{"EURange", "EngineeringUnits", "InstrumentRange", "TrueState", "FalseState"} {
+				if names[forbidden] {
+					t.Fatalf("DataItemType kept %s, which belongs to another type", forbidden)
+				}
 			}
 		default:
 			t.Fatalf("item took type %d, which Annex A.3.1.3 does not choose", node.TypeDefinition.Numeric)
@@ -816,5 +819,75 @@ func TestAnItemAddressedWithoutBrowsingSitsAtTheAnnexAFloor(t *testing.T) {
 	}
 	if node.TypeDefinition.Numeric != NodeIDDataItemType {
 		t.Fatalf("type definition = %s, want DataItemType", node.TypeDefinition)
+	}
+}
+
+// Table A.1's last row: everything the source offers that the nine named rows
+// do not claim becomes a Variable of PropertyType, named by the DA property's
+// own description and typed from its own VARTYPE. This was recorded as
+// unimplemented and is what a client browsing a real source actually finds --
+// Scan Rate, EU Type and whatever a vendor adds.
+func TestUnnamedDAPropertiesBecomePropertiesOfTheItem(t *testing.T) {
+	runtime := &stubRuntime{
+		propertyValues: map[opcda.PropertyID]opcda.ItemPropertyValue{
+			opcda.PropertyScanRate: {OK: true, VarType: opcda.VTR4, VarTypePresent: true,
+				Value: float32(250), ValuePresent: true, HRESULTPresent: true},
+		},
+	}
+	service, space := testDataService(t, runtime)
+	available := []opcda.AvailableProperty{
+		{ID: opcda.PropertyScanRate, Description: "Scan Rate", VarType: opcda.VTR4},
+		{ID: opcda.PropertyEUType, Description: "EU Type", VarType: opcda.VTI4},
+		// An array property is left out: A.3.1.4 would expose it with
+		// OneOrMoreDimensions, and the DA layer cannot read one, so the node
+		// would exist and never answer.
+		{ID: opcda.PropertyEUInfo, Description: "EU Info", VarType: opcda.VTBSTR | opcda.VTArray},
+		// Access Rights and Item Description are attributes, not properties.
+		{ID: opcda.PropertyAccessRights, Description: "Access Rights", VarType: opcda.VTI4},
+		{ID: opcda.PropertyDescription, Description: "Item Description", VarType: opcda.VTBSTR},
+	}
+	if err := space.AttachItemProperties("Test/Float", available, opcda.EUTypeNoEnum, testNodeBudget); err != nil {
+		t.Fatalf("AttachItemProperties: %v", err)
+	}
+
+	names := propertyNames(t, space)
+	for _, want := range []string{"Scan Rate", "EU Type"} {
+		if !names[want] {
+			t.Errorf("%s was not exposed; got %v", want, names)
+		}
+	}
+	for _, unwanted := range []string{"EU Info", "Access Rights", "Item Description"} {
+		if names[unwanted] {
+			t.Errorf("%s was exposed as a property", unwanted)
+		}
+	}
+
+	// A.3.1.4: the node is a PropertyType, typed from the DA VARTYPE, scalar,
+	// and readable.
+	node, ok := space.Node(OtherPropertyNodeID("Test/Float", opcda.PropertyScanRate))
+	if !ok {
+		t.Fatal("the Scan Rate node is missing")
+	}
+	if node.TypeDefinition.Numeric != NodeIDPropertyType {
+		t.Fatalf("type definition = %s, want PropertyType", node.TypeDefinition)
+	}
+	if !node.DataTypeKnown || node.DataType.Numeric != NodeIDFloat {
+		t.Fatalf("data type = %s, want Float from VT_R4", node.DataType)
+	}
+	if node.ValueRank != ValueRankScalar || node.AccessLevel != AccessLevelCurrentRead {
+		t.Fatalf("rank = %d, access = %d", node.ValueRank, node.AccessLevel)
+	}
+
+	// And it reads, carrying the source's own value with no mapping applied.
+	response, err := service.Read(context.Background(),
+		readRequestFor(readValue(node.ID)), time.Now())
+	if err != nil {
+		t.Fatalf("Read: %v", err)
+	}
+	if response.Results[0].Status != StatusGood {
+		t.Fatalf("status = %s", response.Results[0].Status.Hex())
+	}
+	if response.Results[0].Value.Value != float32(250) {
+		t.Fatalf("value = %#v", response.Results[0].Value.Value)
 	}
 }
