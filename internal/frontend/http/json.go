@@ -17,6 +17,7 @@ type requestBodyError struct {
 
 var canonicalRequestFields = [...]string{
 	"source", "items", "itemId", "path", "filter", "dataType", "valueEncoding", "value",
+	"propertyIds",
 }
 
 func (e *requestBodyError) Error() string {

@@ -20,7 +20,7 @@ type availablePropertiesHTTPRequest struct {
 type availablePropertyHTTP struct {
 	PropertyID  uint32               `json:"propertyId"`
 	Description string               `json:"description,omitempty"`
-	DataType    *opcda.DAVarTypeInfo `json:"dataType,omitempty"`
+	DataType    *opcda.DAVarTypeInfo `json:"dataType"`
 }
 
 type itemPropertiesHTTPRequest struct {
@@ -68,10 +68,12 @@ func (s *Server) handleAvailableProperties(ctx context.Context, w stdhttp.Respon
 			PropertyID:  uint32(property.ID),
 			Description: property.Description,
 		}
-		if property.VarType != 0 {
-			information := property.VarType.Information()
-			properties[index].DataType = &information
-		}
+		// QueryAvailableProperties states a VARTYPE for every property it
+		// reports, so there is nothing to infer. VT_EMPTY is zero, and treating
+		// zero as "absent" dropped a type the source had actually stated -- and
+		// made this frontend disagree with the gRPC one about the same answer.
+		information := property.VarType.Information()
+		properties[index].DataType = &information
 	}
 	writeJSON(w, stdhttp.StatusOK, struct {
 		ItemID     string                  `json:"itemId"`
