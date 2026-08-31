@@ -1278,3 +1278,49 @@ func TestAPercentDeadbandReachesTheDAGroup(t *testing.T) {
 		t.Fatalf("a differing deadband answered %s", differing.Results[0].StatusCode.Hex())
 	}
 }
+
+// Clause 5.2 puts the bit on **one** data change notification per monitored
+// item that samples values at the time the change happened. A server that set
+// it on every notification afterwards would tell a client to re-read metadata
+// forever.
+func TestSemanticsChangedIsCarriedOnceAndThenStops(t *testing.T) {
+	runtime := &subscribingRuntime{}
+	service, space := testSubscriptionService(t, runtime)
+	id := createSubscription(t, service)
+	monitorItem(t, service, id, ItemNodeID("Test/Int32"), 42)
+
+	publish := func(t *testing.T, handle uint32) DataValue {
+		t.Helper()
+		response, err := service.Publish(context.Background(), testSession, PublishRequest{
+			Header: RequestHeader{RequestHandle: handle, AdditionalHeader: NullExtensionObject()},
+		}, channelEpoch)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !response.NotificationMessage.HasData || len(response.NotificationMessage.Notifications) != 1 {
+			t.Fatalf("message = %+v", response.NotificationMessage)
+		}
+		return response.NotificationMessage.Notifications[0].Value
+	}
+
+	// Before anything changes, the bit is absent.
+	runtime.latest().push(daNotification("Test/Int32", 1, QualityGood))
+	if value := publish(t, 3); value.Status.HasSemanticsChanged() {
+		t.Fatal("the bit was set with no semantic change")
+	}
+
+	// The adapter learns the units, then learns they are different.
+	units := func(text string) Variant { return Variant{Type: BuiltInString, Value: text} }
+	space.NoteSemanticProperty("Test/Int32", "EngineeringUnits", units("degC"))
+	space.NoteSemanticProperty("Test/Int32", "EngineeringUnits", units("degF"))
+
+	runtime.latest().push(daNotification("Test/Int32", 2, QualityGood))
+	if value := publish(t, 4); !value.Status.HasSemanticsChanged() {
+		t.Fatal("the bit was not set on the notification after a semantic change")
+	}
+	// And once is once.
+	runtime.latest().push(daNotification("Test/Int32", 3, QualityGood))
+	if value := publish(t, 5); value.Status.HasSemanticsChanged() {
+		t.Fatal("the bit was carried a second time")
+	}
+}

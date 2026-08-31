@@ -309,11 +309,49 @@ support in the DA layer, not a change here.
 two-state discrete one. An item that is neither has neither, however many DA
 properties it happens to offer.
 
+### The SemanticsChanged bit
+
+Clause 5.2: a server that implements Data Access **shall** set the StatusCode's
+`SemanticsChanged` bit in notifications when certain property values change, so
+a client re-reads the metadata before it trusts the value. OPC 10000-4 puts the
+bit at **14:14**, which `scripts/spec-check/check.py` reads from Part 4 rather
+than taking on trust.
+
+Which properties count is stated per VariableType, and for the types this
+adapter claims it is exactly four: `EURange` and `EngineeringUnits` from
+BaseAnalogType, `TrueState` and `FalseState` from 5.3.3.2. **`InstrumentRange`
+is not one of them** — it appears only in `ArrayItemType`'s list, which this
+adapter never claims, and sweeping it in would report a semantic change the
+specification does not.
+
+The bit goes on **one** notification per monitored item, which is what the
+clause asks. A monitored item created after a change is not told about it; a
+change is not a change for an item that never saw the value before it.
+
+The bit never appears on a Read. Clause 5.2 is explicit: it "has meaning only
+for StatusCodes returned as part of a data change Notification or the
+HistoryRead. StatusCodes used in other contexts shall always set this bit to
+zero."
+
+**What is detected, and what is not.** The adapter notices a change when it
+reads a property, which is when a client asks for one. A source whose
+`EURange` changes while nobody reads it is not detected, and no notification
+carries the bit. Full compliance means polling the semantic properties of every
+subscribed item, which is source load the adapter does not currently impose;
+that is a decision with an operational cost rather than an oversight, and it is
+recorded here rather than left to be discovered.
+
+To notice a change at all the adapter remembers what each semantic property
+last said. That remembered value is **never served** — a property is read from
+the source every time a client asks — and exists only to compare.
+
 ### Nothing is cached, and nothing is asked for early
 
 A property node's value is read from the source **every time a client asks**.
 The address space stores which properties an item has — that is structure — and
-never what they say. A property this adapter remembered would be one it could
+never serves what they say. It does remember what the four semantic properties
+last said, so that a change can be noticed for the `SemanticsChanged` bit; that
+remembered value is compared and never handed to anybody. A property this adapter remembered would be one it could
 still be serving after the source stopped reporting it.
 
 The same applies to the `Description` attribute: the node records only that the

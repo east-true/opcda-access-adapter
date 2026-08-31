@@ -19,6 +19,10 @@ const (
 	infoTypeShift             = 10
 	limitBitsMask  StatusCode = 0x00000300
 	limitBitsShift            = 8
+	// semanticsChangedMask is bit 14. OPC 10000-4 gives it as SemanticsChanged
+	// 14:14, and scripts/spec-check/check.py reads that range from the
+	// specification rather than trusting this number.
+	semanticsChangedMask StatusCode = 0x00004000
 )
 
 // Severity values from OPC 10000-4 Table 176.
@@ -140,4 +144,19 @@ func (code StatusCode) WithLimitBits(limit uint32) StatusCode {
 
 func (code StatusCode) Hex() string {
 	return fmt.Sprintf("0x%08X", uint32(code))
+}
+
+// WithSemanticsChanged sets OPC 10000-4's SemanticsChanged bit.
+//
+// The clause is narrow about where it may appear: the bit "has meaning only for
+// StatusCodes returned as part of a data change Notification or the
+// HistoryRead. StatusCodes used in other contexts shall always set this bit to
+// zero." So a Read never carries it, however recently a property changed.
+func (code StatusCode) WithSemanticsChanged() StatusCode {
+	return code | semanticsChangedMask
+}
+
+// HasSemanticsChanged reports the bit.
+func (code StatusCode) HasSemanticsChanged() bool {
+	return code&semanticsChangedMask != 0
 }

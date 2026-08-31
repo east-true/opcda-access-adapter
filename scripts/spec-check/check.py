@@ -43,6 +43,10 @@ DA_BASE = (f"https://raw.githubusercontent.com/OPCF-Members/"
 # later version gets a new URL, not new bytes at this one.
 PART8_MARKDOWN = ("https://reference.opcfoundation.org/specs/OPC-10000-8/"
                   "v1.05.07/t63916693141/download/markdown")
+# Part 4 carries the StatusCode bit layout, which is a transcription like any
+# other: the bit a flag occupies is a number somebody read once.
+PART4_MARKDOWN = ("https://reference.opcfoundation.org/specs/OPC-10000-4/"
+                  "v1.05.07/t63916693122/download/markdown")
 
 # Every source is a whole URL: most are named after their file, Part 8 is not.
 SOURCES = {
@@ -53,6 +57,7 @@ SOURCES = {
     "opcda.idl": DA_BASE + "opcda.idl",
     "opcerror.h": DA_BASE + "opcerror.h",
     "OPC-10000-8.md": PART8_MARKDOWN,
+    "OPC-10000-4.md": PART4_MARKDOWN,
 }
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 UA = os.path.join(ROOT, "internal", "opcua")
@@ -592,6 +597,38 @@ def check_da_error_mapping(files, src):
     print(f"  {checked} DA error mappings")
 
 
+def check_status_code_bits(files, src):
+    """The StatusCode bit ranges, from Part 4's own table.
+
+    A flag's bit position is a number somebody read once, which is exactly the
+    kind of transcription that has been wrong here three times.
+    """
+    spec = files["OPC-10000-4.md"]
+    checked = 0
+    for go_name, field, expected_range in (
+            ("severityMask", "Severity", "30:31"),
+            ("infoTypeMask", "InfoType", "10:11"),
+            ("limitBitsMask", "LimitBits", "8:9"),
+            ("semanticsChangedMask", "SemanticsChanged", "14:14")):
+        match = re.search(r'\b' + go_name + r'\s+StatusCode\s*=\s*(0x[0-9A-Fa-f]+)', src)
+        stated = re.search(re.escape(field) + r',(\d+):(\d+),', spec)
+        if match is None or stated is None:
+            fail(f"{go_name} or {field}'s bit range could not be read")
+            continue
+        checked += 1
+        low, high = int(stated.group(1)), int(stated.group(2))
+        if f"{low}:{high}" != expected_range:
+            fail(f"{field} is {low}:{high} in Part 4, this check expects {expected_range}")
+            continue
+        want = 0
+        for bit in range(low, high + 1):
+            want |= 1 << bit
+        got = int(match.group(1), 16)
+        if got != want:
+            fail(f"{go_name}: mask 0x{got:08X}, {field} at bits {low}:{high} is 0x{want:08X}")
+    print(f"  {checked} status code bit ranges")
+
+
 def check_da_type_mapping(files, src):
     """Table A.2, VARTYPE to UA DataType."""
     rows = spec_table(files["OPC-10000-8.md"], "Table A.2 - DataTypes and mapping")
@@ -662,6 +699,7 @@ def main():
     check_attribute_ids(files, src)
     check_request_decoders(files, src)
     check_da(files)
+    check_status_code_bits(files, src)
     check_da_error_mapping(files, src + da_sources())
     check_da_type_mapping(files, src + da_sources())
     check_da_quality_mapping(files, src + da_sources())
