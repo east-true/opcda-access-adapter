@@ -828,6 +828,22 @@ type monitoredItem struct {
 	mode         MonitoringMode
 	timestamps   TimestampsToReturn
 
+	// samplingInterval is the revised sampling interval, in milliseconds, that
+	// this item was told it would get. A DA group has one update rate for
+	// every item in it, so an item that asked for a slower rate than the group
+	// runs at is paced here rather than being sent everything the group
+	// delivers -- OPC 10000-4 7.21 requires the revised interval to be equal
+	// or higher than the requested one, and reporting a rate the client then
+	// does not receive would make that promise a lie in the other direction.
+	samplingInterval float64
+	// held is the newest notification this item has produced but not yet
+	// reported, and lastReported is when it last reported one. Pacing holds
+	// rather than drops: queueSize is one, so the newest value is the one the
+	// client wants, and dropping would leave a client that asked for a slow
+	// rate stuck on a stale value whenever the source went quiet.
+	held         *DataValue
+	lastReported time.Time
+
 	// semanticGeneration is the address space's count of semantic property
 	// changes as of this item's last notification. Clause 5.2 asks for the bit
 	// on one notification per monitored item, so the two are compared rather
@@ -849,6 +865,13 @@ type uaSubscription struct {
 	items      map[uint32]*monitoredItem
 	nextItemID uint32
 	byHandle   map[uint32]*monitoredItem
+
+	// heldOrder lists the items holding an unreported value, in the order they
+	// began holding one. opcda.Subscription drains "preserving first-seen
+	// order", and that order is the source's own account of what changed
+	// first, so it is carried through rather than being replaced by whatever
+	// order a map happens to yield.
+	heldOrder []uint32
 
 	// deadband is the percent deadband the DA group carries. A.3.5 maps a
 	// client's PercentDeadband onto it, and a DA group has exactly one, so it
@@ -991,10 +1014,12 @@ func (s *SubscriptionService) CreateMonitoredItems(ctx context.Context, sessionT
 	}
 
 	results := make([]MonitoredItemCreateResult, len(request.ItemsToCreate))
+	created := make([]*monitoredItem, len(request.ItemsToCreate))
 	accepted := make([]*monitoredItem, 0, len(request.ItemsToCreate))
 	for index, create := range request.ItemsToCreate {
 		result, item := s.prepareMonitoredItem(subscription, create, request.TimestampsToReturn)
 		results[index] = result
+		created[index] = item
 		if item != nil {
 			accepted = append(accepted, item)
 		}
@@ -1011,14 +1036,20 @@ func (s *SubscriptionService) CreateMonitoredItems(ctx context.Context, sessionT
 	}
 	rebuildErr := s.rebuildDASubscription(ctx, subscription, now)
 	if rebuildErr == nil {
-		// Now that the group exists the source has revised its update rate, so
-		// the results report what the source settled on rather than what the
-		// subscription asked for.
+		// Now that the group exists the source has revised its update rate.
+		// That rate is a floor: the group cannot sample faster than it, so no
+		// item can be given anything quicker no matter what it asked for. An
+		// item that asked for something slower keeps its own interval and is
+		// paced to it.
 		revised := subscription.daRevisedInterval()
-		for index := range results {
-			if results[index].StatusCode == StatusGood {
-				results[index].RevisedSamplingInterval = revised
+		for index, item := range created {
+			if item == nil || results[index].StatusCode != StatusGood {
+				continue
 			}
+			if item.samplingInterval < revised {
+				item.samplingInterval = revised
+			}
+			results[index].RevisedSamplingInterval = item.samplingInterval
 		}
 	}
 	if err := rebuildErr; err != nil {
@@ -1117,6 +1148,7 @@ func (s *SubscriptionService) prepareMonitoredItem(subscription *uaSubscription,
 	subscription.deadband = deadband
 	subscription.deadbandSet = true
 	subscription.nextItemID++
+	sampling := requestedSamplingInterval(subscription, node, create.RequestedParameters.SamplingInterval)
 	// A monitored item starts level with the address space. A change that
 	// happened before it existed is not one it needs telling about.
 	item := &monitoredItem{
@@ -1127,20 +1159,51 @@ func (s *SubscriptionService) prepareMonitoredItem(subscription *uaSubscription,
 		nodeID:             node.ID,
 		mode:               create.MonitoringMode,
 		timestamps:         timestamps,
+		samplingInterval:   sampling,
 	}
 	return MonitoredItemCreateResult{
 		StatusCode:      StatusGood,
 		MonitoredItemID: item.id,
-		// The DA group's revised update rate is the real sampling interval. It
-		// is filled in once the group exists, because only the source can say
-		// what rate it settled on, and a vendor may revise it far from what was
-		// requested.
-		RevisedSamplingInterval: subscription.publishingInterval,
+		// The DA group's revised update rate is the floor under this item's
+		// interval. It is filled in once the group exists, because only the
+		// source can say what rate it settled on, and a vendor may revise it
+		// far from what was requested.
+		RevisedSamplingInterval: sampling,
 		// The DA core coalesces per item, so the effective queue is one value
 		// per item and reporting anything larger would overstate it.
 		RevisedQueueSize: 1,
 		FilterResult:     NullExtensionObject(),
 	}, item
+}
+
+// requestedSamplingInterval reads a monitored item's requested sampling
+// interval the way OPC 10000-4 7.21 defines it, and applies the floor clause
+// 5.13.1.2 puts under it.
+//
+// Zero "indicates that the Server should use the fastest practical rate", which
+// for this adapter is whatever rate the DA group settles on, so zero is carried
+// through and the group's rate is applied to it later. Minus one "indicates
+// that the default sampling interval defined by the publishing interval of the
+// Subscription is requested", and "any negative number is interpreted as -1".
+//
+// The floor is the item's MinimumSamplingInterval: "if the Server specifies a
+// value for the MinimumSamplingInterval Attribute it shall always return a
+// revisedSamplingInterval that is equal or higher". Here that value is the DA
+// Scan Rate, so it is the source's own statement about how often the item can
+// change -- promising anything faster would be promising something the source
+// has already said it will not do.
+func requestedSamplingInterval(subscription *uaSubscription, node *Node, requested float64) float64 {
+	interval := requested
+	switch {
+	case requested < 0:
+		interval = subscription.publishingInterval
+	case requested == 0:
+		interval = 0
+	}
+	if node.MinimumSamplingIntervalKnown && node.MinimumSamplingInterval > interval {
+		interval = node.MinimumSamplingInterval
+	}
+	return interval
 }
 
 // rebuildDASubscription replaces the DA subscription with one covering the
@@ -1474,11 +1537,47 @@ func (s *SubscriptionService) collect(ctx context.Context, subscription *uaSubsc
 			notification.Status = notification.Status.WithSemanticsChanged()
 			item.semanticGeneration = generation
 		}
+		// The newest value wins. queueSize is one, so an older value in the
+		// same sampling interval is one the client would have overwritten
+		// anyway.
+		if item.held == nil {
+			subscription.heldOrder = append(subscription.heldOrder, item.id)
+		}
+		held := notification
+		item.held = &held
+	}
+	s.flushHeld(subscription, now)
+}
+
+// flushHeld reports each item's held value once its own sampling interval has
+// come round. An item that asked for no more than the group's rate reports
+// every value the group delivers; one that asked for less reports the newest
+// value it has, which is what a queue of one holds.
+func (s *SubscriptionService) flushHeld(subscription *uaSubscription, now time.Time) {
+	stillHeld := subscription.heldOrder[:0]
+	for _, id := range subscription.heldOrder {
+		item, ok := subscription.items[id]
+		if !ok || item.held == nil {
+			// The item was deleted, or reported by an earlier pass.
+			continue
+		}
+		// An item that has never reported has a zero lastReported, which is
+		// unboundedly long ago, so its first value is never paced -- a client
+		// that has just subscribed is waiting for the current value, not for
+		// an interval to elapse before it learns anything.
+		if now.Sub(item.lastReported) < time.Duration(item.samplingInterval)*time.Millisecond {
+			// Not due yet: it keeps its place in the queue as well as its value.
+			stillHeld = append(stillHeld, id)
+			continue
+		}
 		subscription.pending = append(subscription.pending, MonitoredItemNotification{
 			ClientHandle: item.clientHandle,
-			Value:        notification,
+			Value:        *item.held,
 		})
+		item.held = nil
+		item.lastReported = now
 	}
+	subscription.heldOrder = stillHeld
 }
 
 // reportInvalidation queues a bad status for every reporting item, so a client

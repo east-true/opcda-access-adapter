@@ -637,6 +637,59 @@ One UA subscription is backed by one DA group, and a group has exactly one
 cannot be honoured, so it is refused; applying somebody else's deadband to it
 would report changes the client did not ask to hear about, or hide ones it did.
 
+### The sampling interval a monitored item is promised
+
+A DA group has one update rate for every item in it, and OPC UA gives each
+monitored item its own sampling interval. The two are reconciled by treating the
+group's revised rate as a floor and pacing anything slower.
+
+OPC 10000-4 7.21 requires that "the Server shall always return a
+revisedSamplingInterval that is equal or higher than the requested
+samplingInterval". An item asking for something faster than the group runs at
+cannot be given it, so it is told the group's rate -- which is higher, as the
+rule requires. An item asking for something slower keeps its own interval and is
+paced to it: it is not handed everything the group delivers, because reporting
+an interval and then sending five times as much would break the promise in the
+other direction.
+
+The two special values are read as 7.21 defines them. Zero "indicates that the
+Server should use the fastest practical rate", which here is the group's. "Any
+negative number is interpreted as -1", which asks for the subscription's
+publishing interval.
+
+Clause 5.13.1.2 puts a second floor under it: "if the Server specifies a value
+for the MinimumSamplingInterval Attribute it shall always return a
+revisedSamplingInterval that is equal or higher". That attribute carries the
+source's DA Scan Rate, so it is the source's own statement about how often the
+item can change, and promising anything faster would promise something the
+source has already said it will not do.
+
+### The queue holds one value, which is what the source offers
+
+Every monitored item reports a `revisedQueueSize` of 1, which 7.21 permits: "0
+or 1 -- the Server returns the default queue size which shall be 1 ... The queue
+has a single entry, effectively disabling queuing."
+
+That is not a limitation this layer imposes; it is the shape of the source. A DA
+group's pending set holds one value per item, because between two update-rate
+ticks a DA server reports only the latest cache value. There is no second value
+to queue.
+
+Clause 5.13.1.5 describes exactly this case: "if the queue size is one, the
+queue becomes a buffer that always contains the newest Notification ... The
+discard policy is ignored if the queue size is one." So `discardOldest` is
+accepted and has no effect, and the Overflow bit is never set -- 5.13.1.5 sets it
+only "if a Notification is discarded for a DataValue and the size of the queue
+is larger than one".
+
+A paced item holds its newest value rather than dropping values as they arrive,
+for the same reason: a queue of one holds the newest, and dropping instead would
+leave a client that asked for a slow rate stuck on a stale value whenever the
+source went quiet. It also keeps its place while it waits: a DA subscription
+drains "preserving first-seen order", which is the source's own account of what
+changed first, and pacing carries that order through rather than reordering
+around it.
+
 ## `maxAge` on a Read
 
 OPC 10000-4 Table 47 gives `maxAge` three rules, and the adapter meets two of
