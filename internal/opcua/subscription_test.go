@@ -554,7 +554,7 @@ func TestMonitoredItemsRefuseWhatTheyCannotMonitor(t *testing.T) {
 		}, StatusBadNodeIdUnknown},
 		{"a folder", MonitoredItemCreateRequest{
 			ItemToMonitor: ReadValueID{
-				NodeID: BranchNodeID([]string{"Folder"}), AttributeID: AttributeValue},
+				NodeID: BranchNodeID([]string{"Folder"}, nil), AttributeID: AttributeValue},
 			RequestedParameters: MonitoringParameters{ClientHandle: 11, Filter: NullExtensionObject()},
 		}, StatusBadAttributeIDInvalid},
 		{"a non-Value attribute", MonitoredItemCreateRequest{

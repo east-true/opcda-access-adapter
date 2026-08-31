@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -87,7 +88,7 @@ func TestBrowseValidationPreventsRuntimeCall(t *testing.T) {
 }
 
 func TestBrowseFailsClosedOnInvalidRuntimeIdentity(t *testing.T) {
-	validItemID := opcda.DAItemID("A")
+	emptyItemID := opcda.DAItemID("")
 	tests := []struct {
 		name   string
 		result opcda.BrowseResult
@@ -95,7 +96,9 @@ func TestBrowseFailsClosedOnInvalidRuntimeIdentity(t *testing.T) {
 		{name: "path mismatch", result: opcda.BrowseResult{Path: []string{"Other"}}},
 		{name: "unknown kind", result: opcda.BrowseResult{Entries: []opcda.BrowseEntry{{Kind: "unknown", Name: "A"}}}},
 		{name: "item without ItemID", result: opcda.BrowseResult{Entries: []opcda.BrowseEntry{{Kind: opcda.BrowseEntryItem, Name: "A"}}}},
-		{name: "branch with ItemID", result: opcda.BrowseResult{Entries: []opcda.BrowseEntry{{Kind: opcda.BrowseEntryBranch, Name: "A", ItemID: &validItemID}}}},
+		// A branch may carry the ItemID the source gave it; what it may not
+		// carry is a malformed one, which is what this now checks.
+		{name: "branch with an empty ItemID", result: opcda.BrowseResult{Entries: []opcda.BrowseEntry{{Kind: opcda.BrowseEntryBranch, Name: "A", ItemID: &emptyItemID}}}},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -116,4 +119,27 @@ func newBrowseTestServer(runtime opcda.Runtime) *Server {
 		MaxBodyBytes: 4096, MaxConcurrent: 2, RequestDeadline: time.Second,
 		MaxBrowseEntries: 10, MaxBrowseDepth: 4, MaxItemIDBytes: 1024,
 	})
+}
+
+// A.3.1.2 has a wrapper obtain a branch's ItemID from GetItemID, so a branch
+// entry carries one when the source names it. The frontend used to refuse that
+// outright, on the belief that a branch has no ItemID.
+func TestABranchCarriesTheItemIDTheSourceNamedIt(t *testing.T) {
+	named := opcda.DAItemID("Plant.Line1")
+	runtime := &browseRuntime{result: opcda.BrowseResult{
+		Entries: []opcda.BrowseEntry{{Kind: opcda.BrowseEntryBranch, Name: "Line1", ItemID: &named}},
+	}}
+	server := New(runtime, Config{
+		MaxBodyBytes: 4096, MaxConcurrent: 4, RequestDeadline: time.Second,
+		MaxBrowseEntries: 10, MaxItemIDBytes: 128, MaxJSONDepth: 8,
+	})
+	recorder := httptest.NewRecorder()
+	server.ServeHTTP(recorder, newJSONRequest(http.MethodPost, "/v1/browse",
+		strings.NewReader(`{"path":[],"filter":"all"}`)))
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d: %s", recorder.Code, recorder.Body.String())
+	}
+	if !strings.Contains(recorder.Body.String(), `"itemId":"Plant.Line1"`) {
+		t.Fatalf("the branch ItemID did not survive: %s", recorder.Body.String())
+	}
 }

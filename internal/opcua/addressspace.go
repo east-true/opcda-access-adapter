@@ -2,6 +2,7 @@ package opcua
 
 import (
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -132,6 +133,19 @@ func DataTypeNodeID(dataType DataType) (NodeID, bool) {
 		return NodeID{}, false
 	}
 	return NumericNodeID(0, identifier), true
+}
+
+// branchPathKey renders a browse path as an index key. The separator cannot
+// appear in a DA browse name, so two different paths never collide.
+func branchPathKey(path []string) string {
+	key := ""
+	for index, segment := range path {
+		if index > 0 {
+			key += "\x1f"
+		}
+		key += segment
+	}
+	return key
 }
 
 // Reference is one reference from a node.
@@ -268,6 +282,10 @@ type AddressSpace struct {
 
 	mu    sync.RWMutex
 	nodes map[string]*Node
+	// branchIDs maps a browse path to the branch node that stands for it. A
+	// branch identifier carries the ItemID the source gave it, so it cannot be
+	// rebuilt from the path alone.
+	branchIDs map[string]NodeID
 	// sourceFolder is the node DA branches and items hang from.
 	sourceFolder NodeID
 	// binaryLimits bounds the encoder used for the server's own structures.
@@ -290,6 +308,7 @@ func NewAddressSpace(config AddressSpaceConfig) (*AddressSpace, error) {
 	space := &AddressSpace{
 		config:       config,
 		nodes:        make(map[string]*Node),
+		branchIDs:    make(map[string]NodeID),
 		sourceFolder: StringNodeID(AdapterNamespaceIndex, config.SourceFolderName),
 		binaryLimits: DefaultBinaryLimits(),
 		// The start time is when the address space was built, which is when
@@ -429,12 +448,27 @@ func (s *AddressSpace) VariableItemID(id NodeID) (opcda.DAItemID, bool) {
 	return node.ItemID, true
 }
 
-// BranchNodeID is the node identifier for a DA browse path.
+// branchItemIDSeparator ends a branch identifier's navigation path and begins
+// the ItemID the source gave it. Neither a browse name nor an ItemID can
+// contain it.
+const branchItemIDSeparator = "\x1e"
+
+// BranchNodeID is the node identifier for a DA branch.
 //
-// A branch has no ItemID: design §35.2 forbids reconstructing one from a browse
-// path. Its identity is therefore the navigation path itself, marked so it can
-// never be confused with an item's exact ItemID.
-func BranchNodeID(path []string) NodeID {
+// It carries the navigation path, because Browse is path-based and the path is
+// how the branch is reached again. A.3.1.2 also requires "the ItemId obtained
+// using the GetItemID" to be part of a branch's NodeId, so when the source
+// names the branch that ItemID is appended.
+//
+// A.3.1.5 sanctions exactly this shape -- a NodeId that "include[s] both the
+// COM DA ItemID and the Item name" -- and names the trade-off it carries: "the
+// NodeId will not represent the ItemId". That is knowingly accepted, because
+// the path has to survive for navigation.
+//
+// This is not the reconstruction design §35.2 forbids. That rule is about
+// guessing an ItemID from a path and a delimiter; this is the source stating
+// one. A source that will not name a branch leaves the path alone.
+func BranchNodeID(path []string, itemID *opcda.DAItemID) NodeID {
 	if len(path) == 0 {
 		return NodeID{}
 	}
@@ -445,7 +479,27 @@ func BranchNodeID(path []string) NodeID {
 		}
 		encoded += segment
 	}
+	if itemID != nil && *itemID != "" {
+		encoded += branchItemIDSeparator + string(*itemID)
+	}
 	return StringNodeID(AdapterNamespaceIndex, encoded)
+}
+
+// BranchItemIDForNode recovers the ItemID a source gave a branch, when it gave
+// one.
+func BranchItemIDForNode(id NodeID) (opcda.DAItemID, bool) {
+	if id.Namespace != AdapterNamespaceIndex || id.Type != NodeIDTypeString {
+		return "", false
+	}
+	rest, found := strings.CutPrefix(id.StringID, "branch:")
+	if !found {
+		return "", false
+	}
+	_, itemID, found := strings.Cut(rest, branchItemIDSeparator)
+	if !found || itemID == "" {
+		return "", false
+	}
+	return opcda.DAItemID(itemID), true
 }
 
 // itemNodePrefix marks a node identifier as naming a DA item, so an item and a
@@ -535,13 +589,20 @@ func (s *AddressSpace) ResolveVariable(id NodeID, maxNodes int) (*Node, bool) {
 // path names. It replaces whatever that node previously referenced, so a
 // re-browse reflects the source rather than accumulating stale nodes.
 func (s *AddressSpace) PopulateBranch(path []string, entries []opcda.BrowseEntry) error {
-	parentID := s.sourceFolder
-	if len(path) > 0 {
-		parentID = BranchNodeID(path)
-	}
-
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
+	// A branch identifier carries the ItemID the source gave it, which the
+	// path alone does not supply, so the parent is found through the index
+	// rather than rebuilt from the path.
+	parentID := s.sourceFolder
+	if len(path) > 0 {
+		known, ok := s.branchIDs[branchPathKey(path)]
+		if !ok {
+			return fmt.Errorf("browse path %v has no node", path)
+		}
+		parentID = known
+	}
 	parent, ok := s.nodes[nodeKey(parentID)]
 	if !ok {
 		return fmt.Errorf("browse path %v has no node", path)
@@ -562,6 +623,10 @@ func (s *AddressSpace) PopulateBranch(path []string, entries []opcda.BrowseEntry
 			return err
 		}
 		s.nodes[nodeKey(child.ID)] = child
+		if entry.Kind == opcda.BrowseEntryBranch {
+			childPath := append(append([]string(nil), path...), entry.Name)
+			s.branchIDs[branchPathKey(childPath)] = child.ID
+		}
 		// Annex A.3.1.2: a folder standing for a DA branch references child
 		// branches with Organizes and DA leaves with HasComponent. The
 		// distinction is visible to any client that filters a Browse by
@@ -590,7 +655,7 @@ func (s *AddressSpace) nodeForEntry(path []string, entry opcda.BrowseEntry) (*No
 	case opcda.BrowseEntryBranch:
 		childPath := append(append([]string(nil), path...), entry.Name)
 		return &Node{
-			ID:             BranchNodeID(childPath),
+			ID:             BranchNodeID(childPath, entry.ItemID),
 			Class:          NodeClassObject,
 			BrowseName:     name,
 			DisplayName:    display,

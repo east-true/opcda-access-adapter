@@ -453,7 +453,7 @@ func TestReadNonValueAttributes(t *testing.T) {
 	}
 	// A variable-only attribute on a folder is refused too.
 	response, err = service.Read(context.Background(), readRequestFor(
-		ReadValueID{NodeID: BranchNodeID([]string{"Folder"}), AttributeID: AttributeDataType},
+		ReadValueID{NodeID: BranchNodeID([]string{"Folder"}, nil), AttributeID: AttributeDataType},
 	), time.Now().UTC())
 	if err != nil {
 		t.Fatal(err)
@@ -641,7 +641,7 @@ func TestWriteRefusesUnwritableTargets(t *testing.T) {
 			Value: DataValue{Value: Variant{Type: BuiltInInt32, Value: int32(1)}},
 		}, StatusBadNodeIdUnknown},
 		{"a folder", WriteValue{
-			NodeID: BranchNodeID([]string{"Folder"}), AttributeID: AttributeValue,
+			NodeID: BranchNodeID([]string{"Folder"}, nil), AttributeID: AttributeValue,
 			Value: DataValue{Value: Variant{Type: BuiltInInt32, Value: int32(1)}},
 		}, StatusBadAttributeIDInvalid},
 		{"a non-Value attribute", WriteValue{

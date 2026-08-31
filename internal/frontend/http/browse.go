@@ -103,8 +103,15 @@ func browseResultMatchesRequest(path []string, result opcda.BrowseResult, maximu
 		}
 		switch entry.Kind {
 		case opcda.BrowseEntryBranch:
+			// A.3.1.2 has a wrapper obtain a branch's ItemID from GetItemID, so
+			// one may be present. It is held to the same shape an item's is;
+			// what the adapter must not do is invent one, which a value
+			// arriving from the source is not.
 			if entry.ItemID != nil {
-				return false
+				if *entry.ItemID == "" || !utf8.ValidString(string(*entry.ItemID)) ||
+					len([]byte(*entry.ItemID)) > maximumItemIDBytes {
+					return false
+				}
 			}
 		case opcda.BrowseEntryItem:
 			if entry.ItemID == nil || *entry.ItemID == "" || !utf8.ValidString(string(*entry.ItemID)) || len([]byte(*entry.ItemID)) > maximumItemIDBytes {

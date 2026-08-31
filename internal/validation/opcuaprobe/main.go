@@ -1217,7 +1217,7 @@ const (
 // were or what type the node had.
 func (c *client) validateAddressSpaceStructure(token opcua.ChannelSecurityToken, session, folder opcua.NodeID) error {
 	handle := uint32(700)
-	branches, leaves := 0, 0
+	branches, leaves, named := 0, 0, 0
 	pending := []opcua.NodeID{folder}
 
 	for depth := 0; depth < 4 && len(pending) > 0; depth++ {
@@ -1245,6 +1245,13 @@ func (c *client) validateAddressSpaceStructure(token opcua.ChannelSecurityToken,
 							reference.ReferenceTypeID)
 					}
 					branches++
+					// A.3.1.2: the ItemId from GetItemID is part of a branch's
+					// NodeId. Whether the source names a branch is its own
+					// decision, so this is counted rather than required -- the
+					// DA-side call has no unit test and this is where it shows.
+					if strings.Contains(reference.NodeID.NodeID.StringID, "\x1e") {
+						named++
+					}
 					next = append(next, reference.NodeID.NodeID)
 				case opcua.NodeClassVariable:
 					// A.3.1.2: a DA leaf is referenced with HasComponent, and
@@ -1276,6 +1283,6 @@ func (c *client) validateAddressSpaceStructure(token opcua.ChannelSecurityToken,
 	if leaves == 0 {
 		return fmt.Errorf("the address space exposed no DA items to check")
 	}
-	fmt.Printf("opcua address space annexA branches=%d leaves=%d valuesLogged=false\n", branches, leaves)
+	fmt.Printf("opcua address space annexA branches=%d named=%d leaves=%d valuesLogged=false\n", branches, named, leaves)
 	return nil
 }

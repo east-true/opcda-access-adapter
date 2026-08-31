@@ -286,12 +286,27 @@ func (session *daThreadSession) browseAddressSpace(request BrowseRequest, limits
 	}
 
 	if request.Filter == BrowseFilterAll || request.Filter == BrowseFilterBranch {
-		names, err := session.browse.enumerateNames(opcBrowseBranch, limits.MaxBrowseEntries, limits.MaxBSTRCodeUnits)
+		browse := session.browse
+		names, err := browse.enumerateNames(opcBrowseBranch, limits.MaxBrowseEntries, limits.MaxBSTRCodeUnits)
 		if err != nil {
 			return BrowseResult{}, err
 		}
 		for _, name := range names {
-			result.Entries = append(result.Entries, BrowseEntry{Kind: BrowseEntryBranch, Name: name})
+			entry := BrowseEntry{Kind: BrowseEntryBranch, Name: name}
+			// A.3.1.2: "The ItemId obtained using the GetItemID is used as a
+			// part of the NodeId for each Branch." A branch has an ItemID in
+			// the source even though it is not an item, and GetItemID is how
+			// the source states it -- which is a different thing from
+			// reconstructing one from a browse path, the thing design §35.2
+			// forbids.
+			//
+			// A source may refuse to name a branch. That is its answer, not a
+			// failure, and the branch keeps a path-based identity.
+			if itemID, err := browse.getItemID(name, limits.MaxBSTRCodeUnits, limits.MaxItemIDBytes); err == nil && itemID != "" {
+				branchItemID := itemID
+				entry.ItemID = &branchItemID
+			}
+			result.Entries = append(result.Entries, entry)
 		}
 	}
 	if request.Filter == BrowseFilterAll || request.Filter == BrowseFilterItem {
