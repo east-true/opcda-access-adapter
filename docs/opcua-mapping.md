@@ -220,8 +220,9 @@ value against `opcerror.h` — for the four Windows codes, against
 ## Item properties: Table A.1
 
 Part 8 Table A.1 maps the OPC COM DA item properties onto UA attributes and
-properties. All ten rows are now implemented; they do not all become property
-nodes, because the table does not ask them to.
+properties. Nine of its ten rows are implemented; they do not all become
+property nodes, because the table does not ask them to. The tenth is not, and
+what that costs is set out below.
 
 | DA property | UA target | UA type |
 |---|---|---|
@@ -251,6 +252,36 @@ standard `AnalogItemType` and `TwoStateDiscreteType` define as `EUInformation`
 and `LocalizedText`, which is what A.3.1.3 assigns them to — so A.1's column is
 the DA value's mapped type, not the UA property's. That reading is worked
 through below, under the VariableType.
+
+### Not implemented: Table A.1's "Other Properties" row
+
+Table A.1's last row maps everything else — *"Other Properties (include Vendor
+specific Properties)"* — onto a Variable of `PropertyType`, typed from the DA
+property's own DataType. A.3.1.4 says how:
+
+- the DA property's **description** becomes the BrowseName and DisplayName;
+- its **PropertyID and ItemID** become part of the NodeId;
+- its **DataType** becomes the `DataType` attribute;
+- `ValueRank` is `OneOrMoreDimensions` for an array property and `Scalar`
+  otherwise;
+- `AccessLevel` is readable **and writable** when the property has its own
+  ItemID in the DA server, and readable when it does not.
+
+**None of this is implemented.** A source's Scan Rate, EU Type, EU Info and any
+vendor-specific property are reachable over the DA-native frontends and are
+absent from the UA address space. Every property node the adapter creates is
+`Scalar` and readable, which is right for the nine named rows and is not the
+rule A.3.1.4 states.
+
+Two things stand between here and there. `AccessLevel` needs
+`IOPCItemProperties::LookupItemIDs`, which the adapter does not call. And the
+`ValueRank` rule exists because property values can be arrays — EU Info is an
+array of strings — while the DA layer does not carry array VARIANTs at all, so
+an array property could be named but never read.
+
+This is the one part of Table A.1 the OPC Foundation fixture could actually
+exercise: it offers Scan Rate, EU Type and EU Info for its items and none of the
+nine named properties.
 
 **A property belongs to the type its item was given.** `EngineeringUnits` and
 `InstrumentRange` exist on an analog item; `TrueState` and `FalseState` on a

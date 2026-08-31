@@ -217,6 +217,15 @@ question without rotting.
   an unidentified deviation. The property types follow the standard
   VariableTypes rather than Table A.1's "String" column, which A.3.1.3 forces.
 
+  Table A.1's "Other Properties" row is **not** implemented: a source's Scan
+  Rate, EU Type, EU Info and vendor-specific properties do not appear in the UA
+  address space, and the `ValueRank` and `AccessLevel` rules A.3.1.4 states for
+  them are not applied. `docs/opcua-mapping.md` records what closing it needs —
+  `LookupItemIDs`, which the adapter does not call, and array VARIANT support,
+  which the DA layer does not have. It is also the one part of Table A.1 the
+  OPC Foundation fixture could exercise, since it offers exactly those
+  properties and none of the nine named ones.
+
   Two types are deliberately not claimed, because a claimed type is a promise:
   an item whose EU Type is Analog but which offers neither EU bound has no
   mandatory `EURange` to publish, and `MultiStateDiscreteType` needs
