@@ -128,6 +128,26 @@ func (session *daThreadSession) queryAvailableProperties(itemID string, limits L
 		}
 		available = append(available, property)
 	}
+	// A.3.1.4 needs to know which of these are DA items in their own right,
+	// and the caller always needs both answers, so one discovery makes both
+	// calls rather than leaving the second for somebody to remember.
+	if len(available) == 0 {
+		return available, nil
+	}
+	wanted := make([]PropertyID, len(available))
+	for index, property := range available {
+		wanted[index] = property.ID
+	}
+	owned, err := session.lookupItemIDs(ItemPropertiesRequest{ItemID: itemID, Properties: wanted}, limits)
+	if err != nil {
+		return nil, err
+	}
+	for index := range available {
+		if index < len(owned) && owned[index].Present {
+			available[index].ItemID = owned[index].ItemID
+			available[index].ItemIDPresent = true
+		}
+	}
 	return available, nil
 }
 
@@ -217,4 +237,88 @@ func (session *daThreadSession) getItemProperties(request ItemPropertiesRequest,
 		return nil, cleanupErr
 	}
 	return values, nil
+}
+
+// lookupItemIDs asks the source whether each named property is also a DA item
+// in its own right.
+//
+// OPC 10000-8 A.3.1.4 makes a property writable when it has its own ItemID,
+// and this is the call that answers. A source may implement
+// IOPCItemProperties without implementing this -- E_NOTIMPL is an answer, not
+// a failure, and means no property has one.
+func (session *daThreadSession) lookupItemIDs(request ItemPropertiesRequest, limits Limits) ([]PropertyItemID, error) {
+	if session.properties == nil {
+		return nil, NewAdapterError(CodePropertiesUnsupported, propertiesUnsupported)
+	}
+	wide, err := syscall.UTF16PtrFromString(request.ItemID)
+	if err != nil {
+		return nil, NewAdapterError(CodeInvalidRequest, "itemId is not valid UTF-16")
+	}
+	identifiers := make([]uint32, len(request.Properties))
+	for index, property := range request.Properties {
+		identifiers[index] = uint32(property)
+	}
+
+	var pinner runtime.Pinner
+	defer pinner.Unpin()
+	pinner.Pin(&identifiers[0])
+
+	var newItemIDs **uint16
+	var errors *HRESULT
+	result, _, _ := syscall.SyscallN(
+		session.properties.VTable.LookupItemIDs,
+		uintptr(unsafe.Pointer(session.properties)),
+		uintptr(unsafe.Pointer(wide)),
+		uintptr(len(identifiers)),
+		uintptr(unsafe.Pointer(&identifiers[0])),
+		uintptr(unsafe.Pointer(&newItemIDs)),
+		uintptr(unsafe.Pointer(&errors)),
+	)
+	runtime.KeepAlive(session.properties)
+	runtime.KeepAlive(wide)
+	if hr := hresultFromCall(result); hr.Failed() {
+		if hr == ENotImpl {
+			// The source has properties but does not give them ItemIDs.
+			return make([]PropertyItemID, len(identifiers)), nil
+		}
+		return nil, &SourceError{Operation: "IOPCItemProperties::LookupItemIDs", HRESULT: hr}
+	}
+	defer func() {
+		if newItemIDs != nil {
+			for index := range identifiers {
+				pointer := *(**uint16)(unsafe.Add(unsafe.Pointer(newItemIDs), uintptr(index)*unsafe.Sizeof(uintptr(0))))
+				coTaskMemFree(unsafe.Pointer(pointer))
+			}
+		}
+		coTaskMemFree(unsafe.Pointer(newItemIDs))
+		coTaskMemFree(unsafe.Pointer(errors))
+	}()
+	if newItemIDs == nil || errors == nil {
+		return nil, fmt.Errorf("LookupItemIDs returned a nil array")
+	}
+
+	found := make([]PropertyItemID, len(identifiers))
+	for index := range identifiers {
+		found[index].ID = request.Properties[index]
+		itemHR := *(*HRESULT)(unsafe.Add(unsafe.Pointer(errors), uintptr(index)*unsafe.Sizeof(HRESULT(0))))
+		if itemHR.Failed() {
+			// The source refused this one property. That is a result about the
+			// property, not a failure of the call.
+			continue
+		}
+		pointer := *(**uint16)(unsafe.Add(unsafe.Pointer(newItemIDs), uintptr(index)*unsafe.Sizeof(uintptr(0))))
+		if pointer == nil {
+			continue
+		}
+		itemID, err := decodeTaskString(pointer, limits.MaxBSTRCodeUnits)
+		if err != nil {
+			return nil, err
+		}
+		if itemID == "" || len([]byte(itemID)) > limits.MaxItemIDBytes {
+			continue
+		}
+		found[index].ItemID = DAItemID(itemID)
+		found[index].Present = true
+	}
+	return found, nil
 }

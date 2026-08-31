@@ -164,6 +164,12 @@ type Node struct {
 	// Read teaches it otherwise.
 	DataTypeKnown bool
 
+	// OwnItemID records that this node is a DA item property that the source
+	// also exposes as an item of its own, so ItemID names the property rather
+	// than the item it describes. OPC 10000-8 A.3.1.4 makes such a property
+	// writable, and this is what lets a Write reach it.
+	OwnItemID bool
+
 	// DescriptionOffered records that the source offers Item Description for
 	// this item, which OPC 10000-8 Table A.1 maps to the Description attribute.
 	// It stores whether the property exists, never its text: the description is
