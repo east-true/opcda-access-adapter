@@ -154,6 +154,15 @@ func (s *Server) Stop() {
 	s.server.Stop()
 }
 
+// GracefulStop stops the server without cutting a call off, and without
+// hanging on one: when ctx expires the server is stopped hard instead.
+//
+// That bound rests on handlers honouring cancellation, because a hard Stop
+// cancels in-flight RPCs rather than forcing their handlers to return. Every
+// handler here reaches the DA runtime, which is bounded by its own request
+// deadline and COM watchdog, so the assumption holds -- but it is an
+// assumption, and a handler that ignored its context would hold shutdown open
+// whatever context this was given.
 func (s *Server) GracefulStop(ctx context.Context) error {
 	s.listening.Store(false)
 	done := make(chan struct{})
