@@ -138,8 +138,8 @@ PR #71 workflow run
 ran `internal/validation/daerrorprobe` against the fixture on both native
 x86/386 and x64/amd64. **Both architectures produced identical results.**
 
-All thirteen rows of OPC 10000-8 Tables A.4 and A.5 are bound. Two of them, and
-only two, come out of this server. For each observed row the probe fed the
+All thirteen rows of OPC 10000-8 Tables A.4 and A.5 are bound. Three of them come
+out of this server. For each observed row the probe fed the
 HRESULT the source really returned to the real mapping function and required the
 table's answer:
 
@@ -147,6 +147,14 @@ table's answer:
 |---|---|
 | `OPC_E_UNKNOWNITEMID` | **observed** — source answered `0xC0040007` on Read, mapped to `0x80340000` `Bad_NodeIdUnknown` |
 | `OPC_E_BADRIGHTS` | **observed** — source answered `0xC0040006` on Write, mapped to `0x803B0000` `Bad_NotWritable` |
+| `OPC_E_INVALID_PID` | **observed** — source answered `0xC0040203` for a property identifier the item does not have, mapped to `0x80350000` `Bad_AttributeIdInvalid` |
+
+The third row became observable only when the adapter began reading item
+properties. It had been recorded as unreachable *because* Table A.1 was not
+implemented, and that reason outlived the limitation it described — the probe
+went on asserting it for two changes after it stopped being true. Implementing a
+feature can make a previously unreachable path reachable, and a recorded reason
+is a claim that has to be revisited when the thing it depends on changes.
 
 Three rows were provoked and this source does not produce them. That is a fact
 about this server, not a gap in the adapter:
@@ -157,7 +165,7 @@ about this server, not a gap in the adapter:
 | `OPC_E_RANGE` | accepted an out-of-range value of the item's own canonical type |
 | `OPC_S_CLAMP` | same — it stored the value rather than clamping it |
 
-The remaining eight cannot be produced through this adapter at all. Six of those
+The remaining seven cannot be produced through this adapter at all. Five of those
 are consequences of decisions made on purpose, not untested paths:
 
 | Row | Why it cannot be reached |
@@ -180,6 +188,20 @@ as it is bound, which is earlier, so the UA probe had been racing since it was
 written; the added work ahead of it made it lose, on 386, with Browse correctly
 answering `Bad_NotConnected`. It now waits through that status for a bounded
 30 s.
+
+### HTTP item property result
+
+The real-DA run exercises the HTTP property endpoints alongside the gRPC ones,
+reporting the same identifiers the source offered:
+
+```
+HTTP_ITEM_PROPERTIES_PASS offered=5,6,7,8 valuesLogged=false
+```
+
+The gRPC probe covers the DA path; this covers the JSON the HTTP frontend
+produces, which that probe cannot see — that an available property always
+carries a `dataType`, that a result never contradicts its own `valuePresent`,
+and that a failed property carries no value.
 
 ### DA item property result
 
