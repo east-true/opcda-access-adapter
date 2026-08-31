@@ -220,11 +220,13 @@ question without rotting.
   Table A.1's "Other Properties" row is implemented: a source's Scan Rate, EU
   Type and vendor-specific properties appear as `PropertyType` variables named
   by their DA description and typed from their own VARTYPE. Two of A.3.1.4's
-  rules are not applied, and both are the source's shape rather than a choice —
-  a property is reported readable because deciding otherwise needs
+  rules are not applied, and both are limits of this adapter rather than of the
+  source: a property is reported readable because deciding otherwise needs
   `LookupItemIDs`, which the adapter does not call, and an array-valued property
-  is not exposed at all because the DA layer cannot read one, so the node could
-  be browsed and never answer. `docs/opcua-mapping.md` carries both.
+  is not exposed at all because the DA layer carries no array VARIANTs. **The
+  row is implemented for scalar properties**; a source with array or writable
+  properties gets less than A.3.1.4 describes.
+  `docs/opcua-mapping.md` carries both.
 
   This is also the part of Table A.1 the OPC Foundation fixture exercises: it
   offers exactly these properties and none of the nine named ones.
