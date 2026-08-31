@@ -546,6 +546,7 @@ applied:
 | no filter | accepted; the group gets no deadband |
 | `DataChangeFilter`, deadband `None` or `Percent` in 0–100 | accepted |
 | `DataChangeFilter`, deadband `Percent` outside 0–100 | `Bad_DeadbandFilterInvalid` |
+| `DataChangeFilter`, deadband `Percent` on an item with no `EURange` | `Bad_DeadbandFilterInvalid` — Table 61 names this case too |
 | `DataChangeFilter`, deadband `Absolute` | `Bad_MonitoredItemFilterUnsupported` — `AddGroup` takes a percentage and nothing else |
 | trigger `StatusValueTimestamp` | `Bad_MonitoredItemFilterUnsupported` — DA notifies on a change of value or quality, never on a timestamp alone |
 | any other filter | `Bad_MonitoredItemFilterUnsupported` |
@@ -559,8 +560,10 @@ used to answer, means the filter cannot be used with the attribute — and a
 percentage of the EURange. That is, it applies only to AnalogItems with an
 EURange Property". An item that is not an `AnalogItemType` has no range to take
 a percentage of, so the filter has no defined meaning there and is refused with
-`Bad_MonitoredItemFilterUnsupported`. Passing it to the DA group anyway would
-apply a percentage of nothing. A filter asking for **no** deadband is accepted
+`Bad_DeadbandFilterInvalid` — which Table 61 defines as covering both "not
+between 0.0 and 100.0" **and** "a PercentDeadband is not supported, since an
+EURange is not configured". Passing it to the DA group anyway would apply a
+percentage of nothing. A filter asking for **no** deadband is accepted
 on any item, because there is no percentage in it.
 
 **A deadband belongs to the subscription, because it belongs to the DA group.**

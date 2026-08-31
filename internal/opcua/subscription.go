@@ -1100,8 +1100,13 @@ func (s *SubscriptionService) prepareMonitoredItem(subscription *uaSubscription,
 	// Property". An item without one has no range to take a percentage of, so
 	// the filter has no defined meaning there, and passing it to the group as
 	// though it did would apply a percentage of nothing.
+	//
+	// Table 61 names the status for exactly this: Bad_DeadbandFilterInvalid is
+	// "the specified PercentDeadband is not between 0.0 and 100.0 **or a
+	// PercentDeadband is not supported, since an EURange is not configured**".
+	// The second half is this case, so it is not a generic unsupported filter.
 	if deadband > 0 && node.TypeDefinition.Numeric != NodeIDAnalogItemType {
-		return failed(StatusBadMonitoredItemFilterUnsupported), nil
+		return failed(StatusBadDeadbandFilterInvalid), nil
 	}
 	if _, duplicate := subscription.byHandle[create.RequestedParameters.ClientHandle]; duplicate {
 		// Two items sharing a client handle would make notifications

@@ -1359,7 +1359,10 @@ func TestAPercentDeadbandNeedsAnEURange(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateMonitoredItems: %v", err)
 	}
-	if response.Results[0].StatusCode != StatusBadMonitoredItemFilterUnsupported {
+	// Table 61 names Bad_DeadbandFilterInvalid for this, not a generic
+	// unsupported filter: it covers "a PercentDeadband is not supported, since
+	// an EURange is not configured".
+	if response.Results[0].StatusCode != StatusBadDeadbandFilterInvalid {
 		t.Fatalf("a deadband on an item with no EURange answered %s",
 			response.Results[0].StatusCode.Hex())
 	}
