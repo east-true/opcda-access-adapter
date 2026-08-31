@@ -247,6 +247,14 @@ reading `EURange` expects to decode. A Range is claimed only when the source
 offers **both** ends: half a range is not a range, and supplying the other end
 would be inventing a number the source never gave.
 
+Offering a bound and then answering it with nothing is a different thing, and
+clause 5.6.2 says what to do: "If a limit is not known a NaN shall be used." A
+source that answers and gives nothing has told us the limit is unknown, so that
+end becomes `NaN` and the end it did give survives. A source that **refuses** a
+bound has not said the limit is unknown — it has failed to answer — and the
+property carries that failure rather than reporting an unknown limit that was
+never claimed.
+
 **The UA types above are not Table A.1's third column.** A.1 says `String` for
 EU Units, Close Label and Open Label. Those values land on properties the
 standard `AnalogItemType` and `TwoStateDiscreteType` define as `EUInformation`

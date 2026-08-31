@@ -2,6 +2,7 @@ package opcua
 
 import (
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 
@@ -256,7 +257,20 @@ func buildRangeProperty(space *AddressSpace, values []opcda.ItemPropertyValue) (
 	}
 	bounds := make([]float64, 2)
 	for index, value := range values {
-		if status := propertyStatus(value); status != StatusGood {
+		switch status := propertyStatus(value); status {
+		case StatusGood:
+		case StatusBadNoData:
+			// Clause 5.6.2: "If a limit is not known a NaN shall be used." A
+			// source that answers the property and gives nothing has told us
+			// the limit is not known, which is a different thing from refusing
+			// to answer, and the structure has a representation for it. A
+			// range with one end unknown is still a range.
+			bounds[index] = math.NaN()
+			continue
+		default:
+			// The source refused. That is a failure to answer rather than a
+			// statement that the limit is unknown, and NaN would report the
+			// second when the first happened.
 			return NullVariant(), status
 		}
 		number, ok := asFloat64(value.Value)

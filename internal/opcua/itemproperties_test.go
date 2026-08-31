@@ -3,7 +3,9 @@ package opcua
 import (
 	"bytes"
 	"context"
+	"encoding/binary"
 	"fmt"
+	"math"
 	"testing"
 	"time"
 
@@ -1077,5 +1079,41 @@ func TestScanRateBecomesMinimumSamplingInterval(t *testing.T) {
 	}
 	if response.Results[0].Value.Value != float64(250) {
 		t.Fatalf("interval = %#v", response.Results[0].Value.Value)
+	}
+}
+
+// Clause 5.6.2: "If a limit is not known a NaN shall be used." A source that
+// answers a bound and gives nothing has said the limit is unknown, which the
+// Range structure has a representation for. Refusing the whole property would
+// throw away the end the source did give.
+func TestARangeWithAnUnknownLimitUsesNaN(t *testing.T) {
+	space := testAddressSpace(t)
+	known := opcda.ItemPropertyValue{OK: true, Value: float64(-50), ValuePresent: true, HRESULTPresent: true}
+	// Answered, with nothing in it.
+	unknown := opcda.ItemPropertyValue{OK: true, HRESULTPresent: true}
+	// Refused outright, which is not the same thing.
+	refused := opcda.ItemPropertyValue{HRESULT: -1073479674, HRESULTPresent: true}
+
+	variant, status := buildRangeProperty(space, []opcda.ItemPropertyValue{known, unknown})
+	if status != StatusGood {
+		t.Fatalf("a range with one unknown limit answered %s", status.Hex())
+	}
+	object, ok := variant.Value.(ExtensionObject)
+	if !ok || len(object.Body) != 16 {
+		t.Fatalf("value = %#v", variant.Value)
+	}
+	low := math.Float64frombits(binary.LittleEndian.Uint64(object.Body[:8]))
+	high := math.Float64frombits(binary.LittleEndian.Uint64(object.Body[8:]))
+	if low != -50 {
+		t.Fatalf("the known limit became %v", low)
+	}
+	if !math.IsNaN(high) {
+		t.Fatalf("the unknown limit became %v, want NaN", high)
+	}
+
+	// A refusal is a failure to answer, not a statement that the limit is
+	// unknown, and NaN would report the second when the first happened.
+	if _, status := buildRangeProperty(space, []opcda.ItemPropertyValue{known, refused}); status != StatusBadNotReadable {
+		t.Fatalf("a refused limit answered %s", status.Hex())
 	}
 }
