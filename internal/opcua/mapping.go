@@ -167,9 +167,21 @@ func StatusCodeForQuality(raw uint16) StatusCode {
 		code = StatusBadDeviceFailure
 	case QualitySensorFailure:
 		code = StatusBadSensorFailure
-	case QualityLastKnown, QualityOutOfService:
-		// Table A.3 maps both LAST_KNOWN and OUT_OF_SERVICE to
-		// Bad_OutOfService.
+	case QualityLastKnown:
+		// Table A.3 maps LAST_KNOWN to Bad_OutOfService alongside
+		// OUT_OF_SERVICE. Table 61 contradicts it and explains itself: the
+		// fieldbus code Bad_LastKnown "shall be mapped to
+		// Uncertain_NoCommunicationLastUsable" because "OPC UA requires that
+		// the Server shall return a Null value when the Severity is Bad".
+		//
+		// That reason holds here. LAST_KNOWN exists to deliver the last value
+		// that had good quality, and a Bad severity drops the value, so
+		// following Table A.3 destroys exactly what the quality is for. The
+		// clause that explains itself is the one followed, and
+		// scripts/spec-check/check.py records the deviation rather than
+		// leaving it to be noticed.
+		code = StatusUncertainNoCommunicationLastUsableValue
+	case QualityOutOfService:
 		code = StatusBadOutOfService
 	case QualityWaitingForInitialData:
 		code = StatusBadWaitingForInitialData

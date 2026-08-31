@@ -69,6 +69,13 @@ const (
 	StatusUncertainSensorNotAccurate        StatusCode = 0x40930000
 	StatusUncertainEngineeringUnitsExceeded StatusCode = 0x40940000
 	StatusUncertainLastUsableValue          StatusCode = 0x40900000
+	// NoCommunicationLastUsableValue is what a DA LAST_KNOWN quality becomes.
+	// Table A.3 says Bad_OutOfService; Table 61 says the fieldbus code
+	// Bad_LastKnown "shall be mapped to Uncertain_NoCommunicationLastUsable"
+	// and gives the reason -- a Bad severity must return a Null value, so a
+	// Bad code would throw away the last known value the quality exists to
+	// carry. docs/opcua-mapping.md records the conflict and this decision.
+	StatusUncertainNoCommunicationLastUsableValue StatusCode = 0x408F0000
 
 	StatusBadConfigurationError    StatusCode = 0x80890000
 	StatusBadNotConnected          StatusCode = 0x808A0000
