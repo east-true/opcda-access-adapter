@@ -1225,7 +1225,16 @@ func dataChangeFilter(t *testing.T, trigger, deadbandType uint32, value float64)
 // gets it applied to the group rather than refused.
 func TestAPercentDeadbandReachesTheDAGroup(t *testing.T) {
 	runtime := &subscribingRuntime{}
-	service, _ := testSubscriptionService(t, runtime)
+	service, space := testSubscriptionService(t, runtime)
+	// Clause 7.2 defines the deadband as a percentage of the EURange, so it
+	// applies only to an AnalogItem that has one. Both fixture items are made
+	// analog for this test; the refusal without a range is checked below.
+	analog := []opcda.AvailableProperty{{ID: opcda.PropertyLowEU}, {ID: opcda.PropertyHighEU}}
+	for _, itemID := range []opcda.DAItemID{"Test/Int32", "Test/Float"} {
+		if err := space.AttachItemProperties(itemID, analog, opcda.EUTypeNoEnum, 1000); err != nil {
+			t.Fatalf("AttachItemProperties(%s): %v", itemID, err)
+		}
+	}
 	id := createSubscription(t, service)
 
 	response, err := service.CreateMonitoredItems(context.Background(), testSession, CreateMonitoredItemsRequest{
@@ -1322,5 +1331,61 @@ func TestSemanticsChangedIsCarriedOnceAndThenStops(t *testing.T) {
 	runtime.latest().push(daNotification("Test/Int32", 3, QualityGood))
 	if value := publish(t, 5); value.Status.HasSemanticsChanged() {
 		t.Fatal("the bit was carried a second time")
+	}
+}
+
+// Clause 7.2: a percent deadband "is defined as the percentage of the EURange.
+// That is, it applies only to AnalogItems with an EURange Property." An item
+// without one has no range to take a percentage of, and passing the filter to
+// the DA group as though it did would apply a percentage of nothing.
+func TestAPercentDeadbandNeedsAnEURange(t *testing.T) {
+	runtime := &subscribingRuntime{}
+	service, _ := testSubscriptionService(t, runtime)
+	id := createSubscription(t, service)
+
+	response, err := service.CreateMonitoredItems(context.Background(), testSession, CreateMonitoredItemsRequest{
+		Header:             RequestHeader{AdditionalHeader: NullExtensionObject()},
+		SubscriptionID:     id,
+		TimestampsToReturn: TimestampsBoth,
+		ItemsToCreate: []MonitoredItemCreateRequest{{
+			ItemToMonitor:  ReadValueID{NodeID: ItemNodeID("Test/Int32"), AttributeID: AttributeValue},
+			MonitoringMode: MonitoringModeReporting,
+			RequestedParameters: MonitoringParameters{
+				ClientHandle: 60, SamplingInterval: 250, QueueSize: 1,
+				Filter: dataChangeFilter(t, DataChangeTriggerStatusValue, DeadbandPercent, 5),
+			},
+		}},
+	}, channelEpoch)
+	if err != nil {
+		t.Fatalf("CreateMonitoredItems: %v", err)
+	}
+	if response.Results[0].StatusCode != StatusBadMonitoredItemFilterUnsupported {
+		t.Fatalf("a deadband on an item with no EURange answered %s",
+			response.Results[0].StatusCode.Hex())
+	}
+	if len(runtime.subscribeRequests()) != 0 {
+		t.Fatal("a refused deadband still reached the source")
+	}
+
+	// A filter asking for no deadband is fine on any item: there is no
+	// percentage of anything to take.
+	none, err := service.CreateMonitoredItems(context.Background(), testSession, CreateMonitoredItemsRequest{
+		Header:             RequestHeader{AdditionalHeader: NullExtensionObject()},
+		SubscriptionID:     id,
+		TimestampsToReturn: TimestampsBoth,
+		ItemsToCreate: []MonitoredItemCreateRequest{{
+			ItemToMonitor:  ReadValueID{NodeID: ItemNodeID("Test/Int32"), AttributeID: AttributeValue},
+			MonitoringMode: MonitoringModeReporting,
+			RequestedParameters: MonitoringParameters{
+				ClientHandle: 61, SamplingInterval: 250, QueueSize: 1,
+				Filter: dataChangeFilter(t, DataChangeTriggerStatusValue, DeadbandNone, 0),
+			},
+		}},
+	}, channelEpoch)
+	if err != nil {
+		t.Fatalf("CreateMonitoredItems: %v", err)
+	}
+	if none.Results[0].StatusCode != StatusGood {
+		t.Fatalf("a filter with no deadband answered %s", none.Results[0].StatusCode.Hex())
 	}
 }

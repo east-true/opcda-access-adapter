@@ -1095,6 +1095,14 @@ func (s *SubscriptionService) prepareMonitoredItem(subscription *uaSubscription,
 	if node.AccessRightsKnown && node.AccessLevel&AccessLevelCurrentRead == 0 {
 		return failed(StatusBadNotReadable), nil
 	}
+	// Clause 7.2: a percent deadband "is defined as the percentage of the
+	// EURange. That is, it applies only to AnalogItems with an EURange
+	// Property". An item without one has no range to take a percentage of, so
+	// the filter has no defined meaning there, and passing it to the group as
+	// though it did would apply a percentage of nothing.
+	if deadband > 0 && node.TypeDefinition.Numeric != NodeIDAnalogItemType {
+		return failed(StatusBadMonitoredItemFilterUnsupported), nil
+	}
 	if _, duplicate := subscription.byHandle[create.RequestedParameters.ClientHandle]; duplicate {
 		// Two items sharing a client handle would make notifications
 		// ambiguous, which is worse than refusing one of them.
