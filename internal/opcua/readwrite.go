@@ -612,6 +612,11 @@ func (s *DataAccessService) readItemProperty(ctx context.Context, itemID opcda.D
 	if status != StatusGood {
 		return failedDataValue(status)
 	}
+	// Reading a property is the moment the adapter learns what it says, so it
+	// is the moment a semantic change can be noticed. The Read itself never
+	// carries the bit -- clause 5.2 puts it in notifications only -- but a
+	// monitored item on this item will carry it once.
+	s.space.NoteSemanticProperty(itemID, binding.BrowseName, variant)
 	// A property is metadata the adapter read now, not a process value with a
 	// source timestamp. The server timestamp is this server's own time for the
 	// operation, and no source timestamp is invented for it.

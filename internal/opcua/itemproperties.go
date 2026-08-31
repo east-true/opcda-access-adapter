@@ -718,3 +718,81 @@ func isNumericDataType(identifier uint32) bool {
 
 // isBooleanDataType is what clause 5.3.3.2 requires of a TwoStateDiscreteType.
 func isBooleanDataType(identifier uint32) bool { return identifier == NodeIDBoolean }
+
+// OPC 10000-8 clause 5.2: a server that implements Data Access shall set the
+// StatusCode's SemanticsChanged bit in notifications when certain property
+// values change, so that a client re-reads the metadata before it trusts the
+// value.
+//
+// Which properties are "certain" is stated per VariableType, and for the types
+// this adapter claims it is exactly four. BaseAnalogType names EURange and
+// EngineeringUnits, and 5.3.3.2 names TrueState and FalseState.
+// **InstrumentRange is not among them** -- it appears only in ArrayItemType's
+// list, which this adapter never claims, and a reading that swept it in would
+// report a semantic change the specification does not.
+func isSemanticProperty(browseName string) bool {
+	switch browseName {
+	case "EURange", "EngineeringUnits", "TrueState", "FalseState":
+		return true
+	default:
+		return false
+	}
+}
+
+// semanticFingerprint is a comparable form of a property value. It is kept only
+// to notice that a value changed and is never served to anybody: the adapter
+// reads a property from the source every time a client asks for one.
+func semanticFingerprint(value Variant) string {
+	switch typed := value.Value.(type) {
+	case ExtensionObject:
+		return typed.TypeID.String() + ":" + string(typed.Body)
+	case LocalizedText:
+		return "text:" + typed.Locale + ":" + typed.Text
+	case string:
+		return "s:" + typed
+	default:
+		return fmt.Sprintf("%v:%v", value.Type, value.Value)
+	}
+}
+
+// NoteSemanticProperty records what a semantic property last said and reports
+// whether it differs from the time before.
+//
+// The first sighting is not a change: there is nothing to have changed from,
+// and reporting one would tell every client to re-read metadata it has just
+// read for the first time.
+func (s *AddressSpace) NoteSemanticProperty(itemID opcda.DAItemID, browseName string, value Variant) bool {
+	if !isSemanticProperty(browseName) {
+		return false
+	}
+	fingerprint := semanticFingerprint(value)
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	item, ok := s.nodes[nodeKey(ItemNodeID(itemID))]
+	if !ok {
+		return false
+	}
+	if item.semanticProperties == nil {
+		item.semanticProperties = make(map[string]string, 4)
+	}
+	previous, seen := item.semanticProperties[browseName]
+	item.semanticProperties[browseName] = fingerprint
+	if !seen || previous == fingerprint {
+		return false
+	}
+	item.semanticGeneration++
+	return true
+}
+
+// SemanticGeneration reports how many semantic changes this item has been seen
+// to undergo. A monitored item compares it with what it last reported.
+func (s *AddressSpace) SemanticGeneration(itemID opcda.DAItemID) uint64 {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	item, ok := s.nodes[nodeKey(ItemNodeID(itemID))]
+	if !ok {
+		return 0
+	}
+	return item.semanticGeneration
+}

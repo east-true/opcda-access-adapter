@@ -827,6 +827,12 @@ type monitoredItem struct {
 	nodeID       NodeID
 	mode         MonitoringMode
 	timestamps   TimestampsToReturn
+
+	// semanticGeneration is the address space's count of semantic property
+	// changes as of this item's last notification. Clause 5.2 asks for the bit
+	// on one notification per monitored item, so the two are compared rather
+	// than a flag being set and cleared.
+	semanticGeneration uint64
 }
 
 // uaSubscription is one UA Subscription backed by one DA subscription.
@@ -1098,13 +1104,16 @@ func (s *SubscriptionService) prepareMonitoredItem(subscription *uaSubscription,
 	subscription.deadband = deadband
 	subscription.deadbandSet = true
 	subscription.nextItemID++
+	// A monitored item starts level with the address space. A change that
+	// happened before it existed is not one it needs telling about.
 	item := &monitoredItem{
-		id:           subscription.nextItemID,
-		clientHandle: create.RequestedParameters.ClientHandle,
-		itemID:       node.ItemID,
-		nodeID:       node.ID,
-		mode:         create.MonitoringMode,
-		timestamps:   timestamps,
+		semanticGeneration: s.space.SemanticGeneration(node.ItemID),
+		id:                 subscription.nextItemID,
+		clientHandle:       create.RequestedParameters.ClientHandle,
+		itemID:             node.ItemID,
+		nodeID:             node.ID,
+		mode:               create.MonitoringMode,
+		timestamps:         timestamps,
 	}
 	return MonitoredItemCreateResult{
 		StatusCode:      StatusGood,
@@ -1443,9 +1452,18 @@ func (s *SubscriptionService) collect(ctx context.Context, subscription *uaSubsc
 		// A notification carries the same DA metadata an AddItems result does,
 		// so it teaches the address space what Browse could not.
 		s.space.LearnFromRead(item.nodeID, value.CanonicalType, value.AccessRights)
+		notification := dataValueForSubscription(value, item.timestamps, now)
+		// Clause 5.2: the bit goes on one data change notification per
+		// monitored item that samples values at the time the change happened.
+		// Comparing generations gives exactly that -- the item carries it once
+		// and then agrees with the address space again.
+		if generation := s.space.SemanticGeneration(item.itemID); generation != item.semanticGeneration {
+			notification.Status = notification.Status.WithSemanticsChanged()
+			item.semanticGeneration = generation
+		}
 		subscription.pending = append(subscription.pending, MonitoredItemNotification{
 			ClientHandle: item.clientHandle,
-			Value:        dataValueForSubscription(value, item.timestamps, now),
+			Value:        notification,
 		})
 	}
 }

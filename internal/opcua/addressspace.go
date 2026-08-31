@@ -164,6 +164,14 @@ type Node struct {
 	// Read teaches it otherwise.
 	DataTypeKnown bool
 
+	// semanticProperties remembers what each semantic property last said, and
+	// semanticGeneration counts how often one of them was seen to change.
+	// Neither is ever served: a property is read from the source every time a
+	// client asks. They exist so that OPC 10000-8 clause 5.2's SemanticsChanged
+	// bit can be set on a notification, which requires noticing a change.
+	semanticProperties map[string]string
+	semanticGeneration uint64
+
 	// OwnItemID records that this node is a DA item property that the source
 	// also exposes as an item of its own, so ItemID names the property rather
 	// than the item it describes. OPC 10000-8 A.3.1.4 makes such a property

@@ -986,3 +986,63 @@ func TestAPropertyWithItsOwnItemIDIsWritable(t *testing.T) {
 		t.Fatalf("the write went to %q", runtime.writeItems[0].ItemID)
 	}
 }
+
+// OPC 10000-8 clause 5.2: a Data Access server shall set the SemanticsChanged
+// bit in notifications when certain property values change, so a client
+// re-reads the metadata before trusting the value.
+func TestSemanticPropertiesAreExactlyTheOnesPart8Names(t *testing.T) {
+	// BaseAnalogType names EURange and EngineeringUnits; 5.3.3.2 names
+	// TrueState and FalseState. InstrumentRange is named only for
+	// ArrayItemType, which this adapter never claims.
+	for _, name := range []string{"EURange", "EngineeringUnits", "TrueState", "FalseState"} {
+		if !isSemanticProperty(name) {
+			t.Errorf("%s is named by Part 8 and is not treated as semantic", name)
+		}
+	}
+	for _, name := range []string{"InstrumentRange", "Scan Rate", ""} {
+		if isSemanticProperty(name) {
+			t.Errorf("%s is treated as semantic and Part 8 does not name it", name)
+		}
+	}
+}
+
+// The bit belongs on a notification and nowhere else: clause 5.2 says a
+// StatusCode in any other context shall always set it to zero.
+func TestASemanticChangeReachesOneNotificationAndNotTheRead(t *testing.T) {
+	space := testAddressSpace(t)
+	if err := space.PopulateBranch(nil, []opcda.BrowseEntry{
+		{Kind: opcda.BrowseEntryItem, Name: "Float", ItemID: itemID("Test/Float"),
+			CanonicalType: varType(opcda.VTR4)},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	units := func(text string) Variant {
+		return Variant{Type: BuiltInString, Value: text}
+	}
+
+	// The first sighting is not a change: there is nothing to have changed from.
+	if space.NoteSemanticProperty("Test/Float", "EngineeringUnits", units("degC")) {
+		t.Fatal("the first sighting of a property was reported as a change")
+	}
+	if got := space.SemanticGeneration("Test/Float"); got != 0 {
+		t.Fatalf("generation = %d after one sighting", got)
+	}
+	// Seeing the same value again is not a change either.
+	if space.NoteSemanticProperty("Test/Float", "EngineeringUnits", units("degC")) {
+		t.Fatal("an unchanged property was reported as a change")
+	}
+	// A different value is.
+	if !space.NoteSemanticProperty("Test/Float", "EngineeringUnits", units("degF")) {
+		t.Fatal("a changed property was not reported")
+	}
+	if got := space.SemanticGeneration("Test/Float"); got != 1 {
+		t.Fatalf("generation = %d after one change", got)
+	}
+	// A property Part 8 does not name never moves the generation.
+	if space.NoteSemanticProperty("Test/Float", "InstrumentRange", units("anything")) {
+		t.Fatal("InstrumentRange was reported as a semantic change")
+	}
+	if got := space.SemanticGeneration("Test/Float"); got != 1 {
+		t.Fatalf("generation = %d after a non-semantic property changed", got)
+	}
+}
