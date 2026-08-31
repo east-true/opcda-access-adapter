@@ -29,6 +29,7 @@ suits their source should not have to find them scattered through the document.
 | A.3.1.4 | an array-valued property is exposed with `ValueRank` `OneOrMoreDimensions` | not exposed at all — it could be browsed and never read, and a property that cannot answer is worse than one that is absent |
 | Table A.3 | DA `LAST_KNOWN` → `Bad_OutOfService` | `Uncertain_NoCommunicationLastUsableValue`, because Table 61 says so and explains why: a Bad severity must return a Null value, which discards the last known value the quality exists to carry |
 | 5.2 | the `SemanticsChanged` bit is set when a semantic property changes | set when the adapter **observes** a change, which is when a property is read; a change nobody reads is not detected, and detecting every one means polling the source |
+| OPC 10000-4 Table 47 | a `maxAge` of max Int32 or greater "shall attempt to get a cached value" | every Read goes to the device — the adapter maintains no cache (its DA group is inactive, and the design forbids serving cached values), and a fresh value satisfies any staleness bound a client can ask for. The cost is source load, never correctness |
 | 5.4 | a DataItem is never "defined by itself" | an item addressed without being browsed has no parent, because the adapter does not know where it sits in the source's hierarchy and inventing a place would point clients at the wrong one |
 
 `scripts/spec-check/check.py` carries the Table A.3 row as a recorded deviation:
@@ -635,6 +636,28 @@ One UA subscription is backed by one DA group, and a group has exactly one
 `pPercentDeadband`. A second monitored item asking for a different deadband
 cannot be honoured, so it is refused; applying somebody else's deadband to it
 would report changes the client did not ask to hear about, or hide ones it did.
+
+## `maxAge` on a Read
+
+OPC 10000-4 Table 47 gives `maxAge` three rules, and the adapter meets two of
+them exactly.
+
+**Negative values are invalid**, and a negative `maxAge` is refused with
+`Bad_InvalidArgument` rather than treated as zero.
+
+**A `maxAge` of 0 "shall attempt to read a new value from the data source"**,
+which is what every Read here does.
+
+**A `maxAge` of max Int32 or greater "shall attempt to get a cached value"**, and
+this adapter reads from the device anyway. It has no cache to offer: its DA group
+is created inactive, so the source maintains nothing for it, and design forbids
+the adapter serving cached values at all. Serving that rule would mean activating
+the group, which makes the source push updates for every item ever read — load an
+operator did not ask for.
+
+Nothing is misreported by this. `maxAge` bounds how **stale** a value may be, and
+a value read now is within any bound. The client receives something fresher than
+it asked for, and the source does more work than it needed to.
 
 ## Timestamps
 
