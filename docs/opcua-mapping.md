@@ -29,6 +29,8 @@ suits their source should not have to find them scattered through the document.
 | A.3.1.4 | an array-valued property is exposed with `ValueRank` `OneOrMoreDimensions` | not exposed at all — it could be browsed and never read, and a property that cannot answer is worse than one that is absent |
 | Table A.3 | DA `LAST_KNOWN` → `Bad_OutOfService` | `Uncertain_NoCommunicationLastUsableValue`, because Table 61 says so and explains why: a Bad severity must return a Null value, which discards the last known value the quality exists to carry |
 | 5.2 | the `SemanticsChanged` bit is set when a semantic property changes | set when the adapter **observes** a change, which is when a property is read; a change nobody reads is not detected, and detecting every one means polling the source |
+| OPC 10000-4 5.14.1.1 | on lifetime expiry the server "shall issue a StatusChangeNotification notificationMessage with the status code Bad_Timeout" | the subscription is deleted and its DA group released, but no notification is sent: expiry happens precisely because no Publish request was available to carry one |
+| OPC 10000-4 5.7.2.1 | subscriptions survive a session the server terminated, so they can be transferred | they are deleted with the session, because TransferSubscriptions is not implemented and a subscription nothing can reach would hold a DA group open indefinitely |
 | OPC 10000-4 5.13.2.1 | "if the access rights change to read rights, the Server shall start sending data for the MonitoredItem" | access rights are learned once and never revised, so an item that becomes readable stays silent until it is created again. The half of the clause that matters more — the create succeeding, with the status delivered through Publish — is met |
 | OPC 10000-4 Table 47 | a `maxAge` of max Int32 or greater "shall attempt to get a cached value" | every Read goes to the device — the adapter maintains no cache (its DA group is inactive, and the design forbids serving cached values), and a fresh value satisfies any staleness bound a client can ask for. The cost is source load, never correctness |
 | 5.4 | a DataItem is never "defined by itself" | an item addressed without being browsed has no parent, because the adapter does not know where it sits in the source's hierarchy and inventing a place would point clients at the wrong one |
@@ -637,6 +639,42 @@ One UA subscription is backed by one DA group, and a group has exactly one
 `pPercentDeadband`. A second monitored item asking for a different deadband
 cannot be honoured, so it is refused; applying somebody else's deadband to it
 would report changes the client did not ask to hear about, or hide ones it did.
+
+### A subscription's lifetime is enforced, not merely reported
+
+Table 82: "when the publishing timer has expired this number of times without a
+Publish request being available to send a NotificationMessage, then the
+Subscription **shall be deleted** by the Server", and 5.14.1.1 adds that
+"closing the Subscription causes its MonitoredItems to be deleted".
+
+For this adapter that is not bookkeeping. A subscription holds a DA group open
+on the source, so a client that stops publishing while keeping its session alive
+would otherwise hold that group for as long as it liked. The revised lifetime
+count is a promise about when the server will give up on a client, and a server
+that reports one it does not act on has told the client something untrue.
+
+The counter resets on "any Service call that uses the SubscriptionId or the
+processing of a Publish response". Every such call goes through one lookup, and
+the reset lives there rather than at each call site, so a service added later
+cannot forget it. An outstanding Publish keeps every subscription in its session
+alive, not only the one that cycle happens to pick: 5.14.1.1 counts cycles "in
+which there have been no Publish requests available", and while a client is
+waiting on one, none of its subscriptions is starving.
+
+Two parts of the clause are departures.
+
+5.14.1.1 also says the server "shall issue a StatusChangeNotification
+notificationMessage with the status code Bad_Timeout". This adapter does not:
+the condition for expiry is that no Publish request was available, so in the
+ordinary case there is nowhere to send it.
+
+Clause 5.7.2.1 says that when "a Server terminates a Session for any other reason,
+Subscriptions associated with the Session are not deleted", so they can be
+transferred to a new session before their lifetime runs out. This adapter
+deletes them, because it does not implement TransferSubscriptions — a
+subscription kept past its session would hold a DA group open with nothing able
+to reach it, which is the leak the rule exists to avoid, arrived at from the
+other side.
 
 ### An item nobody may read is still created
 
