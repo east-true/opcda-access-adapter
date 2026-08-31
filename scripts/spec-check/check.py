@@ -661,6 +661,21 @@ def check_da_type_mapping(files, src):
     print(f"  {checked} DA data type mappings")
 
 
+# Rows where this adapter deliberately answers something other than the table,
+# with the clause that says to. A deviation recorded here is still checked: the
+# code must answer exactly what is written, so drifting away from the deviation
+# fails as loudly as drifting away from the table.
+TABLE_A3_DEVIATIONS = {
+    "LAST_KNOWN": (
+        "StatusUncertainNoCommunicationLastUsableValue",
+        "Table 61: the fieldbus code Bad_LastKnown \"shall be mapped to "
+        "Uncertain_NoCommunicationLastUsable\" because a Bad severity must "
+        "return a Null value, which would discard the last known value "
+        "LAST_KNOWN exists to carry",
+    ),
+}
+
+
 def check_da_quality_mapping(files, src):
     """Table A.3, DA quality to UA status code."""
     rows = spec_table(files["OPC-10000-8.md"], "Table A.3 - Quality mapping")
@@ -673,6 +688,7 @@ def check_da_quality_mapping(files, src):
     # through the IDL name that check_da already ties the Go constant to.
     by_idl = {idl: go for go, idl in DA_QUALITY.items()}
     checked = 0
+    deviations = []
     for quality, ua_status in rows:
         go_quality = by_idl.get("OPC_QUALITY_" + quality)
         if go_quality is None:
@@ -683,10 +699,21 @@ def check_da_quality_mapping(files, src):
             fail(f"Table A.3: {ua_status} is not declared")
             continue
         checked += 1
-        if answers.get(go_quality) != want:
-            fail(f"Table A.3: {quality} answers {answers.get(go_quality) or 'nothing'}, "
+        answered = answers.get(go_quality)
+        if quality in TABLE_A3_DEVIATIONS:
+            expected, because = TABLE_A3_DEVIATIONS[quality]
+            if answered != expected:
+                fail(f"Table A.3: {quality} answers {answered or 'nothing'}; this row "
+                     f"deliberately deviates and must answer {expected}")
+            else:
+                deviations.append(f"{quality} -> {expected} ({because})")
+            continue
+        if answered != want:
+            fail(f"Table A.3: {quality} answers {answered or 'nothing'}, "
                  f"the table says {want}")
     print(f"  {checked} DA quality mappings")
+    for deviation in deviations:
+        print(f"    deliberate deviation: {deviation}")
 
 
 def main():

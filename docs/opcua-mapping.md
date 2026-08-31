@@ -107,13 +107,37 @@ A DA quality is 16 bits. Part 8 A.3.2.3 defines the lower byte as `QQSSSSLL`
 | `COMM_FAILURE` | `Bad_NoCommunication` |
 | `DEVICE_FAILURE` | `Bad_DeviceFailure` |
 | `SENSOR_FAILURE` | `Bad_SensorFailure` |
-| `LAST_KNOWN` | `Bad_OutOfService` |
+| `LAST_KNOWN` | `Uncertain_NoCommunicationLastUsableValue` — see below |
 | `OUT_OF_SERVICE` | `Bad_OutOfService` |
 | `WAITING_FOR_INITIAL_DATA` | `Bad_WaitingForInitialData` |
 
-Note that **`LAST_KNOWN` maps to `Bad_OutOfService`**, not to an `Uncertain`
-code. Both `LAST_KNOWN` and `OUT_OF_SERVICE` map to the same UA code, so that
-distinction does not survive the mapping.
+### The one row that does not follow Table A.3
+
+Table A.3 maps `LAST_KNOWN` to `Bad_OutOfService`, alongside `OUT_OF_SERVICE`.
+This adapter maps it to `Uncertain_NoCommunicationLastUsableValue` instead,
+because two clauses of Part 8 disagree and only one of them explains itself.
+
+Table 61 says the fieldbus code `Bad_LastKnown` "**shall** be mapped to
+`Uncertain_NoCommunicationLastUsable`", and gives the reason: "OPC UA requires
+that the Server shall return a Null value when the Severity is Bad."
+
+That reason holds exactly here. `LAST_KNOWN` exists to deliver **the last value
+that had good quality**, and a Bad severity means the adapter must drop the
+value — so following Table A.3 destroys the one thing the quality is for. A
+client would receive a null value and a code saying the source is out of
+service, which is not what the source said.
+
+With `Uncertain`, the value survives and the client is told not to trust it as
+current, which is what happened.
+
+`OUT_OF_SERVICE` keeps the table's answer. It is a different condition: there is
+no last known value to protect, the source is simply not operational. The two
+qualities used to be indistinguishable after mapping; they are not any more.
+
+`scripts/spec-check/check.py` records this as a **deliberate deviation** rather
+than treating it as agreement. Every other row is still checked against the
+table, and this row is still checked against the value written here — drifting
+away from the deviation fails as loudly as drifting away from the table.
 
 The DA limit field transfers directly into the UA limit bits: OPC DA and
 OPC 10000-4 Table 177 use the same four values (none, low, high, constant). The

@@ -2,6 +2,7 @@ package opcua
 
 import (
 	"testing"
+	"time"
 
 	"github.com/east-true/opcda-access-adapter/internal/opcda"
 )
@@ -91,8 +92,10 @@ func TestQualityMappingFollowsPart8TableA3(t *testing.T) {
 		{"COMM_FAILURE", QualityCommFailure, StatusBadNoCommunication},
 		{"DEVICE_FAILURE", QualityDeviceFailure, StatusBadDeviceFailure},
 		{"SENSOR_FAILURE", QualitySensorFailure, StatusBadSensorFailure},
-		// Table A.3 maps both of these to Bad_OutOfService.
-		{"LAST_KNOWN", QualityLastKnown, StatusBadOutOfService},
+		// Table A.3 maps both of these to Bad_OutOfService. LAST_KNOWN
+		// deliberately does not follow it -- see the test below, which is
+		// where the reason lives.
+		{"LAST_KNOWN", QualityLastKnown, StatusUncertainNoCommunicationLastUsableValue},
 		{"OUT_OF_SERVICE", QualityOutOfService, StatusBadOutOfService},
 		{"WAITING_FOR_INITIAL_DATA", QualityWaitingForInitialData, StatusBadWaitingForInitialData},
 	}
@@ -345,5 +348,57 @@ func TestClampedWriteIsNotReportedAsPlainGood(t *testing.T) {
 	}
 	if got := StatusCodeForWriteError(OPCSClamp); got != StatusGoodClamped {
 		t.Fatalf("status = %s, want Good_Clamped", got.Hex())
+	}
+}
+
+// LAST_KNOWN is the one row where this adapter does not follow Table A.3, and
+// the reason is that two clauses of Part 8 disagree while only one explains
+// itself.
+//
+// Table A.3 maps LAST_KNOWN to Bad_OutOfService. Table 61 says the fieldbus
+// code Bad_LastKnown "shall be mapped to Uncertain_NoCommunicationLastUsable",
+// because "OPC UA requires that the Server shall return a Null value when the
+// Severity is Bad".
+//
+// That reason holds exactly here: LAST_KNOWN exists to deliver the last value
+// that had good quality, and a Bad severity means the adapter must drop the
+// value. Following Table A.3 destroys the thing the quality is for.
+func TestLastKnownKeepsTheValueItExistsToCarry(t *testing.T) {
+	status := StatusCodeForQuality(QualityLastKnown)
+	if status.IsBad() {
+		t.Fatalf("LAST_KNOWN is %s, which is Bad, so the value would be dropped", status.Hex())
+	}
+	if status != StatusUncertainNoCommunicationLastUsableValue {
+		t.Fatalf("LAST_KNOWN is %s, Table 61 names Uncertain_NoCommunicationLastUsable", status.Hex())
+	}
+	// OUT_OF_SERVICE is a different condition and keeps the table's answer:
+	// there is no last known value to protect, the source is simply not
+	// operational.
+	if got := StatusCodeForQuality(QualityOutOfService); got != StatusBadOutOfService {
+		t.Fatalf("OUT_OF_SERVICE is %s, Table A.3 says Bad_OutOfService", got.Hex())
+	}
+	// The two used to be indistinguishable. They are not any more.
+	if StatusCodeForQuality(QualityLastKnown) == StatusCodeForQuality(QualityOutOfService) {
+		t.Fatal("LAST_KNOWN and OUT_OF_SERVICE map to the same code again")
+	}
+}
+
+// The point of the change is that the value survives, so that is what is
+// checked rather than only the code.
+func TestALastKnownValueReachesTheClient(t *testing.T) {
+	varType := opcda.VTI4
+	value := dataValueForRead(opcda.ReadResult{
+		ItemID: "Test/Int32", VarType: &varType, HRESULT: opcda.SOK, HRESULTPresent: true,
+		Value: &opcda.DAValue{
+			ItemID: "Test/Int32", VarType: varType, Value: int32(7),
+			QualityRaw: QualityLastKnown, HRESULT: opcda.SOK,
+		},
+	}, TimestampsBoth, time.Now())
+
+	if value.Status.IsBad() {
+		t.Fatalf("status = %s", value.Status.Hex())
+	}
+	if value.Value.Value != int32(7) {
+		t.Fatalf("the last known value did not survive: %#v", value.Value.Value)
 	}
 }
