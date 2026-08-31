@@ -280,7 +280,14 @@ func (p *Populator) discoverItemProperties(ctx context.Context, itemID opcda.DAI
 		}
 		return err
 	}
-	if err := p.space.AttachItemProperties(itemID, available, p.limits.MaxNodes); err != nil {
+	// Annex A.3.1.3 chooses the VariableType partly from the EU Type property's
+	// value, not merely from its presence, so it is read when the source offers
+	// it. An item that does not offer it needs no read.
+	euType := opcda.EUTypeNoEnum
+	if offersProperty(available, opcda.PropertyEUType) {
+		euType = p.readEUType(ctx, itemID)
+	}
+	if err := p.space.AttachItemProperties(itemID, available, euType, p.limits.MaxNodes); err != nil {
 		// The discovery is not recorded, so the next browse tries again rather
 		// than serving whatever partial answer a truncation would have left.
 		return uacpError(StatusBadTooManyOperations, "%s", err.Error())
@@ -289,4 +296,37 @@ func (p *Populator) discoverItemProperties(ctx context.Context, itemID opcda.DAI
 	p.browsed[key] = now
 	p.mu.Unlock()
 	return nil
+}
+
+func offersProperty(available []opcda.AvailableProperty, id opcda.PropertyID) bool {
+	for _, property := range available {
+		if property.ID == id {
+			return true
+		}
+	}
+	return false
+}
+
+// readEUType reads the EU Type property's value. A source that offers the
+// property but will not answer it is not a failure: the item simply falls to
+// the type it would have had without it.
+func (p *Populator) readEUType(ctx context.Context, itemID opcda.DAItemID) opcda.EUType {
+	readCtx, cancel := context.WithTimeout(ctx, p.limits.RequestTimeout)
+	defer cancel()
+	values, err := p.runtime.ItemProperties(readCtx, opcda.ItemPropertiesRequest{
+		ItemID: string(itemID), Properties: []opcda.PropertyID{opcda.PropertyEUType},
+	})
+	if err != nil || len(values) != 1 || !values[0].OK || !values[0].ValuePresent {
+		return opcda.EUTypeNoEnum
+	}
+	switch typed := values[0].Value.(type) {
+	case int32:
+		return opcda.EUType(typed)
+	case int16:
+		return opcda.EUType(typed)
+	case uint32:
+		return opcda.EUType(typed)
+	default:
+		return opcda.EUTypeNoEnum
+	}
 }

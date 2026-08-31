@@ -39,6 +39,17 @@ const (
 	PropertyOpenLabel   PropertyID = 107
 )
 
+// EUType is OPCEUTYPE, the value of the EU Type property. Annex A.3.1.3 chooses
+// an item's UA VariableType partly from it, so it is read as a value rather
+// than only discovered as a property.
+type EUType int32
+
+const (
+	EUTypeNoEnum     EUType = 0
+	EUTypeAnalog     EUType = 1
+	EUTypeEnumerated EUType = 2
+)
+
 // AvailableProperty is one property a source reports for an item, as
 // IOPCItemProperties::QueryAvailableProperties reported it. The description is
 // the server's own text and is passed through unchanged.

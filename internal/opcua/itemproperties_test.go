@@ -1,6 +1,7 @@
 package opcua
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"testing"
@@ -9,61 +10,107 @@ import (
 	"github.com/east-true/opcda-access-adapter/internal/opcda"
 )
 
-// OPC 10000-8 Table A.1, transcribed row for row. Access Rights and Item
-// Description are not here: the first is an attribute the adapter already
-// reports from AddItems, and the second is the Description attribute.
-func TestItemPropertyBindingsFollowPart8TableA1(t *testing.T) {
-	for _, row := range []struct {
-		browseName string
-		dataType   uint32
-		sources    []opcda.PropertyID
+// OPC 10000-8 Annex A.3.1.3 chooses a DA item's UA VariableType from the
+// properties its source offers, and puts different properties on each type.
+// The adapter used to give every item BaseDataVariableType, which A.3.1.3 does
+// not offer as a choice.
+func TestVariableTypeFollowsPart8AnnexA313(t *testing.T) {
+	property := func(ids ...opcda.PropertyID) []opcda.AvailableProperty {
+		available := make([]opcda.AvailableProperty, 0, len(ids))
+		for _, id := range ids {
+			available = append(available, opcda.AvailableProperty{ID: id})
+		}
+		return available
+	}
+	for _, testCase := range []struct {
+		name      string
+		available []opcda.AvailableProperty
+		euType    opcda.EUType
+		wantType  uint32
+		wantProps []string
 	}{
-		{"EngineeringUnits", NodeIDString, []opcda.PropertyID{opcda.PropertyEUUnits}},
-		{"EURange", NodeIDRange, []opcda.PropertyID{opcda.PropertyLowEU, opcda.PropertyHighEU}},
-		{"InstrumentRange", NodeIDRange, []opcda.PropertyID{opcda.PropertyLowIR, opcda.PropertyHighIR}},
-		{"TrueState", NodeIDString, []opcda.PropertyID{opcda.PropertyCloseLabel}},
-		{"FalseState", NodeIDString, []opcda.PropertyID{opcda.PropertyOpenLabel}},
+		{
+			name:      "High and Low EU make an analog item",
+			available: property(opcda.PropertyHighEU, opcda.PropertyLowEU),
+			wantType:  NodeIDAnalogItemType,
+			wantProps: []string{"EURange"},
+		},
+		{
+			name: "an analog item carries the optional properties it has",
+			available: property(opcda.PropertyHighEU, opcda.PropertyLowEU,
+				opcda.PropertyEUUnits, opcda.PropertyHighIR, opcda.PropertyLowIR),
+			wantType:  NodeIDAnalogItemType,
+			wantProps: []string{"EURange", "EngineeringUnits", "InstrumentRange"},
+		},
+		{
+			name:      "Open and Close Label make a two-state discrete item",
+			available: property(opcda.PropertyCloseLabel, opcda.PropertyOpenLabel),
+			wantType:  NodeIDTwoStateDiscreteType,
+			wantProps: []string{"TrueState", "FalseState"},
+		},
+		{
+			name:      "anything else is a data item",
+			available: property(opcda.PropertyScanRate),
+			wantType:  NodeIDDataItemType,
+		},
+		{
+			// A.3.1.3 says High and Low EU *or* an Analog EU Type, and clause
+			// 5.3.2.3 makes EURange mandatory on the type. An item with the
+			// EU Type and neither bound cannot have an EURange, so claiming
+			// AnalogItemType would promise a property the adapter knows it
+			// cannot supply.
+			name:      "an Analog EU Type without a range is not promoted",
+			available: property(opcda.PropertyEUType),
+			euType:    opcda.EUTypeAnalog,
+			wantType:  NodeIDDataItemType,
+		},
+		{
+			// MultiStateDiscreteType requires EnumStrings, which comes from EU
+			// Info -- an array of strings, which the DA layer does not carry.
+			name:      "an enumerated EU Type is not promoted either",
+			available: property(opcda.PropertyEUType, opcda.PropertyEUInfo),
+			euType:    opcda.EUTypeEnumerated,
+			wantType:  NodeIDDataItemType,
+		},
 	} {
-		t.Run(row.browseName, func(t *testing.T) {
-			binding, ok := bindingForBrowseName(row.browseName)
-			if !ok {
-				t.Fatalf("%s is not bound", row.browseName)
+		t.Run(testCase.name, func(t *testing.T) {
+			chosen := variableTypeFor(testCase.available, testCase.euType)
+			if chosen.TypeID != testCase.wantType {
+				t.Fatalf("type = %d (%s), want %d", chosen.TypeID, chosen.Name, testCase.wantType)
 			}
-			if binding.DataType != row.dataType {
-				t.Fatalf("DataType = %d, want %d", binding.DataType, row.dataType)
+			if len(chosen.Properties) != len(testCase.wantProps) {
+				t.Fatalf("properties = %d, want %d", len(chosen.Properties), len(testCase.wantProps))
 			}
-			if len(binding.Sources) != len(row.sources) {
-				t.Fatalf("sources = %v, want %v", binding.Sources, row.sources)
-			}
-			for index := range row.sources {
-				if binding.Sources[index] != row.sources[index] {
-					t.Fatalf("sources = %v, want %v", binding.Sources, row.sources)
+			for index, want := range testCase.wantProps {
+				if chosen.Properties[index].BrowseName != want {
+					t.Fatalf("property %d = %s, want %s", index, chosen.Properties[index].BrowseName, want)
 				}
 			}
 		})
 	}
-	if len(tableA1) != 5 {
-		t.Fatalf("Table A.1 has %d property rows, want 5", len(tableA1))
-	}
 }
 
-// A Range with one end missing is not a Range. The adapter reports the property
-// only when the source offers both ends, because supplying the other end would
-// be inventing a number the source never gave.
-func TestARangeIsNotClaimedWithOnlyOneEnd(t *testing.T) {
-	half := []opcda.AvailableProperty{{ID: opcda.PropertyHighEU}}
-	for _, binding := range bindingsForAvailable(half) {
-		if binding.BrowseName == "EURange" {
-			t.Fatal("EURange was claimed from High EU alone")
+// The UA types these properties carry are the standard types', not Table A.1's
+// "String" column. A.1 gives the DA value's mapped type; A.3.1.3 assigns those
+// values to properties the standard VariableTypes define.
+func TestPropertyTypesAreTheStandardTypesNotTableA1sColumn(t *testing.T) {
+	for _, testCase := range []struct {
+		browseName string
+		dataType   uint32
+	}{
+		{"EURange", NodeIDRange},
+		{"InstrumentRange", NodeIDRange},
+		{"EngineeringUnits", NodeIDEUInformation},
+		{"TrueState", NodeIDLocalizedText},
+		{"FalseState", NodeIDLocalizedText},
+	} {
+		binding, ok := bindingForBrowseName(testCase.browseName)
+		if !ok {
+			t.Fatalf("%s is not bound", testCase.browseName)
 		}
-	}
-	both := []opcda.AvailableProperty{{ID: opcda.PropertyHighEU}, {ID: opcda.PropertyLowEU}}
-	found := false
-	for _, binding := range bindingsForAvailable(both) {
-		found = found || binding.BrowseName == "EURange"
-	}
-	if !found {
-		t.Fatal("EURange was not claimed when both ends are offered")
+		if binding.DataType != testCase.dataType {
+			t.Errorf("%s carries %d, want %d", testCase.browseName, binding.DataType, testCase.dataType)
+		}
 	}
 }
 
@@ -136,7 +183,7 @@ func TestReadingAPropertyGoesToTheSourceEveryTime(t *testing.T) {
 		},
 	}
 	service, space := testDataService(t, runtime)
-	if err := space.AttachItemProperties("Test/Float", runtime.available["Test/Float"], testNodeBudget); err != nil {
+	if err := space.AttachItemProperties("Test/Float", runtime.available["Test/Float"], opcda.EUTypeNoEnum, testNodeBudget); err != nil {
 		t.Fatalf("AttachItemProperties: %v", err)
 	}
 
@@ -149,8 +196,17 @@ func TestReadingAPropertyGoesToTheSourceEveryTime(t *testing.T) {
 		if response.Results[0].Status != StatusGood {
 			t.Fatalf("status = %s", response.Results[0].Status.Hex())
 		}
-		if response.Results[0].Value.Value != "degC" {
-			t.Fatalf("value = %v", response.Results[0].Value.Value)
+		// EngineeringUnits carries EUInformation, with the DA unit string as
+		// its DisplayName. The raw string is not what a client decodes.
+		object, ok := response.Results[0].Value.Value.(ExtensionObject)
+		if !ok {
+			t.Fatalf("value is %T, want an ExtensionObject", response.Results[0].Value.Value)
+		}
+		if object.TypeID.Numeric != NodeIDEUInformationEncodingDefaultBinary {
+			t.Fatalf("EngineeringUnits named encoding %d", object.TypeID.Numeric)
+		}
+		if !bytes.Contains(object.Body, []byte("degC")) {
+			t.Fatalf("the unit string is not in the EUInformation body")
 		}
 		if runtime.propertyCalls != attempt {
 			t.Fatalf("read %d asked the source %d times; a property must not be cached", attempt, runtime.propertyCalls)
@@ -204,7 +260,7 @@ func TestDescriptionIsAnsweredOnlyWhenTheSourceOffersIt(t *testing.T) {
 		t.Fatalf("before discovery the attribute answered %s", response.Results[0].Status.Hex())
 	}
 
-	space.AttachItemProperties("Test/Float", runtime.available["Test/Float"], testNodeBudget)
+	space.AttachItemProperties("Test/Float", runtime.available["Test/Float"], opcda.EUTypeNoEnum, testNodeBudget)
 	response, err = service.Read(context.Background(), readRequestFor(described), time.Now())
 	if err != nil {
 		t.Fatalf("Read: %v", err)
@@ -330,7 +386,7 @@ func TestAPropertyNodeCannotBeMonitored(t *testing.T) {
 	service, space := testSubscriptionService(t, runtime)
 	space.AttachItemProperties("Test/Float", []opcda.AvailableProperty{
 		{ID: opcda.PropertyLowEU}, {ID: opcda.PropertyHighEU},
-	}, testNodeBudget)
+	}, opcda.EUTypeNoEnum, testNodeBudget)
 
 	id := createSubscription(t, service)
 	response, err := service.CreateMonitoredItems(context.Background(), testSession, CreateMonitoredItemsRequest{
@@ -377,8 +433,8 @@ func TestAPropertyNodeCannotBeWritten(t *testing.T) {
 	runtime := &stubRuntime{}
 	service, space := testDataService(t, runtime)
 	space.AttachItemProperties("Test/Float", []opcda.AvailableProperty{
-		{ID: opcda.PropertyEUUnits},
-	}, testNodeBudget)
+		{ID: opcda.PropertyLowEU}, {ID: opcda.PropertyHighEU}, {ID: opcda.PropertyEUUnits},
+	}, opcda.EUTypeNoEnum, testNodeBudget)
 	property, ok := space.Node(ItemPropertyNodeID("Test/Float", "EngineeringUnits"))
 	if !ok {
 		t.Fatal("the property node was not created")
@@ -417,17 +473,21 @@ func TestAPropertyTheSourceStopsOfferingStopsBeingReported(t *testing.T) {
 	both := []opcda.AvailableProperty{
 		{ID: opcda.PropertyEUUnits}, {ID: opcda.PropertyLowEU}, {ID: opcda.PropertyHighEU},
 	}
-	space.AttachItemProperties("Test/Float", both, testNodeBudget)
+	space.AttachItemProperties("Test/Float", both, opcda.EUTypeNoEnum, testNodeBudget)
 	if names := propertyNames(t, space); !names["EURange"] || !names["EngineeringUnits"] {
 		t.Fatalf("first attach reported %v", names)
 	}
 
-	space.AttachItemProperties("Test/Float", []opcda.AvailableProperty{{ID: opcda.PropertyEUUnits}}, testNodeBudget)
+	// The source stops offering EU Units. The item stays analog, because it
+	// still has both ends of its range, and loses only the optional property.
+	space.AttachItemProperties("Test/Float", []opcda.AvailableProperty{
+		{ID: opcda.PropertyLowEU}, {ID: opcda.PropertyHighEU},
+	}, opcda.EUTypeNoEnum, testNodeBudget)
 	names := propertyNames(t, space)
-	if names["EURange"] {
+	if names["EngineeringUnits"] {
 		t.Fatal("a property the source stopped offering is still reported")
 	}
-	if !names["EngineeringUnits"] {
+	if !names["EURange"] {
 		t.Fatal("re-attaching dropped a property the source still offers")
 	}
 }
@@ -461,7 +521,9 @@ func TestResolveNodeSeparatesItemsFromTheirProperties(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	space.AttachItemProperties("Test/Float", []opcda.AvailableProperty{{ID: opcda.PropertyEUUnits}}, testNodeBudget)
+	space.AttachItemProperties("Test/Float", []opcda.AvailableProperty{
+		{ID: opcda.PropertyLowEU}, {ID: opcda.PropertyHighEU}, {ID: opcda.PropertyEUUnits},
+	}, opcda.EUTypeNoEnum, testNodeBudget)
 
 	for _, testCase := range []struct {
 		name string
@@ -506,14 +568,16 @@ func TestAPropertySetThatDoesNotFitIsNotAttachedInPart(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
+	// An analog item with a range, its units and its instrument range: four
+	// property nodes.
 	available := []opcda.AvailableProperty{
-		{ID: opcda.PropertyEUUnits}, {ID: opcda.PropertyLowEU}, {ID: opcda.PropertyHighEU},
-		{ID: opcda.PropertyCloseLabel}, {ID: opcda.PropertyOpenLabel},
+		{ID: opcda.PropertyLowEU}, {ID: opcda.PropertyHighEU}, {ID: opcda.PropertyEUUnits},
+		{ID: opcda.PropertyLowIR}, {ID: opcda.PropertyHighIR},
 	}
-	// One item node exists, and the set needs four more. A budget of three
-	// cannot hold them.
-	budget := space.SourceNodeCount() + 3
-	if err := space.AttachItemProperties("Test/Float", available, budget); err == nil {
+	// The set needs three more nodes than exist. A budget of two cannot hold
+	// them.
+	budget := space.SourceNodeCount() + 2
+	if err := space.AttachItemProperties("Test/Float", available, opcda.EUTypeNoEnum, budget); err == nil {
 		t.Fatal("a property set that does not fit the node budget was accepted")
 	}
 	if names := propertyNames(t, space); len(names) != 0 {
@@ -527,8 +591,8 @@ func TestARefusedDiscoveryIsRetriedRatherThanRemembered(t *testing.T) {
 	runtime := &stubRuntime{
 		available: map[string][]opcda.AvailableProperty{
 			"Test/Float": {
-				{ID: opcda.PropertyEUUnits}, {ID: opcda.PropertyLowEU}, {ID: opcda.PropertyHighEU},
-				{ID: opcda.PropertyCloseLabel}, {ID: opcda.PropertyOpenLabel},
+				{ID: opcda.PropertyLowEU}, {ID: opcda.PropertyHighEU}, {ID: opcda.PropertyEUUnits},
+				{ID: opcda.PropertyLowIR}, {ID: opcda.PropertyHighIR},
 			},
 		},
 	}
@@ -540,7 +604,7 @@ func TestARefusedDiscoveryIsRetriedRatherThanRemembered(t *testing.T) {
 		t.Fatal(err)
 	}
 	limits := DefaultPopulationLimits()
-	limits.MaxNodes = space.SourceNodeCount() + 3
+	limits.MaxNodes = space.SourceNodeCount() + 2
 	populator, err := NewPopulator(space, runtime, limits)
 	if err != nil {
 		t.Fatalf("NewPopulator: %v", err)
@@ -623,12 +687,60 @@ func TestANonPositiveNodeBudgetCreatesNothing(t *testing.T) {
 			t.Fatalf("a budget of %d resolved an item that does not exist", budget)
 		}
 		err := space.AttachItemProperties("Test/Float",
-			[]opcda.AvailableProperty{{ID: opcda.PropertyEUUnits}}, budget)
+			[]opcda.AvailableProperty{{ID: opcda.PropertyEUUnits}}, opcda.EUTypeNoEnum, budget)
 		if err == nil {
 			t.Fatalf("a budget of %d attached a property node", budget)
 		}
 	}
 	if grew := space.SourceNodeCount() - before; grew != 0 {
 		t.Fatalf("a non-positive budget added %d nodes", grew)
+	}
+}
+
+// Choosing the type is not the same as giving it to the node. Annex A.3.1.3
+// chooses from properties that are only known once the source has been asked,
+// so the TypeDefinition is set when they are attached rather than when the item
+// node is created -- and until a client browses, an item carries the type it
+// was created with.
+func TestTheChosenVariableTypeReachesTheNode(t *testing.T) {
+	space := testAddressSpace(t)
+	if err := space.PopulateBranch(nil, []opcda.BrowseEntry{
+		{Kind: opcda.BrowseEntryItem, Name: "Float", ItemID: itemID("Test/Float"),
+			CanonicalType: varType(opcda.VTR4)},
+		{Kind: opcda.BrowseEntryItem, Name: "Switch", ItemID: itemID("Test/Switch"),
+			CanonicalType: varType(opcda.VTBool)},
+		{Kind: opcda.BrowseEntryItem, Name: "Plain", ItemID: itemID("Test/Plain"),
+			CanonicalType: varType(opcda.VTI4)},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	for _, testCase := range []struct {
+		itemID    opcda.DAItemID
+		available []opcda.AvailableProperty
+		want      uint32
+	}{
+		{"Test/Float", []opcda.AvailableProperty{
+			{ID: opcda.PropertyLowEU}, {ID: opcda.PropertyHighEU}}, NodeIDAnalogItemType},
+		{"Test/Switch", []opcda.AvailableProperty{
+			{ID: opcda.PropertyCloseLabel}, {ID: opcda.PropertyOpenLabel}}, NodeIDTwoStateDiscreteType},
+		{"Test/Plain", []opcda.AvailableProperty{
+			{ID: opcda.PropertyScanRate}}, NodeIDDataItemType},
+	} {
+		if err := space.AttachItemProperties(testCase.itemID, testCase.available,
+			opcda.EUTypeNoEnum, testNodeBudget); err != nil {
+			t.Fatalf("%s: %v", testCase.itemID, err)
+		}
+		node, ok := space.Node(ItemNodeID(testCase.itemID))
+		if !ok {
+			t.Fatalf("%s disappeared", testCase.itemID)
+		}
+		if node.TypeDefinition.Numeric != testCase.want {
+			t.Errorf("%s is type %d, Annex A.3.1.3 gives it %d",
+				testCase.itemID, node.TypeDefinition.Numeric, testCase.want)
+		}
+		// Whatever the type, it is never the one Annex A never mentions.
+		if node.TypeDefinition.Numeric == NodeIDBaseDataVariableType {
+			t.Errorf("%s kept BaseDataVariableType, which Annex A does not offer", testCase.itemID)
+		}
 	}
 }

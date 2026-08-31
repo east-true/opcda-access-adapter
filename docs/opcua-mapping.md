@@ -227,11 +227,11 @@ nodes, because the table does not ask them to.
 |---|---|---|
 | Access Rights (5) | `AccessLevel` attribute | Byte |
 | Item Description (101) | `Description` attribute | LocalizedText |
-| EU Units (100) | `EngineeringUnits` property | String |
+| EU Units (100) | `EngineeringUnits` property | `EUInformation` |
 | High EU (102) + Low EU (103) | `EURange` property | `Range` |
 | High IR (104) + Low IR (105) | `InstrumentRange` property | `Range` |
-| Close Label (106) | `TrueState` property | String |
-| Open Label (107) | `FalseState` property | String |
+| Close Label (106) | `TrueState` property | LocalizedText |
+| Open Label (107) | `FalseState` property | LocalizedText |
 
 **Access Rights is satisfied from a better source than the table names.**
 `OPCITEMRESULT.dwAccessRights` from `AddItems` already carries it, so the value
@@ -245,11 +245,17 @@ reading `EURange` expects to decode. A Range is claimed only when the source
 offers **both** ends: half a range is not a range, and supplying the other end
 would be inventing a number the source never gave.
 
-**`EngineeringUnits`, `TrueState` and `FalseState` are String.** On the standard
-`AnalogItemType` and `TwoStateDiscreteType` those carry `EUInformation` and
-`LocalizedText` instead. Table A.1 says String, and the DA source supplies a
-string; the table is followed rather than improved on. A client expecting
-`EUInformation` will not find one.
+**The UA types above are not Table A.1's third column.** A.1 says `String` for
+EU Units, Close Label and Open Label. Those values land on properties the
+standard `AnalogItemType` and `TwoStateDiscreteType` define as `EUInformation`
+and `LocalizedText`, which is what A.3.1.3 assigns them to — so A.1's column is
+the DA value's mapped type, not the UA property's. That reading is worked
+through below, under the VariableType.
+
+**A property belongs to the type its item was given.** `EngineeringUnits` and
+`InstrumentRange` exist on an analog item; `TrueState` and `FalseState` on a
+two-state discrete one. An item that is neither has neither, however many DA
+properties it happens to offer.
 
 ### Nothing is cached, and nothing is asked for early
 
@@ -335,23 +341,49 @@ reports `unsupported`, browsing its items succeeds with the references they do
 have, and no property node is created. The answer is recorded once rather than
 re-asked for every browse of every item.
 
-### A deviation, not an open choice: the VariableType
+### The VariableType, from Annex A.3.1.3
 
-Every source item is a `BaseDataVariableType`. **Annex A.3.1.3 does not permit
-that**, and `BaseDataVariableType` appears nowhere in Annex A: the wrapper is
-told to choose between `AnalogItemType`, `TwoStateDiscreteType`,
-`MultiStateDiscreteType` and `DataItemType` according to which DA properties the
-item has, with `DataItemType` as the floor.
+A DA item's UA VariableType is chosen from the properties its source offers, as
+A.3.1.3 prescribes. The adapter used to give every item `BaseDataVariableType`,
+which appears nowhere in Annex A.
 
-This was recorded here as an undecided improvement — "should a node be promoted
-to `AnalogItemType`?" — which understated it. It is a deviation that had not
-been identified as one.
+| The item has | VariableType | Carrying |
+|---|---|---|
+| High EU **and** Low EU | `AnalogItemType` | `EURange`, plus `EngineeringUnits` and `InstrumentRange` when offered |
+| Close Label **and** Open Label | `TwoStateDiscreteType` | `TrueState`, `FalseState` |
+| anything else | `DataItemType` | — |
 
-[ADR-0018](adr/0018-da-item-properties.md) carries the full rule, what
-implementing it would cost, and the second thing reading A.3.1.3 turned up: the
-property types above follow Table A.1's "String" column, and A.3.1.3 puts those
-same values on the standard types where they are `EUInformation` and
-`LocalizedText`. The two readings have to be settled together.
+The type is chosen when the properties become known, which is when a client
+browses the item. Until then the item carries the type it was created with.
+
+**Two departures from the clause, both because a type is a promise.**
+
+A.3.1.3 says an item is `AnalogItemType` if it has High and Low EU **or** its EU
+Type is Analog. Clause 5.3.2.3 makes `EURange` *mandatory* on that type. An item
+whose EU Type is Analog but which offers neither bound has no range to publish,
+so claiming the type would promise a property the adapter knows it cannot
+supply. Such an item is given `DataItemType`.
+
+`MultiStateDiscreteType` is never claimed. Its mandatory `EnumStrings` comes
+from EU Info, whose DA value is an array of strings, and the DA layer does not
+carry array VARIANTs — so the promise could never be kept.
+
+### The property types are the standard types', not Table A.1's column
+
+Table A.1 gives `String` as the "OPC UA DataType" for EU Units, Close Label and
+Open Label. A.3.1.3 assigns those same values to `EngineeringUnits`, `TrueState`
+and `FalseState` — properties the standard VariableTypes define as
+`EUInformation` and `LocalizedText`.
+
+Reading A.1's third column as **the DA value's mapped type** rather than the UA
+property's reconciles the two, and A.3.1.3 is the clause that forces the
+reading. This adapter followed A.1 literally at first; it now follows A.3.1.3.
+
+`EngineeringUnits` carries the DA unit string as the `DisplayName` of an
+`EUInformation`. Its `NamespaceUri` and `UnitId` are left empty: DA supplies a
+unit's name and nothing else, and deriving a UNECE code from a name would be
+inventing an identity the source never gave — which a client reading `UnitId`
+would then act on.
 
 ## Timestamps
 
