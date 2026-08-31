@@ -221,29 +221,44 @@ func TestBrowseReferenceTypeFilter(t *testing.T) {
 	service, space := testBrowseService(t, DefaultBrowseLimits())
 	if err := space.PopulateBranch(nil, []opcda.BrowseEntry{
 		{Kind: opcda.BrowseEntryItem, Name: "Item", ItemID: itemID("Item")},
+		{Kind: opcda.BrowseEntryBranch, Name: "Folder"},
 	}); err != nil {
 		t.Fatal(err)
 	}
 
-	// Organizes matches the hierarchy this space builds.
+	// Annex A.3.1.2: a folder standing for a DA branch references child
+	// branches with Organizes and DA leaves with HasComponent. A client that
+	// filters a Browse by reference type sees the difference, and this test
+	// asserted the opposite until the deviation was found.
+	browseByType := func(t *testing.T, referenceType uint32) []ReferenceDescription {
+		t.Helper()
+		description := browseAll(space.SourceFolderID())
+		description.ReferenceTypeID = NumericNodeID(0, referenceType)
+		response, err := service.Browse(context.Background(), browseRequest(description), channelEpoch)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return response.Results[0].References
+	}
+
+	organized := browseByType(t, NodeIDOrganizes)
+	if len(organized) != 1 || organized[0].BrowseName.Name != "Folder" {
+		t.Fatalf("Organizes returned %+v, want the branch alone", organized)
+	}
+	components := browseByType(t, NodeIDHasComponent)
+	if len(components) != 1 || components[0].BrowseName.Name != "Item" {
+		t.Fatalf("HasComponent returned %+v, want the item alone", components)
+	}
+	// Both are hierarchical, so a client that does not filter still sees both.
 	description := browseAll(space.SourceFolderID())
-	description.ReferenceTypeID = NumericNodeID(0, NodeIDOrganizes)
+	description.ReferenceTypeID = NumericNodeID(0, NodeIDHierarchicalRefs)
+	description.IncludeSubtypes = true
 	response, err := service.Browse(context.Background(), browseRequest(description), channelEpoch)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(response.Results[0].References) != 1 {
-		t.Fatalf("references = %d", len(response.Results[0].References))
-	}
-
-	// A different known type matches nothing here.
-	description.ReferenceTypeID = NumericNodeID(0, NodeIDHasComponent)
-	response, err = service.Browse(context.Background(), browseRequest(description), channelEpoch)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(response.Results[0].References) != 0 {
-		t.Fatalf("references = %d, want none", len(response.Results[0].References))
+	if len(response.Results[0].References) != 2 {
+		t.Fatalf("hierarchical references = %d, want both children", len(response.Results[0].References))
 	}
 
 	// A reference type that names nothing is an error, not a filter that
