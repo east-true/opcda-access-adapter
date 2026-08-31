@@ -245,7 +245,7 @@ func TestInvalidateForcesARebrowse(t *testing.T) {
 func TestPathForNode(t *testing.T) {
 	// A branch carries its full path, including names with awkward characters.
 	path := []string{"Test", "Sub Group", "MiXeD.CaSe"}
-	recovered, ok := PathForNode(BranchNodeID(path))
+	recovered, ok := PathForNode(BranchNodeID(path, nil))
 	if !ok {
 		t.Fatal("a branch node had no path")
 	}

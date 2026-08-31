@@ -3,6 +3,7 @@ package opcua
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -179,6 +180,11 @@ func PathForNode(id NodeID) ([]string, bool) {
 	const branchPrefix = "branch:"
 	if len(id.StringID) >= len(branchPrefix) && id.StringID[:len(branchPrefix)] == branchPrefix {
 		encoded := id.StringID[len(branchPrefix):]
+		// A branch identifier may carry the ItemID the source gave it after
+		// the path. The path is what navigates, so the ItemID is trimmed here.
+		if cut := strings.Index(encoded, branchItemIDSeparator); cut >= 0 {
+			encoded = encoded[:cut]
+		}
 		if encoded == "" {
 			return nil, false
 		}

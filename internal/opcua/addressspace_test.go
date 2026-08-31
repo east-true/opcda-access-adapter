@@ -187,7 +187,7 @@ func TestBranchNodesHaveNoItemID(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	branch, ok := space.Node(BranchNodeID([]string{"Test"}))
+	branch, ok := space.Node(BranchNodeID([]string{"Test"}, nil))
 	if !ok {
 		t.Fatal("the branch node is missing")
 	}
@@ -199,7 +199,7 @@ func TestBranchNodesHaveNoItemID(t *testing.T) {
 	}
 
 	// A branch identifier and an item identifier with the same text differ.
-	if BranchNodeID([]string{"Test"}).Equal(ItemNodeID("Test")) {
+	if BranchNodeID([]string{"Test"}, nil).Equal(ItemNodeID("Test")) {
 		t.Fatal("a branch and an item share a node identifier")
 	}
 }
@@ -221,8 +221,8 @@ func TestNestedBranchesAreDistinct(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	first := BranchNodeID([]string{"A", "Shared"})
-	second := BranchNodeID([]string{"B", "Shared"})
+	first := BranchNodeID([]string{"A", "Shared"}, nil)
+	second := BranchNodeID([]string{"B", "Shared"}, nil)
 	if first.Equal(second) {
 		t.Fatal("same-named branches under different parents collided")
 	}
@@ -427,7 +427,7 @@ func TestItemIDForNode(t *testing.T) {
 	}
 	// A branch, a standard node, and a bare identifier name no item.
 	for _, id := range []NodeID{
-		BranchNodeID([]string{"Test"}),
+		BranchNodeID([]string{"Test"}, nil),
 		NumericNodeID(0, NodeIDObjectsFolder),
 		StringNodeID(AdapterNamespaceIndex, "not-an-item"),
 		StringNodeID(AdapterNamespaceIndex, "item:"),
@@ -469,7 +469,45 @@ func TestResolveVariableCreatesAnUnbrowsedNode(t *testing.T) {
 		t.Fatalf("resolving twice created %d nodes", space.NodeCount()-before)
 	}
 	// A branch identifier is not a variable.
-	if _, ok := space.ResolveVariable(BranchNodeID([]string{"Test"}), 1000); ok {
+	if _, ok := space.ResolveVariable(BranchNodeID([]string{"Test"}, nil), 1000); ok {
 		t.Fatal("a branch identifier resolved as a variable")
+	}
+}
+
+// A.3.1.2: "The ItemId obtained using the GetItemID is used as a part of the
+// NodeId for each Branch." A.3.1.5 sanctions a NodeId that carries both that
+// ItemID and other information, and names the trade-off: the NodeId will not
+// be the ItemId. The path has to survive because Browse is path-based.
+func TestABranchNodeIDCarriesTheItemIDTheSourceGaveIt(t *testing.T) {
+	named := opcda.DAItemID("Plant.Line1")
+	withID := BranchNodeID([]string{"Plant", "Line1"}, &named)
+	withoutID := BranchNodeID([]string{"Plant", "Line1"}, nil)
+
+	if withID.Equal(withoutID) {
+		t.Fatal("the source's ItemID is not part of the identifier")
+	}
+	recovered, ok := BranchItemIDForNode(withID)
+	if !ok || recovered != named {
+		t.Fatalf("recovered %q, %v", recovered, ok)
+	}
+	// A source that will not name a branch leaves the path alone.
+	if _, ok := BranchItemIDForNode(withoutID); ok {
+		t.Fatal("an unnamed branch reported an ItemID")
+	}
+
+	// The path still navigates, which is what Browse needs, whether or not the
+	// source named the branch.
+	for _, id := range []NodeID{withID, withoutID} {
+		path, ok := PathForNode(id)
+		if !ok {
+			t.Fatalf("%s has no path", id)
+		}
+		if len(path) != 2 || path[0] != "Plant" || path[1] != "Line1" {
+			t.Fatalf("path = %v", path)
+		}
+	}
+	// An item identifier is still never mistaken for a branch.
+	if _, ok := BranchItemIDForNode(ItemNodeID("Plant.Line1")); ok {
+		t.Fatal("an item node reported a branch ItemID")
 	}
 }
