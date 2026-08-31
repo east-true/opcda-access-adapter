@@ -57,6 +57,13 @@ type AvailableProperty struct {
 	ID          PropertyID
 	Description string
 	VarType     DAVarType
+
+	// ItemID is the property's own ItemID when the source gives it one, from
+	// IOPCItemProperties::LookupItemIDs. A property with one is a DA item in
+	// its own right, which OPC 10000-8 A.3.1.4 is what makes it writable; a
+	// property without one only describes its item.
+	ItemID        DAItemID
+	ItemIDPresent bool
 }
 
 // ItemPropertiesRequest asks for the value of specific properties of one item.
@@ -84,3 +91,15 @@ type ItemPropertyValue struct {
 // implement IOPCItemProperties. It is a capability, not a failure: the source
 // is working correctly and simply does not offer properties.
 const propertiesUnsupported = "IOPC ItemProperties is not implemented by this source"
+
+// PropertyItemID reports whether one property of an item is also a DA item in
+// its own right, and under which ItemID.
+//
+// OPC 10000-8 A.3.1.4 makes a property writable exactly when it has one, which
+// is what IOPCItemProperties::LookupItemIDs answers. A property without one
+// describes its item and is nothing a client can write to.
+type PropertyItemID struct {
+	ID      PropertyID
+	ItemID  DAItemID
+	Present bool
+}

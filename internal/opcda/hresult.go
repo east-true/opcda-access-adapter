@@ -10,6 +10,9 @@ const (
 	SOK          HRESULT = 0
 	SFalse       HRESULT = 1
 	ENoInterface HRESULT = -2147467262 // 0x80004002
+	// ENotImpl is how a source says it implements an interface but not one of
+	// its methods, which IOPCItemProperties::LookupItemIDs is allowed to be.
+	ENotImpl HRESULT = -2147467263 // 0x80004001
 	// ConnectENoConnection is returned by IConnectionPointContainer::
 	// FindConnectionPoint when the object has no connection point for the
 	// requested sink interface.

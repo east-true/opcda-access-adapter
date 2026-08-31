@@ -267,7 +267,8 @@ Variable of `PropertyType`, following A.3.1.4:
   without the property changing;
 - its **DataType** comes from its own VARTYPE through Table A.2;
 - `ValueRank` is `Scalar`;
-- `AccessLevel` is readable.
+- `AccessLevel` is readable, and writable when the source gives the property its
+  own ItemID.
 
 This is what a client browsing a real source actually finds: Scan Rate, EU Type,
 and whatever a vendor adds. Access Rights and Item Description are **not** among
@@ -275,14 +276,24 @@ them — Table A.1 maps those onto attributes, and exposing them as properties a
 well would answer the same question twice. Nor are Value, Quality and Timestamp,
 which belong to Read and Subscribe.
 
-**Two of A.3.1.4's rules are not applied. Both are limits of this adapter, not
-of the source.**
+**A property the source also exposes as an item of its own is writable.**
+A.3.1.4 says so, and `IOPCItemProperties::LookupItemIDs` is what answers it. The
+adapter asks during discovery — a source that implements the interface without
+that method answers `E_NOTIMPL`, which means no property has one, not that
+anything failed.
 
-`AccessLevel` is readable, never writable. A.3.1.4 makes a property writable
-when it has its own ItemID in the DA server, which is what
-`IOPCItemProperties::LookupItemIDs` answers. The adapter does not call it — that
-is unbuilt, not impossible — so it reports what it knows rather than guessing at
-more. A source whose properties are writable is served read-only.
+The access level says writable **only because a Write to such a node really
+reaches that item**. Reporting a node writable and then refusing the write would
+be worse than reporting it readable, so the two are kept together: the write
+goes to the property's own ItemID, not to the item it describes.
+
+Such a property still cannot be **monitored**. A DA group notifies on item
+values and this is an item, so it could be — but the refusal in the previous
+section is by node kind, and lifting it for one kind of property without a way
+for a client to learn the underlying ItemID would be a half-measure.
+
+**One of A.3.1.4's rules remains unapplied, and it is a limit of this adapter,
+not of the source.**
 
 An **array-valued property is not exposed at all**. A.3.1.4 would have it
 carried with `ValueRank` `OneOrMoreDimensions`. The DA layer does not carry

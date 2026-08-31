@@ -633,14 +633,19 @@ func otherPropertyNode(itemID opcda.DAItemID, property opcda.AvailableProperty) 
 		TypeDefinition: NumericNodeID(0, NodeIDPropertyType),
 		DataType:       NumericNodeID(0, NodeIDBaseDataType),
 		// Only scalar properties are exposed, so the rank is never in doubt.
-		ValueRank: ValueRankScalar,
-		ItemID:    itemID,
-		// A.3.1.4 makes a property writable when it has its own ItemID in the
-		// DA server. Finding that out needs LookupItemIDs, which the adapter
-		// does not call, so a property is reported readable -- which is what it
-		// is, rather than a guess at what more it might be.
+		ValueRank:         ValueRankScalar,
+		ItemID:            itemID,
 		AccessLevel:       AccessLevelCurrentRead,
 		AccessRightsKnown: true,
+	}
+	// A.3.1.4: a property with its own ItemID is a DA item in its own right,
+	// and is writable. The access level says so only because a Write to it
+	// really does reach that item -- claiming writable and then refusing would
+	// be worse than reporting readable.
+	if property.ItemIDPresent {
+		node.ItemID = property.ItemID
+		node.OwnItemID = true
+		node.AccessLevel = AccessLevelCurrentRead | AccessLevelCurrentWrite
 	}
 	if dataType, ok := DataTypeFor(property.VarType); ok {
 		if id, resolved := DataTypeNodeID(dataType); resolved {

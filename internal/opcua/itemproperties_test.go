@@ -891,3 +891,55 @@ func TestUnnamedDAPropertiesBecomePropertiesOfTheItem(t *testing.T) {
 		t.Fatalf("value = %#v", response.Results[0].Value.Value)
 	}
 }
+
+// A.3.1.4: a property the source also exposes as an item of its own is
+// writable, and the write goes to that item. Reporting it writable and then
+// refusing the write would be worse than reporting it readable, so the access
+// level and the Write path have to agree.
+func TestAPropertyWithItsOwnItemIDIsWritable(t *testing.T) {
+	runtime := &stubRuntime{
+		propertyValues: map[opcda.PropertyID]opcda.ItemPropertyValue{},
+		writeResults: []opcda.WriteResult{
+			{ItemID: "Test/Float.ScanRate", HRESULT: opcda.SOK, HRESULTPresent: true},
+		},
+	}
+	service, space := testDataService(t, runtime)
+	available := []opcda.AvailableProperty{{
+		ID: opcda.PropertyScanRate, Description: "Scan Rate", VarType: opcda.VTR4,
+		ItemID: "Test/Float.ScanRate", ItemIDPresent: true,
+	}}
+	if err := space.AttachItemProperties("Test/Float", available, opcda.EUTypeNoEnum, testNodeBudget); err != nil {
+		t.Fatalf("AttachItemProperties: %v", err)
+	}
+
+	id := OtherPropertyNodeID("Test/Float", opcda.PropertyScanRate)
+	node, ok := space.Node(id)
+	if !ok {
+		t.Fatal("the property node is missing")
+	}
+	if node.AccessLevel&AccessLevelCurrentWrite == 0 {
+		t.Fatal("a property with its own ItemID was not reported writable")
+	}
+
+	response, err := service.Write(context.Background(), WriteRequest{
+		Header: RequestHeader{RequestHandle: 1, AdditionalHeader: NullExtensionObject()},
+		NodesToWrite: []WriteValue{{
+			NodeID: id, AttributeID: AttributeValue,
+			Value: DataValue{Value: Variant{Type: BuiltInFloat, Value: float32(500)}, Status: StatusGood},
+		}},
+	}, time.Now())
+	if err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+	if response.Results[0] != StatusGood {
+		t.Fatalf("status = %s; a property reported writable must accept a write",
+			response.Results[0].Hex())
+	}
+	// It must reach the property's own ItemID, not the item it describes.
+	if len(runtime.writeItems) != 1 {
+		t.Fatalf("the source received %d writes", len(runtime.writeItems))
+	}
+	if runtime.writeItems[0].ItemID != "Test/Float.ScanRate" {
+		t.Fatalf("the write went to %q", runtime.writeItems[0].ItemID)
+	}
+}

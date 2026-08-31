@@ -733,15 +733,16 @@ func (s *DataAccessService) Write(ctx context.Context, request WriteRequest, now
 			results[index] = StatusBadNotWritable
 			continue
 		}
-		// A property describes an item and is not a place to put a value. The
-		// access level would refuse it anyway, since a property node is created
-		// read-only, but that is a side effect of how the node was built rather
-		// than a rule.
-		if kind == NodeKindItemProperty {
+		// A property describes an item and is not a place to put a value --
+		// unless the source exposes it as an item of its own, which A.3.1.4
+		// says makes it writable. Then the write goes to that item, which is
+		// the ItemID the node carries.
+		propertyItem := kind == NodeKindItemProperty && node != nil && node.OwnItemID
+		if kind == NodeKindItemProperty && !propertyItem {
 			results[index] = StatusBadNotWritable
 			continue
 		}
-		if kind != NodeKindItem {
+		if kind != NodeKindItem && !propertyItem {
 			results[index] = StatusBadAttributeIDInvalid
 			continue
 		}
