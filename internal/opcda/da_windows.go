@@ -134,20 +134,39 @@ func addDAGroup(server *iopcServer) (uint32, *iopcItemMgt, error) {
 		revisedRate  uint32
 		items        *iopcItemMgt
 	)
+	// IOPCServer::AddGroup takes eleven parameters and the IDL fixes their
+	// order. Passed as bare literals they are unreadable, and a slot in the
+	// wrong place is invisible to a reader and to the compiler alike -- the
+	// same hazard the vtable check exists for one level up. They are named
+	// here so the call can be compared with the IDL by eye.
+	const (
+		// The group is deliberately inactive. An active group makes the source
+		// push updates for every item ever read, which is load nobody asked
+		// for, and design §"금지" forbids the adapter serving cached values --
+		// so there is nothing an active group would be maintaining for it.
+		// Read goes to the device instead, which satisfies any maxAge a client
+		// can ask for.
+		bActive               = 0
+		dwRequestedUpdateRate = 1000
+		hClientGroup          = 1
+		pTimeBias             = 0 // NULL: the source keeps its own time base
+		pPercentDeadband      = 0 // NULL: reads are not deadbanded
+		dwLCID                = 0
+	)
 	result, _, _ := syscall.SyscallN(
 		server.VTable.AddGroup,
 		uintptr(unsafe.Pointer(server)),
-		uintptr(unsafe.Pointer(groupName)),
-		0,
-		1000,
-		1,
-		0,
-		0,
-		0,
-		uintptr(unsafe.Pointer(&serverHandle)),
-		uintptr(unsafe.Pointer(&revisedRate)),
+		uintptr(unsafe.Pointer(groupName)), // szName
+		bActive,
+		dwRequestedUpdateRate,
+		hClientGroup,
+		pTimeBias,
+		pPercentDeadband,
+		dwLCID,
+		uintptr(unsafe.Pointer(&serverHandle)), // phServerGroup
+		uintptr(unsafe.Pointer(&revisedRate)),  // pRevisedUpdateRate
 		uintptr(unsafe.Pointer(&iidIOPCItemMgt)),
-		uintptr(unsafe.Pointer(&items)),
+		uintptr(unsafe.Pointer(&items)), // ppUnk
 	)
 	runtime.KeepAlive(server)
 	runtime.KeepAlive(groupName)

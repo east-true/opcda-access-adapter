@@ -2,6 +2,7 @@ package opcua
 
 import (
 	"context"
+	"math"
 	"testing"
 	"time"
 
@@ -1062,4 +1063,46 @@ func (r *stubRuntime) ItemProperties(_ context.Context, request opcda.ItemProper
 		values = append(values, value)
 	}
 	return values, nil
+}
+
+// OPC 10000-4 Table 47 gives maxAge three rules. Two are met exactly and the
+// third is a recorded deviation, so what the adapter does with each is pinned
+// rather than left to be inferred from the absence of code.
+func TestMaxAgeFollowsTableForty7(t *testing.T) {
+	runtime := &stubRuntime{readResults: []opcda.ReadResult{{
+		ItemID: "Test/Int32", HRESULT: opcda.SOK, HRESULTPresent: true,
+		Value: &opcda.DAValue{ItemID: "Test/Int32", VarType: opcda.VTI4,
+			Value: int32(1), QualityRaw: QualityGood, HRESULT: opcda.SOK},
+	}}}
+	service, _ := testDataService(t, runtime)
+
+	// "Negative values are invalid for maxAge."
+	request := readRequestFor(readValue(ItemNodeID("Test/Int32")))
+	request.MaxAge = -1
+	if _, err := service.Read(context.Background(), request, time.Now()); err == nil {
+		t.Fatal("a negative maxAge was accepted")
+	}
+
+	// Zero, a middling age, and the value that asks for a cached read all
+	// reach the source. The last is the deviation: the adapter has no cache,
+	// and a value read now is within any staleness bound.
+	for _, maxAge := range []float64{0, 500, math.MaxInt32, math.MaxInt32 * 2} {
+		runtime.readRequest = opcda.ReadRequest{}
+		request := readRequestFor(readValue(ItemNodeID("Test/Int32")))
+		request.MaxAge = maxAge
+		response, err := service.Read(context.Background(), request, time.Now())
+		if err != nil {
+			t.Fatalf("maxAge %v: %v", maxAge, err)
+		}
+		if response.Results[0].Status != StatusGood {
+			t.Fatalf("maxAge %v answered %s", maxAge, response.Results[0].Status.Hex())
+		}
+		if len(runtime.readRequest.Items) != 1 {
+			t.Fatalf("maxAge %v did not reach the source", maxAge)
+		}
+		// Every one of them is a device read: the adapter has no cache.
+		if runtime.readRequest.Source != opcda.DADataSourceDevice {
+			t.Fatalf("maxAge %v read from %q", maxAge, runtime.readRequest.Source)
+		}
+	}
 }
