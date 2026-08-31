@@ -189,6 +189,26 @@ written; the added work ahead of it made it lose, on 386, with Browse correctly
 answering `Bad_NotConnected`. It now waits through that status for a bounded
 30 s.
 
+### Branch identifier result
+
+The fixture names its branch, so the change that obtains a branch's ItemID from
+`GetItemID` is exercised on every real-DA run:
+
+```
+GRPC_REAL_DA_PASS ... namedBranches=1
+opcua address space annexA branches=1 named=1 leaves=3
+```
+
+That number is evidence rather than decoration. Three separate places asserted
+that a branch has no ItemID — the gRPC frontend, the HTTP structural check, and
+the gRPC probe — and each of them failed when branches started carrying one.
+**Their failing is what proved `GetItemID` answers for a branch on a real
+server**, which is what A.3.1.2 assumes.
+
+How many branches a source names is reported, never required: naming one is the
+source's decision. What is required is the adapter's part — an ItemID reported
+as present is never empty.
+
 ### HTTP item property result
 
 The real-DA run exercises the HTTP property endpoints alongside the gRPC ones,
