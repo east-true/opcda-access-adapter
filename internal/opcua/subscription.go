@@ -828,6 +828,12 @@ type monitoredItem struct {
 	mode         MonitoringMode
 	timestamps   TimestampsToReturn
 
+	// notReadable records that the source says this item cannot be read.
+	// OPC 10000-4 5.13.2.1 requires the item to be created anyway and the bad
+	// status delivered through Publish, so it stays out of the DA group and
+	// reports its status instead of a value.
+	notReadable bool
+
 	// samplingInterval is the revised sampling interval, in milliseconds, that
 	// this item was told it would get. A DA group has one update rate for
 	// every item in it, so an item that asked for a slower rate than the group
@@ -1123,9 +1129,17 @@ func (s *SubscriptionService) prepareMonitoredItem(subscription *uaSubscription,
 	case NodeKindOther:
 		return failed(StatusBadAttributeIDInvalid), nil
 	}
-	if node.AccessRightsKnown && node.AccessLevel&AccessLevelCurrentRead == 0 {
-		return failed(StatusBadNotReadable), nil
-	}
+	// A node the source will not let anyone read is still created. OPC 10000-4
+	// 5.13.2.1: "the add operation for the item shall succeed and the bad
+	// status Bad_NotReadable or Bad_UserAccessDenied shall be returned in the
+	// Publish response". Table 65 agrees by omission -- Bad_NotReadable is not
+	// among the operation level result codes CreateMonitoredItems may return.
+	//
+	// The point is not pedantry. A client told its create failed has to keep
+	// re-creating the item to find out whether it ever became readable; a
+	// client holding a created item watches its status instead, which is the
+	// mechanism UA already gives it.
+	notReadable := node.AccessRightsKnown && node.AccessLevel&AccessLevelCurrentRead == 0
 	// Clause 7.2: a percent deadband "is defined as the percentage of the
 	// EURange. That is, it applies only to AnalogItems with an EURange
 	// Property". An item without one has no range to take a percentage of, so
@@ -1160,6 +1174,7 @@ func (s *SubscriptionService) prepareMonitoredItem(subscription *uaSubscription,
 		mode:               create.MonitoringMode,
 		timestamps:         timestamps,
 		samplingInterval:   sampling,
+		notReadable:        notReadable,
 	}
 	return MonitoredItemCreateResult{
 		StatusCode:      StatusGood,
@@ -1212,6 +1227,12 @@ func (s *SubscriptionService) rebuildDASubscription(ctx context.Context, subscri
 	itemIDs := make([]opcda.DAItemID, 0, len(subscription.items))
 	seen := make(map[opcda.DAItemID]struct{}, len(subscription.items))
 	for _, item := range subscription.items {
+		if item.notReadable {
+			// There is nothing for the group to read, and a source may refuse
+			// AddItems for such an item -- which would fail the whole rebuild
+			// and take every readable item in the request down with it.
+			continue
+		}
 		if _, duplicate := seen[item.itemID]; duplicate {
 			// Two monitored items may name the same DA ItemID; the DA group
 			// carries it once and both are fed from that one notification.
@@ -1499,7 +1520,11 @@ func (s *SubscriptionService) nextPublishable(sessionToken string) *uaSubscripti
 
 // collect drains whatever the DA core has for this subscription.
 func (s *SubscriptionService) collect(ctx context.Context, subscription *uaSubscription, now time.Time) {
+	s.holdUnreadable(subscription)
 	if subscription.da == nil {
+		// Every item is unreadable, or none has been created yet. There is no
+		// group to drain, but a held status still has to reach the client.
+		s.flushHeld(subscription, now)
 		return
 	}
 	select {
@@ -1580,10 +1605,32 @@ func (s *SubscriptionService) flushHeld(subscription *uaSubscription, now time.T
 	subscription.heldOrder = stillHeld
 }
 
+// holdUnreadable gives each item the source will not let anyone read its status,
+// once. OPC 10000-4 5.13.2.1 puts Bad_NotReadable in the Publish response rather
+// than in the create result, and a status that does not change is reported once
+// rather than repeated -- a monitored item reports changes, and this one has
+// nothing further to say unless the source's answer changes.
+func (s *SubscriptionService) holdUnreadable(subscription *uaSubscription) {
+	for _, item := range subscription.items {
+		if !item.notReadable || !item.lastReported.IsZero() || item.held != nil {
+			continue
+		}
+		if item.mode != MonitoringModeReporting {
+			continue
+		}
+		subscription.heldOrder = append(subscription.heldOrder, item.id)
+		item.held = &DataValue{Value: NullVariant(), Status: StatusBadNotReadable}
+	}
+}
+
 // reportInvalidation queues a bad status for every reporting item, so a client
 // learns the source is gone instead of seeing the stream stop.
 func (s *SubscriptionService) reportInvalidation(subscription *uaSubscription, now time.Time) {
+	// Whatever was held is superseded: the source is gone, so a value waiting
+	// for its sampling interval describes a world that no longer exists.
+	subscription.heldOrder = subscription.heldOrder[:0]
 	for _, item := range subscription.items {
+		item.held = nil
 		if item.mode != MonitoringModeReporting {
 			continue
 		}

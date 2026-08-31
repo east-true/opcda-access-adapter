@@ -156,6 +156,11 @@ func testSubscriptionService(t *testing.T, runtime opcda.Runtime) (*Subscription
 			CanonicalType: varType(opcda.VTI4), AccessRights: rights},
 		{Kind: opcda.BrowseEntryItem, Name: "Float", ItemID: itemID("Test/Float"),
 			CanonicalType: varType(opcda.VTR4), AccessRights: rights},
+		// A DA item the source will let nobody read. OPC 10000-4 5.13.2.1 has
+		// it monitored anyway, so it needs to exist here.
+		{Kind: opcda.BrowseEntryItem, Name: "Closed", ItemID: itemID("Test/Closed"),
+			CanonicalType: varType(opcda.VTI4),
+			AccessRights:  &opcda.DAAccessRights{Raw: 2, Read: false, Write: true}},
 		{Kind: opcda.BrowseEntryBranch, Name: "Folder"},
 	}); err != nil {
 		t.Fatal(err)
@@ -1697,5 +1702,119 @@ func TestAPacedItemTakesOnePlaceHoweverOftenItChanges(t *testing.T) {
 	}
 	if value, ok := after[0].Value.Value.Value.(int32); !ok || value != 20 {
 		t.Fatalf("reported %#v, want the newest change", after[0].Value.Value.Value)
+	}
+}
+
+// OPC 10000-4 5.13.2.1: "When a user adds a monitored item that the user is
+// denied read access to, the add operation for the item shall succeed and the
+// bad status Bad_NotReadable or Bad_UserAccessDenied shall be returned in the
+// Publish response." Table 65 agrees by omission -- Bad_NotReadable is not an
+// operation level result code for CreateMonitoredItems.
+func TestAnUnreadableItemIsCreatedAndReportsThroughPublish(t *testing.T) {
+	runtime := &subscribingRuntime{}
+	service, _ := testSubscriptionService(t, runtime)
+	id := createSubscription(t, service)
+
+	result := monitorItem(t, service, id, ItemNodeID("Test/Closed"), 1)
+	if result.StatusCode != StatusGood {
+		t.Fatalf("create = %s, want the add to succeed", result.StatusCode.Hex())
+	}
+	if result.MonitoredItemID == 0 {
+		t.Fatal("no monitored item was created")
+	}
+
+	// The status arrives through Publish, which is where the rule puts it.
+	notifications := publishOnce(t, service, channelEpoch)
+	if len(notifications) != 1 {
+		t.Fatalf("notifications = %d", len(notifications))
+	}
+	if notifications[0].ClientHandle != 1 {
+		t.Fatalf("handle = %d", notifications[0].ClientHandle)
+	}
+	if notifications[0].Value.Status != StatusBadNotReadable {
+		t.Fatalf("status = %s, want Bad_NotReadable", notifications[0].Value.Status.Hex())
+	}
+
+	// It is reported once. A monitored item reports changes, and this status
+	// has nothing further to say.
+	if again := publishNothing(t, service, channelEpoch.Add(time.Minute)); again != 0 {
+		t.Fatalf("the status was repeated %d times", again)
+	}
+}
+
+// The item stays out of the DA group: there is nothing for the group to read,
+// and a source that refuses AddItems for it would fail the whole rebuild and
+// take every readable item in the request down with it.
+func TestAnUnreadableItemDoesNotReachTheGroup(t *testing.T) {
+	runtime := &subscribingRuntime{}
+	service, _ := testSubscriptionService(t, runtime)
+	id := createSubscription(t, service)
+	monitorItem(t, service, id, ItemNodeID("Test/Closed"), 1)
+	monitorItem(t, service, id, ItemNodeID("Test/Int32"), 2)
+
+	requests := runtime.subscribeRequests()
+	last := requests[len(requests)-1]
+	if len(last.Items) != 1 || last.Items[0] != *itemID("Test/Int32") {
+		t.Fatalf("the group carries %v, want only the readable item", last.Items)
+	}
+
+	// The readable item still works, and both statuses reach the client.
+	runtime.latest().push(daNotification("Test/Int32", 1, QualityGood))
+	notifications := publishOnce(t, service, channelEpoch)
+	if len(notifications) != 2 {
+		t.Fatalf("notifications = %d, want one for each item", len(notifications))
+	}
+	byHandle := map[uint32]StatusCode{}
+	for _, notification := range notifications {
+		byHandle[notification.ClientHandle] = notification.Value.Status
+	}
+	if byHandle[1] != StatusBadNotReadable || byHandle[2] != StatusGood {
+		t.Fatalf("statuses = %s, %s", byHandle[1].Hex(), byHandle[2].Hex())
+	}
+}
+
+// A subscription whose only item is unreadable has no DA group at all, and the
+// status still reaches the client.
+func TestAnUnreadableItemAloneNeedsNoGroup(t *testing.T) {
+	runtime := &subscribingRuntime{}
+	service, _ := testSubscriptionService(t, runtime)
+	id := createSubscription(t, service)
+	monitorItem(t, service, id, ItemNodeID("Test/Closed"), 1)
+
+	if requests := runtime.subscribeRequests(); len(requests) != 0 {
+		t.Fatalf("a group was created for nothing readable: %v", requests)
+	}
+	notifications := publishOnce(t, service, channelEpoch)
+	if len(notifications) != 1 || notifications[0].Value.Status != StatusBadNotReadable {
+		t.Fatalf("notifications = %v", notifications)
+	}
+}
+
+// A value waiting for its sampling interval describes a world that no longer
+// exists once the source is gone, so invalidation supersedes it rather than
+// letting it surface afterwards as though it were current.
+func TestInvalidationDiscardsAHeldValue(t *testing.T) {
+	runtime := &subscribingRuntime{revisedRate: 100 * time.Millisecond}
+	service, _ := testSubscriptionService(t, runtime)
+	id := createSubscription(t, service)
+	monitorAt(t, service, id, ItemNodeID("Test/Int32"), 1, 5000)
+
+	// The first value goes out; a second is held behind the sampling interval.
+	runtime.latest().push(daNotification("Test/Int32", 1, QualityGood))
+	publishOnce(t, service, channelEpoch)
+	runtime.latest().push(daNotification("Test/Int32", 2, QualityGood))
+	if held := publishNothing(t, service, channelEpoch.Add(time.Second)); held != 0 {
+		t.Fatalf("the held value was reported early: %d", held)
+	}
+
+	runtime.latest().invalidate()
+	lost := publishOnce(t, service, channelEpoch.Add(2*time.Second))
+	if len(lost) != 1 || lost[0].Value.Status != StatusBadNotConnected {
+		t.Fatalf("invalidation reported %v", lost)
+	}
+
+	// Long enough after that the held value would have been due.
+	if stale := publishNothing(t, service, channelEpoch.Add(time.Minute)); stale != 0 {
+		t.Fatalf("a value held before the disconnect surfaced afterwards: %d", stale)
 	}
 }

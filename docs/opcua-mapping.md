@@ -29,6 +29,7 @@ suits their source should not have to find them scattered through the document.
 | A.3.1.4 | an array-valued property is exposed with `ValueRank` `OneOrMoreDimensions` | not exposed at all — it could be browsed and never read, and a property that cannot answer is worse than one that is absent |
 | Table A.3 | DA `LAST_KNOWN` → `Bad_OutOfService` | `Uncertain_NoCommunicationLastUsableValue`, because Table 61 says so and explains why: a Bad severity must return a Null value, which discards the last known value the quality exists to carry |
 | 5.2 | the `SemanticsChanged` bit is set when a semantic property changes | set when the adapter **observes** a change, which is when a property is read; a change nobody reads is not detected, and detecting every one means polling the source |
+| OPC 10000-4 5.13.2.1 | "if the access rights change to read rights, the Server shall start sending data for the MonitoredItem" | access rights are learned once and never revised, so an item that becomes readable stays silent until it is created again. The half of the clause that matters more — the create succeeding, with the status delivered through Publish — is met |
 | OPC 10000-4 Table 47 | a `maxAge` of max Int32 or greater "shall attempt to get a cached value" | every Read goes to the device — the adapter maintains no cache (its DA group is inactive, and the design forbids serving cached values), and a fresh value satisfies any staleness bound a client can ask for. The cost is source load, never correctness |
 | 5.4 | a DataItem is never "defined by itself" | an item addressed without being browsed has no parent, because the adapter does not know where it sits in the source's hierarchy and inventing a place would point clients at the wrong one |
 
@@ -636,6 +637,28 @@ One UA subscription is backed by one DA group, and a group has exactly one
 `pPercentDeadband`. A second monitored item asking for a different deadband
 cannot be honoured, so it is refused; applying somebody else's deadband to it
 would report changes the client did not ask to hear about, or hide ones it did.
+
+### An item nobody may read is still created
+
+OPC 10000-4 5.13.2.1: "When a user adds a monitored item that the user is denied
+read access to, the add operation for the item shall succeed and the bad status
+Bad_NotReadable or Bad_UserAccessDenied shall be returned in the Publish
+response." Table 65 agrees by omission — `Bad_NotReadable` is not among the
+operation level result codes CreateMonitoredItems may return.
+
+So a DA item whose access rights carry no read bit is created, and its status
+arrives through Publish. The status is reported once: a monitored item reports
+changes, and this one has nothing further to say. The item stays out of the DA
+group, because there is nothing for the group to read and a source that refuses
+`AddItems` for it would fail the whole rebuild, taking every readable item in the
+same request down with it.
+
+The rest of the clause is a departure. "If the access rights change to read
+rights, the Server shall start sending data for the MonitoredItem" — this adapter
+will not notice. It learns an item's access rights once, from the browse entry or
+the first read that reports them, and does not revise them afterwards, so an item
+that becomes readable stays silent until the client creates it again. Noticing
+would mean re-reading rights on a schedule the source never agreed to.
 
 ### The sampling interval a monitored item is promised
 
