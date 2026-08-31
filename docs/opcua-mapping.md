@@ -220,8 +220,10 @@ value against `opcerror.h` — for the four Windows codes, against
 ## Item properties: Table A.1
 
 Part 8 Table A.1 maps the OPC COM DA item properties onto UA attributes and
-properties. All ten rows are implemented; they do not all become property
-nodes, because the table does not ask them to.
+properties. Nine rows are implemented in full. The tenth — "Other Properties" —
+is implemented for scalar properties, with two of A.3.1.4's rules unapplied;
+what that leaves out is set out below. They do not all become property nodes,
+because the table does not ask them to.
 
 | DA property | UA target | UA type |
 |---|---|---|
@@ -273,20 +275,23 @@ them — Table A.1 maps those onto attributes, and exposing them as properties a
 well would answer the same question twice. Nor are Value, Quality and Timestamp,
 which belong to Read and Subscribe.
 
-**Two of A.3.1.4's rules are not applied, and both are the source's shape rather
-than a choice.**
+**Two of A.3.1.4's rules are not applied. Both are limits of this adapter, not
+of the source.**
 
 `AccessLevel` is readable, never writable. A.3.1.4 makes a property writable
-when it has its own ItemID in the DA server, which needs
-`IOPCItemProperties::LookupItemIDs`; the adapter does not call it, so it reports
-what it knows rather than guessing at more.
+when it has its own ItemID in the DA server, which is what
+`IOPCItemProperties::LookupItemIDs` answers. The adapter does not call it — that
+is unbuilt, not impossible — so it reports what it knows rather than guessing at
+more. A source whose properties are writable is served read-only.
 
 An **array-valued property is not exposed at all**. A.3.1.4 would have it
-carried with `ValueRank` `OneOrMoreDimensions`, but Table A.2 gives no scalar
-type for an array and the DA layer does not carry array VARIANTs — so the node
-could be browsed and never read. A property that exists and cannot answer is
-worse than one that is absent. EU Info is the property this excludes on a real
-source.
+carried with `ValueRank` `OneOrMoreDimensions`. The DA layer does not carry
+array VARIANTs at all, so such a node could be browsed and never read, and a
+property that exists and cannot answer is worse than one that is absent. That is
+the honest handling of the limitation, not a reading of the clause: **a source
+whose items carry array properties gets less than A.3.1.4 describes.** EU Info
+is the property this excludes on a real source, and closing it means array
+support in the DA layer, not a change here.
 
 **A property belongs to the type its item was given.** `EngineeringUnits` and
 `InstrumentRange` exist on an analog item; `TrueState` and `FalseState` on a
