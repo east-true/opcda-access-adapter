@@ -297,7 +297,10 @@ func TestItemNodesCarryDataTypeAndAccessLevel(t *testing.T) {
 			if node.ValueRank != ValueRankScalar {
 				t.Fatalf("value rank = %d", node.ValueRank)
 			}
-			if node.TypeDefinition.Numeric != NodeIDBaseDataVariableType {
+			// A browsed item whose properties nobody has asked for yet sits at
+			// the Annex A.3.1.3 floor. BaseDataVariableType is a type Annex A
+			// does not offer for a DA item at all.
+			if node.TypeDefinition.Numeric != NodeIDDataItemType {
 				t.Fatalf("type definition = %s", node.TypeDefinition)
 			}
 		})

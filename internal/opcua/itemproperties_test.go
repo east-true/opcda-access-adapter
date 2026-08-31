@@ -744,3 +744,77 @@ func TestTheChosenVariableTypeReachesTheNode(t *testing.T) {
 		}
 	}
 }
+
+// A claimed type and its mandatory property must never disagree. AnalogItemType
+// requires EURange, and TwoStateDiscreteType requires TrueState and FalseState;
+// a node carrying one without the other would be a promise the address space
+// itself breaks.
+//
+// The interesting case is a source that changes what it offers. Re-attaching
+// recomputes the type and replaces the property set together, under one lock,
+// so the two move as a unit -- an item can change type between browses, but it
+// is never briefly a type whose mandatory property is missing.
+func TestAClaimedTypeAlwaysCarriesItsMandatoryProperty(t *testing.T) {
+	space := testAddressSpace(t)
+	if err := space.PopulateBranch(nil, []opcda.BrowseEntry{
+		{Kind: opcda.BrowseEntryItem, Name: "Float", ItemID: itemID("Test/Float"),
+			CanonicalType: varType(opcda.VTR4)},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	analog := []opcda.AvailableProperty{
+		{ID: opcda.PropertyLowEU}, {ID: opcda.PropertyHighEU}, {ID: opcda.PropertyEUUnits},
+	}
+	discrete := []opcda.AvailableProperty{
+		{ID: opcda.PropertyCloseLabel}, {ID: opcda.PropertyOpenLabel},
+	}
+	plain := []opcda.AvailableProperty{{ID: opcda.PropertyScanRate}}
+
+	// Every order of every transition, including back to where it started.
+	for _, available := range [][]opcda.AvailableProperty{
+		analog, discrete, plain, analog, plain, discrete, analog,
+	} {
+		if err := space.AttachItemProperties("Test/Float", available,
+			opcda.EUTypeNoEnum, testNodeBudget); err != nil {
+			t.Fatalf("attach: %v", err)
+		}
+		node, ok := space.Node(ItemNodeID("Test/Float"))
+		if !ok {
+			t.Fatal("the item disappeared")
+		}
+		names := propertyNames(t, space)
+		switch node.TypeDefinition.Numeric {
+		case NodeIDAnalogItemType:
+			if !names["EURange"] {
+				t.Fatal("AnalogItemType without its mandatory EURange")
+			}
+		case NodeIDTwoStateDiscreteType:
+			if !names["TrueState"] || !names["FalseState"] {
+				t.Fatalf("TwoStateDiscreteType without its mandatory states: %v", names)
+			}
+		case NodeIDDataItemType:
+			// DataItemType has no mandatory property, and must not be left
+			// carrying one that belongs to a type it is not.
+			if len(names) != 0 {
+				t.Fatalf("DataItemType kept %v", names)
+			}
+		default:
+			t.Fatalf("item took type %d, which Annex A.3.1.3 does not choose", node.TypeDefinition.Numeric)
+		}
+	}
+}
+
+// An item addressed without being browsed is created on demand, and it sits at
+// the Annex A.3.1.3 floor like a browsed one. A source need not implement
+// Browse at all, so this is the only type such an item ever has until a client
+// browses it -- and BaseDataVariableType is not a type Annex A offers.
+func TestAnItemAddressedWithoutBrowsingSitsAtTheAnnexAFloor(t *testing.T) {
+	space := testAddressSpace(t)
+	node, kind := space.ResolveNode(ItemNodeID("Never/Browsed"), testNodeBudget)
+	if kind != NodeKindItem || node == nil {
+		t.Fatalf("kind = %d", kind)
+	}
+	if node.TypeDefinition.Numeric != NodeIDDataItemType {
+		t.Fatalf("type definition = %s, want DataItemType", node.TypeDefinition)
+	}
+}
