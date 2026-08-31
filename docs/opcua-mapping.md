@@ -271,10 +271,10 @@ Variable of `PropertyType`, following A.3.1.4:
   own ItemID.
 
 This is what a client browsing a real source actually finds: Scan Rate, EU Type,
-and whatever a vendor adds. Access Rights and Item Description are **not** among
-them — Table A.1 maps those onto attributes, and exposing them as properties as
-well would answer the same question twice. Nor are Value, Quality and Timestamp,
-which belong to Read and Subscribe.
+and whatever a vendor adds. Access Rights, Item Description and **Scan Rate**
+are not among them: those map onto attributes, and exposing them as properties
+as well would answer the same question twice. Nor are Value, Quality and
+Timestamp, which belong to Read and Subscribe.
 
 **A property the source also exposes as an item of its own is writable.**
 A.3.1.4 says so, and `IOPCItemProperties::LookupItemIDs` is what answers it. The
@@ -308,6 +308,24 @@ support in the DA layer, not a change here.
 `InstrumentRange` exist on an analog item; `TrueState` and `FalseState` on a
 two-state discrete one. An item that is neither has neither, however many DA
 properties it happens to offer.
+
+### Attributes A.3.1.3 assigns, beyond Table A.1
+
+A.3.1.3's common mappings name three things Table A.1 does not:
+
+| From the source | UA attribute |
+|---|---|
+| the item's access rights (from `AddItems`) | `AccessLevel`, and the same value for `UserAccessLevel` |
+| the DA **Scan Rate** property | `MinimumSamplingInterval` |
+| whether the value is an array | `ValueRank` |
+
+`MinimumSamplingInterval` is read when the source's Scan Rate is, at discovery.
+An item whose Scan Rate the source has not stated reports **no interval at
+all** rather than zero: OPC 10000-3 reads zero as "the server samples as fast as
+possible", which would be a claim about the source that nobody made.
+
+`ValueRank` is always `Scalar`, because the DA layer carries no arrays. That is
+the same limit recorded under the property row above.
 
 ### The SemanticsChanged bit
 

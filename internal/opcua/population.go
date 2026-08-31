@@ -283,9 +283,19 @@ func (p *Populator) discoverItemProperties(ctx context.Context, itemID opcda.DAI
 	// Annex A.3.1.3 chooses the VariableType partly from the EU Type property's
 	// value, not merely from its presence, so it is read when the source offers
 	// it. An item that does not offer it needs no read.
-	euType := opcda.EUTypeNoEnum
+	// A.3.1.3 also assigns the Scan Rate property to MinimumSamplingInterval,
+	// and it is a value rather than a presence too. Both are read in one call
+	// when the source offers them, because both are needed at the same moment.
+	wanted := make([]opcda.PropertyID, 0, 2)
 	if offersProperty(available, opcda.PropertyEUType) {
-		euType = p.readEUType(ctx, itemID)
+		wanted = append(wanted, opcda.PropertyEUType)
+	}
+	if offersProperty(available, opcda.PropertyScanRate) {
+		wanted = append(wanted, opcda.PropertyScanRate)
+	}
+	euType := opcda.EUTypeNoEnum
+	if len(wanted) > 0 {
+		euType = p.readItemFacts(ctx, itemID, wanted)
 	}
 	if err := p.space.AttachItemProperties(itemID, available, euType, p.limits.MaxNodes); err != nil {
 		// The discovery is not recorded, so the next browse tries again rather
@@ -307,26 +317,64 @@ func offersProperty(available []opcda.AvailableProperty, id opcda.PropertyID) bo
 	return false
 }
 
-// readEUType reads the EU Type property's value. A source that offers the
-// property but will not answer it is not a failure: the item simply falls to
-// the type it would have had without it.
-func (p *Populator) readEUType(ctx context.Context, itemID opcda.DAItemID) opcda.EUType {
+// readItemFacts reads the property values the address space needs as values
+// rather than as presences: the EU Type that chooses a VariableType, and the
+// Scan Rate that becomes MinimumSamplingInterval.
+//
+// A source that offers a property but will not answer it is not a failure. The
+// item falls to the type it would have had without it, and carries no sampling
+// interval rather than a made-up one.
+func (p *Populator) readItemFacts(ctx context.Context, itemID opcda.DAItemID, wanted []opcda.PropertyID) opcda.EUType {
 	readCtx, cancel := context.WithTimeout(ctx, p.limits.RequestTimeout)
 	defer cancel()
 	values, err := p.runtime.ItemProperties(readCtx, opcda.ItemPropertiesRequest{
-		ItemID: string(itemID), Properties: []opcda.PropertyID{opcda.PropertyEUType},
+		ItemID: string(itemID), Properties: wanted,
 	})
-	if err != nil || len(values) != 1 || !values[0].OK || !values[0].ValuePresent {
+	if err != nil || len(values) != len(wanted) {
 		return opcda.EUTypeNoEnum
 	}
-	switch typed := values[0].Value.(type) {
-	case int32:
-		return opcda.EUType(typed)
+	euType := opcda.EUTypeNoEnum
+	for index, value := range values {
+		if !value.OK || !value.ValuePresent {
+			continue
+		}
+		switch wanted[index] {
+		case opcda.PropertyEUType:
+			switch typed := value.Value.(type) {
+			case int32:
+				euType = opcda.EUType(typed)
+			case int16:
+				euType = opcda.EUType(typed)
+			case uint32:
+				euType = opcda.EUType(typed)
+			}
+		case opcda.PropertyScanRate:
+			if rate, ok := scanRateMilliseconds(value.Value); ok {
+				p.space.NoteScanRate(itemID, rate)
+			}
+		}
+	}
+	return euType
+}
+
+// scanRateMilliseconds accepts the numeric types a source may state a scan rate
+// with. OPC DA declares it FLOAT; a source using a wider or narrower numeric
+// type is stating the same thing.
+func scanRateMilliseconds(value any) (float64, bool) {
+	switch typed := value.(type) {
+	case float32:
+		return float64(typed), true
+	case float64:
+		return typed, true
 	case int16:
-		return opcda.EUType(typed)
+		return float64(typed), true
+	case int32:
+		return float64(typed), true
+	case uint16:
+		return float64(typed), true
 	case uint32:
-		return opcda.EUType(typed)
+		return float64(typed), true
 	default:
-		return opcda.EUTypeNoEnum
+		return 0, false
 	}
 }

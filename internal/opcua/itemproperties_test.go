@@ -873,8 +873,8 @@ func TestAnItemAddressedWithoutBrowsingSitsAtTheAnnexAFloor(t *testing.T) {
 func TestUnnamedDAPropertiesBecomePropertiesOfTheItem(t *testing.T) {
 	runtime := &stubRuntime{
 		propertyValues: map[opcda.PropertyID]opcda.ItemPropertyValue{
-			opcda.PropertyScanRate: {OK: true, VarType: opcda.VTR4, VarTypePresent: true,
-				Value: float32(250), ValuePresent: true, HRESULTPresent: true},
+			opcda.PropertyEUType: {OK: true, VarType: opcda.VTI4, VarTypePresent: true,
+				Value: int32(1), ValuePresent: true, HRESULTPresent: true},
 		},
 	}
 	service, space := testDataService(t, runtime)
@@ -894,12 +894,13 @@ func TestUnnamedDAPropertiesBecomePropertiesOfTheItem(t *testing.T) {
 	}
 
 	names := propertyNames(t, space)
-	for _, want := range []string{"Scan Rate", "EU Type"} {
-		if !names[want] {
-			t.Errorf("%s was not exposed; got %v", want, names)
-		}
+	if !names["EU Type"] {
+		t.Errorf("EU Type was not exposed; got %v", names)
 	}
-	for _, unwanted := range []string{"EU Info", "Access Rights", "Item Description"} {
+	// Access Rights, Item Description and Scan Rate map onto attributes --
+	// Table A.1 names the first two and A.3.1.3's common mappings name Scan
+	// Rate -- so none of them is exposed a second time as a property.
+	for _, unwanted := range []string{"EU Info", "Access Rights", "Item Description", "Scan Rate"} {
 		if names[unwanted] {
 			t.Errorf("%s was exposed as a property", unwanted)
 		}
@@ -907,15 +908,15 @@ func TestUnnamedDAPropertiesBecomePropertiesOfTheItem(t *testing.T) {
 
 	// A.3.1.4: the node is a PropertyType, typed from the DA VARTYPE, scalar,
 	// and readable.
-	node, ok := space.Node(OtherPropertyNodeID("Test/Float", opcda.PropertyScanRate))
+	node, ok := space.Node(OtherPropertyNodeID("Test/Float", opcda.PropertyEUType))
 	if !ok {
-		t.Fatal("the Scan Rate node is missing")
+		t.Fatal("the EU Type node is missing")
 	}
 	if node.TypeDefinition.Numeric != NodeIDPropertyType {
 		t.Fatalf("type definition = %s, want PropertyType", node.TypeDefinition)
 	}
-	if !node.DataTypeKnown || node.DataType.Numeric != NodeIDFloat {
-		t.Fatalf("data type = %s, want Float from VT_R4", node.DataType)
+	if !node.DataTypeKnown || node.DataType.Numeric != NodeIDInt32 {
+		t.Fatalf("data type = %s, want Int32 from VT_I4", node.DataType)
 	}
 	if node.ValueRank != ValueRankScalar || node.AccessLevel != AccessLevelCurrentRead {
 		t.Fatalf("rank = %d, access = %d", node.ValueRank, node.AccessLevel)
@@ -930,7 +931,7 @@ func TestUnnamedDAPropertiesBecomePropertiesOfTheItem(t *testing.T) {
 	if response.Results[0].Status != StatusGood {
 		t.Fatalf("status = %s", response.Results[0].Status.Hex())
 	}
-	if response.Results[0].Value.Value != float32(250) {
+	if response.Results[0].Value.Value != int32(1) {
 		t.Fatalf("value = %#v", response.Results[0].Value.Value)
 	}
 }
@@ -943,19 +944,19 @@ func TestAPropertyWithItsOwnItemIDIsWritable(t *testing.T) {
 	runtime := &stubRuntime{
 		propertyValues: map[opcda.PropertyID]opcda.ItemPropertyValue{},
 		writeResults: []opcda.WriteResult{
-			{ItemID: "Test/Float.ScanRate", HRESULT: opcda.SOK, HRESULTPresent: true},
+			{ItemID: "Test/Float.EUType", HRESULT: opcda.SOK, HRESULTPresent: true},
 		},
 	}
 	service, space := testDataService(t, runtime)
 	available := []opcda.AvailableProperty{{
-		ID: opcda.PropertyScanRate, Description: "Scan Rate", VarType: opcda.VTR4,
-		ItemID: "Test/Float.ScanRate", ItemIDPresent: true,
+		ID: opcda.PropertyEUType, Description: "EU Type", VarType: opcda.VTI4,
+		ItemID: "Test/Float.EUType", ItemIDPresent: true,
 	}}
 	if err := space.AttachItemProperties("Test/Float", available, opcda.EUTypeNoEnum, testNodeBudget); err != nil {
 		t.Fatalf("AttachItemProperties: %v", err)
 	}
 
-	id := OtherPropertyNodeID("Test/Float", opcda.PropertyScanRate)
+	id := OtherPropertyNodeID("Test/Float", opcda.PropertyEUType)
 	node, ok := space.Node(id)
 	if !ok {
 		t.Fatal("the property node is missing")
@@ -968,7 +969,7 @@ func TestAPropertyWithItsOwnItemIDIsWritable(t *testing.T) {
 		Header: RequestHeader{RequestHandle: 1, AdditionalHeader: NullExtensionObject()},
 		NodesToWrite: []WriteValue{{
 			NodeID: id, AttributeID: AttributeValue,
-			Value: DataValue{Value: Variant{Type: BuiltInFloat, Value: float32(500)}, Status: StatusGood},
+			Value: DataValue{Value: Variant{Type: BuiltInInt32, Value: int32(2)}, Status: StatusGood},
 		}},
 	}, time.Now())
 	if err != nil {
@@ -982,7 +983,7 @@ func TestAPropertyWithItsOwnItemIDIsWritable(t *testing.T) {
 	if len(runtime.writeItems) != 1 {
 		t.Fatalf("the source received %d writes", len(runtime.writeItems))
 	}
-	if runtime.writeItems[0].ItemID != "Test/Float.ScanRate" {
+	if runtime.writeItems[0].ItemID != "Test/Float.EUType" {
 		t.Fatalf("the write went to %q", runtime.writeItems[0].ItemID)
 	}
 }
@@ -1044,5 +1045,37 @@ func TestASemanticChangeReachesOneNotificationAndNotTheRead(t *testing.T) {
 	}
 	if got := space.SemanticGeneration("Test/Float"); got != 1 {
 		t.Fatalf("generation = %d after a non-semantic property changed", got)
+	}
+}
+
+// A.3.1.3's common mappings: "The ScanRate property value in the DA server is
+// assigned to the MinimumSamplingInterval Attribute." It is an attribute, not a
+// property, so it is not also exposed as one.
+func TestScanRateBecomesMinimumSamplingInterval(t *testing.T) {
+	runtime := &stubRuntime{propertyValues: map[opcda.PropertyID]opcda.ItemPropertyValue{}}
+	service, space := testDataService(t, runtime)
+	target := ReadValueID{
+		NodeID: ItemNodeID("Test/Float"), AttributeID: AttributeMinimumSamplingInterval}
+
+	// Before the source has stated it, the attribute is absent. Zero would say
+	// the server samples as fast as possible, which nobody claimed.
+	response, err := service.Read(context.Background(), readRequestFor(target), time.Now())
+	if err != nil {
+		t.Fatalf("Read: %v", err)
+	}
+	if response.Results[0].Status != StatusBadAttributeIDInvalid {
+		t.Fatalf("an unstated interval answered %s", response.Results[0].Status.Hex())
+	}
+
+	space.NoteScanRate("Test/Float", 250)
+	response, err = service.Read(context.Background(), readRequestFor(target), time.Now())
+	if err != nil {
+		t.Fatalf("Read: %v", err)
+	}
+	if response.Results[0].Status != StatusGood {
+		t.Fatalf("status = %s", response.Results[0].Status.Hex())
+	}
+	if response.Results[0].Value.Value != float64(250) {
+		t.Fatalf("interval = %#v", response.Results[0].Value.Value)
 	}
 }

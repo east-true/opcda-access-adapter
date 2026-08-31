@@ -592,10 +592,13 @@ func OtherPropertyForNode(id NodeID) (opcda.DAItemID, opcda.PropertyID, bool) {
 // answer is worse than one that is absent.
 func otherPropertiesFor(available []opcda.AvailableProperty, claimed []itemPropertyBinding) []opcda.AvailableProperty {
 	used := map[opcda.PropertyID]struct{}{
-		// Table A.1 maps these two onto attributes rather than properties, so
-		// they are not exposed a second time as properties of their own.
+		// These map onto attributes rather than properties, so they are not
+		// exposed a second time as properties of their own. Table A.1 names
+		// the first two; A.3.1.3's common mappings name Scan Rate, which goes
+		// to MinimumSamplingInterval.
 		opcda.PropertyAccessRights: {},
 		opcda.PropertyDescription:  {},
+		opcda.PropertyScanRate:     {},
 		// The item's value, quality and timestamp belong to Read and Subscribe.
 		opcda.PropertyValue:     {},
 		opcda.PropertyQuality:   {},
@@ -795,4 +798,25 @@ func (s *AddressSpace) SemanticGeneration(itemID opcda.DAItemID) uint64 {
 		return 0
 	}
 	return item.semanticGeneration
+}
+
+// NoteScanRate records the source's Scan Rate for an item, which A.3.1.3
+// assigns to the MinimumSamplingInterval attribute.
+//
+// It is learned when the property is read, which is the only time the adapter
+// sees it. Until then the attribute is absent rather than zero, because
+// OPC 10000-3 reads zero as "the server samples as fast as possible" -- a claim
+// about the source that nobody made.
+func (s *AddressSpace) NoteScanRate(itemID opcda.DAItemID, milliseconds float64) {
+	if milliseconds < 0 {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	item, ok := s.nodes[nodeKey(ItemNodeID(itemID))]
+	if !ok {
+		return
+	}
+	item.MinimumSamplingInterval = milliseconds
+	item.MinimumSamplingIntervalKnown = true
 }
