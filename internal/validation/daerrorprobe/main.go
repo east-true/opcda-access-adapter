@@ -244,12 +244,31 @@ func probe(ctx context.Context, client opcdav1.OPCDAAccessClient) ([]outcome, er
 			reason: "unreachable-ADR-0004-refuses-a-non-canonical-VARTYPE-before-Write"})
 	}
 
+	// OPC_E_INVALID_PID: a property identifier the item does not have. This
+	// row was unreachable until the adapter implemented item properties, and
+	// the reason recorded here said so; leaving that in place would have kept
+	// claiming a limitation that no longer exists.
+	invalidPID := outcome{name: "OPC_E_INVALID_PID", direction: read,
+		reason: "this-source-does-not-distinguish-an-unknown-property-identifier"}
+	propertyHR, err := propertyHRESULT(ctx, client, itemFloat, 4242)
+	if err != nil {
+		return nil, err
+	}
+	if propertyHR == opcua.OPCEInvalidPID {
+		row, err := expect(read, "OPC_E_INVALID_PID", propertyHR,
+			opcua.OPCEInvalidPID, opcua.StatusBadAttributeIDInvalid)
+		if err != nil {
+			return nil, err
+		}
+		invalidPID = row
+	}
+	outcomes = append(outcomes, invalidPID)
+
 	// The rest cannot be produced through any client request.
 	outcomes = append(outcomes,
 		outcome{name: "OPC_E_INVALIDHANDLE", direction: read,
 			reason: "unreachable-item-handles-are-adapter-owned"},
-		outcome{name: "OPC_E_INVALID_PID", direction: read,
-			reason: "unreachable-adapter-does-not-implement-Table-A.1-item-properties"},
+
 		outcome{name: "OPC_E_NOTSUPPORTED", direction: write,
 			reason: "unreachable-2.05a-Write-carries-a-value-only-never-quality-or-timestamp"},
 		outcome{name: "E_OUTOFMEMORY", direction: read,
@@ -333,4 +352,23 @@ func readTyped(ctx context.Context, client opcdav1.OPCDAAccessClient, itemID str
 func fail(operation string, err error) {
 	fmt.Fprintf(os.Stderr, "%s: %v\n", operation, err)
 	os.Exit(1)
+}
+
+// propertyHRESULT asks for one property of one item and returns the HRESULT the
+// source answered with. A property identifier the item does not have is the
+// only way a client can provoke OPC_E_INVALID_PID.
+func propertyHRESULT(ctx context.Context, client opcdav1.OPCDAAccessClient,
+	itemID string, propertyID uint32) (opcda.HRESULT, error) {
+	response, err := client.ItemProperties(ctx, &opcdav1.DAItemPropertiesRequest{
+		ItemId: itemID, PropertyIds: []uint32{propertyID},
+	})
+	if err != nil {
+		// A source without IOPCItemProperties cannot answer at all, which is a
+		// capability rather than a failure of this probe.
+		return 0, nil
+	}
+	if len(response.Results) != 1 || response.Results[0].Hresult == nil {
+		return 0, fmt.Errorf("ItemProperties returned no HRESULT for one property")
+	}
+	return opcda.HRESULT(response.Results[0].Hresult.Value), nil
 }

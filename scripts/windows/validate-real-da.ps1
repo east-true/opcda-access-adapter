@@ -913,6 +913,14 @@ function Test-GRPCWriteEnabledForeground {
     }
 }
 
+# The script runs under Set-StrictMode, so a JSON field the adapter omits
+# cannot be read directly. This answers whether it is there at all.
+function Test-JSONProperty {
+    param($Object, [string]$Name)
+
+    return $null -ne $Object.PSObject.Properties[$Name] -and $null -ne $Object.PSObject.Properties[$Name].Value
+}
+
 function Get-AvailableItemProperties {
     param([string]$ItemID)
 
@@ -1126,7 +1134,7 @@ try {
         Assert-True ([int]$property.propertyId -ne 0) 'source reported an item property with identifier 0'
         # QueryAvailableProperties states a VARTYPE for every property, and
         # VT_EMPTY is zero, so the field must be present rather than inferred.
-        Assert-True ($null -ne $property.dataType) 'an available property carried no dataType'
+        Assert-True (Test-JSONProperty $property 'dataType') 'an available property carried no dataType'
     }
     if ($readable.Count -gt 0) {
         $ids = @($readable | ForEach-Object { [int]$_.propertyId })
@@ -1135,14 +1143,14 @@ try {
         for ($index = 0; $index -lt $ids.Count; $index++) {
             $result = $properties.results[$index]
             Assert-True ([int]$result.propertyId -eq $ids[$index]) 'ItemProperties returned results out of request order'
-            Assert-True ($null -ne $result.hresult) 'an item property result carried no HRESULT'
+            Assert-True (Test-JSONProperty $result 'hresult') 'an item property result carried no HRESULT'
             # A source can answer a property and give nothing. Presence is its
             # own field, so absence is never reported as a failure.
-            Assert-True (([bool]$result.valuePresent -and $null -ne $result.value) -or
-                (-not [bool]$result.valuePresent -and $null -eq $result.value)) `
+            $carriesValue = Test-JSONProperty $result 'value'
+            Assert-True ([bool]$result.valuePresent -eq $carriesValue) `
                 'an item property contradicted its own value presence'
             if (-not [bool]$result.ok) {
-                Assert-True ($null -eq $result.value) 'a failed item property carried a value'
+                Assert-True (-not $carriesValue) 'a failed item property carried a value'
             }
         }
         Write-Host "HTTP_ITEM_PROPERTIES_PASS offered=$($ids -join ',') valuesLogged=false"

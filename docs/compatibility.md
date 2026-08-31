@@ -164,7 +164,7 @@ are consequences of decisions made on purpose, not untested paths:
 |---|---|
 | `OPC_E_BADTYPE`, `DISP_E_TYPEMISMATCH`, `DISP_E_OVERFLOW` | ADR-0004 requires the requested VARTYPE to equal the canonical one and answers `TYPE_MISMATCH` itself, so the source is never asked to convert anything. The probe **demonstrates** this: it attempts the mismatched Write and requires the adapter to refuse it with no source HRESULT attached. |
 | `OPC_E_INVALIDHANDLE` | item handles are the adapter's; a client never supplies one |
-| `OPC_E_INVALID_PID` | the adapter never reads item properties — Table A.1 is not implemented |
+
 | `OPC_E_NOTSUPPORTED` | a 2.05a Write carries a value only, never a quality or timestamp |
 | `E_OUTOFMEMORY` | requires real memory exhaustion |
 | `E_ACCESSDENIED` | activation-level on this source, not per item |
