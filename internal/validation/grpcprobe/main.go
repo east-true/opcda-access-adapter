@@ -48,12 +48,16 @@ func main() {
 	// Whether this source implements IOPCItemProperties is reported, not
 	// asserted. It is a property of the server, and OPC 10000-8 Table A.1 can
 	// only be validated against a source that has one.
-	fmt.Printf("GRPC_REAL_DA_PASS frontend=grpc source=exact-clsid browse=root+nested read=partial writeEnabled=%t subscribeStream=%t itemProperties=%s valuesLogged=false\n",
-		*writeEnabled, *writeEnabled, properties)
+	fmt.Printf("GRPC_REAL_DA_PASS frontend=grpc source=exact-clsid browse=root+nested read=partial writeEnabled=%t subscribeStream=%t itemProperties=%s namedBranches=%d valuesLogged=false\n",
+		*writeEnabled, *writeEnabled, properties, branchesNamed)
 }
 
 // validateScenario returns the source's item-property capability alongside its
 // verdict, so the run records what the server offers rather than assuming it.
+// branchesNamed records how many root branches the source gave an ItemID. It is
+// reported rather than required: naming a branch is the source's decision.
+var branchesNamed int
+
 func validateScenario(ctx context.Context, client opcdav1.OPCDAAccessClient, expectedCLSID string, writeEnabled bool) (string, error) {
 	statusResponse, err := waitConnected(ctx, client)
 	if err != nil {
@@ -80,12 +84,26 @@ func validateScenario(ctx context.Context, client opcdav1.OPCDAAccessClient, exp
 	if err != nil {
 		return "", fmt.Errorf("root Browse: %w", err)
 	}
-	testBranches := 0
+	// A branch is a branch because of its Kind. It may also carry the ItemID
+	// the source named it -- A.3.1.2 has a wrapper obtain one through
+	// GetItemID -- and this used to require the opposite, which is the belief
+	// that reading the clause corrected.
+	testBranches, namedBranches := 0, 0
 	for _, entry := range root.Entries {
-		if entry.Kind == opcdav1.DABrowseEntryKind_DA_BROWSE_ENTRY_KIND_BRANCH && entry.Name == "Test" && !entry.ItemIdPresent {
+		if entry.Kind != opcdav1.DABrowseEntryKind_DA_BROWSE_ENTRY_KIND_BRANCH {
+			continue
+		}
+		if entry.ItemIdPresent {
+			if entry.ItemId == "" {
+				return "", fmt.Errorf("a branch reported an ItemID and left it empty")
+			}
+			namedBranches++
+		}
+		if entry.Name == "Test" {
 			testBranches++
 		}
 	}
+	branchesNamed = namedBranches
 	if testBranches != 1 {
 		return "", fmt.Errorf("root Browse did not return the Test branch exactly once")
 	}
