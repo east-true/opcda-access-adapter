@@ -2,6 +2,7 @@ package opcua
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/east-true/opcda-access-adapter/internal/opcda"
@@ -368,9 +369,15 @@ func (s *AddressSpace) AttachItemProperties(itemID opcda.DAItemID, available []o
 	if !ok || item.Class != NodeClassVariable || item.ItemID != itemID {
 		return fmt.Errorf("no DA item node for %q", itemID)
 	}
+	others := otherPropertiesFor(available, bindings)
 	needed := 0
 	for _, binding := range bindings {
 		if _, exists := s.nodes[nodeKey(ItemPropertyNodeID(itemID, binding.BrowseName))]; !exists {
+			needed++
+		}
+	}
+	for _, property := range others {
+		if _, exists := s.nodes[nodeKey(OtherPropertyNodeID(itemID, property.ID))]; !exists {
 			needed++
 		}
 	}
@@ -412,6 +419,19 @@ func (s *AddressSpace) AttachItemProperties(itemID opcda.DAItemID, available []o
 			addInverse(property, NumericNodeID(0, NodeIDHasProperty), item)
 		}
 	}
+	// Table A.1's last row: everything else the source offers, named by its own
+	// description and typed by its own VARTYPE.
+	for _, offered := range others {
+		id := OtherPropertyNodeID(itemID, offered.ID)
+		if _, exists := s.nodes[nodeKey(id)]; !exists {
+			s.nodes[nodeKey(id)] = otherPropertyNode(itemID, offered)
+		}
+		property := s.nodes[nodeKey(id)]
+		addForward(item, NumericNodeID(0, NodeIDHasProperty), property)
+		if len(property.References) == 0 {
+			addInverse(property, NumericNodeID(0, NodeIDHasProperty), item)
+		}
+	}
 	return nil
 }
 
@@ -434,6 +454,9 @@ func keepNonPropertyReferences(references []Reference) []Reference {
 func (n *Node) IsItemPropertyNode() bool {
 	if n == nil {
 		return false
+	}
+	if _, _, ok := OtherPropertyForNode(n.ID); ok {
+		return true
 	}
 	_, _, ok := ItemPropertyForNode(n.ID)
 	return ok
@@ -481,6 +504,9 @@ func (s *AddressSpace) ClassifyNode(id NodeID) (*Node, NodeKind) {
 			return node, NodeKindOther
 		}
 	}
+	if _, _, ok := OtherPropertyForNode(id); ok {
+		return nil, NodeKindItemProperty
+	}
 	if _, _, ok := ItemPropertyForNode(id); ok {
 		// The identifier names a property, but the source has not said the
 		// item has it. Reading it will ask the source, which is the authority.
@@ -504,4 +530,150 @@ func (s *AddressSpace) ResolveNode(id NodeID, maxNodes int) (*Node, NodeKind) {
 		return node, NodeKindItem
 	}
 	return nil, NodeKindUnknown
+}
+
+// Table A.1's last row: "Other Properties (include Vendor specific Properties)"
+// map onto a Variable of PropertyType, typed from the DA property's own
+// DataType. A.3.1.4 gives the details.
+//
+// These are the properties a source offers that the nine named rows do not
+// claim -- Scan Rate, EU Type, EU Info and anything a vendor adds. The nine
+// named rows are the ones a Part 8 client looks for by BrowseName; these are
+// the ones it finds by browsing.
+
+// otherPropertyNodePrefix marks a node identifier as naming a DA property that
+// Table A.1 does not name. A.3.1.4 says the PropertyID is part of the NodeId,
+// and the identifier is used rather than the description because a description
+// is the server's prose and may change without the property changing.
+const otherPropertyNodePrefix = "daproperty:"
+
+// OtherPropertyNodeID is the node identifier for one unnamed DA property.
+func OtherPropertyNodeID(itemID opcda.DAItemID, id opcda.PropertyID) NodeID {
+	return StringNodeID(AdapterNamespaceIndex,
+		otherPropertyNodePrefix+strconv.FormatUint(uint64(id), 10)+propertyNodeSeparator+string(itemID))
+}
+
+// OtherPropertyForNode recovers the item and DA property a node identifier
+// names.
+func OtherPropertyForNode(id NodeID) (opcda.DAItemID, opcda.PropertyID, bool) {
+	if id.Namespace != AdapterNamespaceIndex || id.Type != NodeIDTypeString {
+		return "", 0, false
+	}
+	rest, found := strings.CutPrefix(id.StringID, otherPropertyNodePrefix)
+	if !found {
+		return "", 0, false
+	}
+	identifier, itemID, found := strings.Cut(rest, propertyNodeSeparator)
+	if !found || itemID == "" {
+		return "", 0, false
+	}
+	parsed, err := strconv.ParseUint(identifier, 10, 32)
+	if err != nil {
+		return "", 0, false
+	}
+	return opcda.DAItemID(itemID), opcda.PropertyID(parsed), true
+}
+
+// otherPropertiesFor reports the properties a source offers that the item's
+// VariableType does not already carry, and that the adapter can represent.
+//
+// A property whose DA VARTYPE has no Table A.2 row, or whose value is an array,
+// is left out. A.3.1.4 would have it exposed with ValueRank
+// OneOrMoreDimensions, but the DA layer does not carry array VARIANTs, so such
+// a node could be browsed and never read -- a property that exists and cannot
+// answer is worse than one that is absent.
+func otherPropertiesFor(available []opcda.AvailableProperty, claimed []itemPropertyBinding) []opcda.AvailableProperty {
+	used := map[opcda.PropertyID]struct{}{
+		// Table A.1 maps these two onto attributes rather than properties, so
+		// they are not exposed a second time as properties of their own.
+		opcda.PropertyAccessRights: {},
+		opcda.PropertyDescription:  {},
+		// The item's value, quality and timestamp belong to Read and Subscribe.
+		opcda.PropertyValue:     {},
+		opcda.PropertyQuality:   {},
+		opcda.PropertyTimestamp: {},
+	}
+	for _, binding := range claimed {
+		for _, source := range binding.Sources {
+			used[source] = struct{}{}
+		}
+	}
+	others := make([]opcda.AvailableProperty, 0, len(available))
+	for _, property := range available {
+		if _, taken := used[property.ID]; taken {
+			continue
+		}
+		// DataTypeFor refuses an array or byref VARTYPE, which is the filter
+		// that matters twice over: Table A.2 gives no scalar type for one, and
+		// the DA layer does not carry one either. A.3.1.4 would expose an array
+		// property with ValueRank OneOrMoreDimensions; a node that could be
+		// browsed and never read is worse than one that is absent.
+		if _, ok := DataTypeFor(property.VarType); !ok {
+			continue
+		}
+		others = append(others, property)
+	}
+	return others
+}
+
+// otherPropertyNode builds the node for one unnamed DA property, following
+// A.3.1.4: the description names it, and its DA DataType is its DataType.
+func otherPropertyNode(itemID opcda.DAItemID, property opcda.AvailableProperty) *Node {
+	// A source that offers no description still needs a BrowseName, and the
+	// property identifier is the only other thing that names it.
+	name := property.Description
+	if name == "" {
+		name = "Property" + strconv.FormatUint(uint64(property.ID), 10)
+	}
+	node := &Node{
+		ID:             OtherPropertyNodeID(itemID, property.ID),
+		Class:          NodeClassVariable,
+		BrowseName:     QualifiedName{Namespace: AdapterNamespaceIndex, Name: name},
+		DisplayName:    LocalizedText{Text: name},
+		TypeDefinition: NumericNodeID(0, NodeIDPropertyType),
+		DataType:       NumericNodeID(0, NodeIDBaseDataType),
+		// Only scalar properties are exposed, so the rank is never in doubt.
+		ValueRank: ValueRankScalar,
+		ItemID:    itemID,
+		// A.3.1.4 makes a property writable when it has its own ItemID in the
+		// DA server. Finding that out needs LookupItemIDs, which the adapter
+		// does not call, so a property is reported readable -- which is what it
+		// is, rather than a guess at what more it might be.
+		AccessLevel:       AccessLevelCurrentRead,
+		AccessRightsKnown: true,
+	}
+	if dataType, ok := DataTypeFor(property.VarType); ok {
+		if id, resolved := DataTypeNodeID(dataType); resolved {
+			node.DataType = id
+			node.DataTypeKnown = true
+		}
+	}
+	return node
+}
+
+// rawPropertyBinding reads one DA property and reports its value as it is.
+// Table A.1's last row maps a property onto a Variable typed from the DA
+// property's own DataType, so there is nothing to convert: the mapping is
+// Table A.2, which the value already went through.
+func rawPropertyBinding(id opcda.PropertyID) itemPropertyBinding {
+	return itemPropertyBinding{
+		BrowseName: "",
+		DataType:   NodeIDBaseDataType,
+		Sources:    []opcda.PropertyID{id},
+		build:      buildRawProperty,
+	}
+}
+
+func buildRawProperty(_ *AddressSpace, values []opcda.ItemPropertyValue) (Variant, StatusCode) {
+	if len(values) != 1 {
+		return NullVariant(), StatusBadInternalError
+	}
+	if status := propertyStatus(values[0]); status != StatusGood {
+		return NullVariant(), status
+	}
+	variant, ok := variantForDAValue(opcda.DAValue{Value: values[0].Value})
+	if !ok {
+		return NullVariant(), StatusBadTypeMismatch
+	}
+	return variant, StatusGood
 }
