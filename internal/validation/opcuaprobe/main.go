@@ -1052,6 +1052,9 @@ func (c *client) validateItemProperties(token opcua.ChannelSecurityToken, sessio
 	found := map[string]int{}
 	handle := uint32(600)
 	described := 0
+	// Table A.1's last row: properties the table does not name, which is what
+	// this fixture offers and the nine named rows are not.
+	unnamed := 0
 
 	for _, item := range items {
 		handle++
@@ -1065,6 +1068,25 @@ func (c *client) validateItemProperties(token opcua.ChannelSecurityToken, sessio
 			}
 			want, isTableA1 := tableA1Properties[reference.BrowseName.Name]
 			if !isTableA1 {
+				if reference.ReferenceTypeID.Numeric != hasPropertyID {
+					continue
+				}
+				// A.3.1.4: an unnamed DA property is a PropertyType variable
+				// that reads. Its value is the source's own, so what is
+				// required is that it answers at all and does not contradict
+				// itself, not what it says.
+				handle++
+				status, variant, err := c.readAttributeValue(token, session, reference.NodeID.NodeID, opcua.AttributeValue, handle)
+				if err != nil {
+					return "", err
+				}
+				if status.IsBad() && !variant.IsNull() {
+					return "", fmt.Errorf("property %q carried a value behind a bad status", reference.BrowseName.Name)
+				}
+				if !status.IsBad() && variant.IsNull() {
+					return "", fmt.Errorf("property %q succeeded with no value", reference.BrowseName.Name)
+				}
+				unnamed++
 				continue
 			}
 			handle++
@@ -1133,7 +1155,7 @@ func (c *client) validateItemProperties(token opcua.ChannelSecurityToken, sessio
 	if len(names) > 0 {
 		summary = strings.Join(names, "+")
 	}
-	return fmt.Sprintf("%s described=%d", summary, described), nil
+	return fmt.Sprintf("%s unnamed=%d described=%d", summary, unnamed, described), nil
 }
 
 // readAttributeValue reads one attribute of one node and returns its status and
