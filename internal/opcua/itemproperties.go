@@ -215,6 +215,13 @@ func buildLocalizedTextProperty(space *AddressSpace, values []opcda.ItemProperty
 // UNECE code are not derived from it: guessing a code from a unit's name would
 // be inventing an identity the source never gave, and a client that reads
 // UnitId would then act on it.
+//
+// Clause 5.6.4.3 gives that absence a value: unitId is an "identifier for
+// programmatic lookup. -1 is used if a unitId is not available." Zero is a
+// number a code set may legitimately use, so writing it would say "unit zero"
+// where the truth is "no unit identifier". The description is left empty for
+// the same reason -- it holds the unit's full name, and DA gives an
+// abbreviation, which is what displayName is for.
 func buildEngineeringUnits(space *AddressSpace, values []opcda.ItemPropertyValue) (Variant, StatusCode) {
 	text, status := buildStringProperty(space, values)
 	if status != StatusGood {
@@ -225,7 +232,7 @@ func buildEngineeringUnits(space *AddressSpace, values []opcda.ItemPropertyValue
 	}
 	variant, ok := space.extensionObject(NodeIDEUInformationEncodingDefaultBinary, func(e *Encoder) {
 		e.WriteString("")
-		e.WriteInt32(0)
+		e.WriteInt32(unitIDNotAvailable)
 		e.WriteLocalizedText(LocalizedText{Text: text.Value.(string)})
 		e.WriteLocalizedText(LocalizedText{})
 	})
@@ -332,6 +339,10 @@ func asFloat64(value any) (float64, bool) {
 		return 0, false
 	}
 }
+
+// unitIDNotAvailable is what clause 5.6.4.3 says an EUInformation carries when
+// there is no unit identifier to give.
+const unitIDNotAvailable int32 = -1
 
 // propertyNodePrefix marks a node identifier as naming a property of a DA item.
 const propertyNodePrefix = "property:"
