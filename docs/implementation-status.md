@@ -219,14 +219,16 @@ question without rotting.
 
   Table A.1's "Other Properties" row is implemented: a source's Scan Rate, EU
   Type and vendor-specific properties appear as `PropertyType` variables named
-  by their DA description and typed from their own VARTYPE. Two of A.3.1.4's
-  rules are not applied, and both are limits of this adapter rather than of the
-  source: a property is reported readable because deciding otherwise needs
-  `LookupItemIDs`, which the adapter does not call, and an array-valued property
-  is not exposed at all because the DA layer carries no array VARIANTs. **The
-  row is implemented for scalar properties**; a source with array or writable
-  properties gets less than A.3.1.4 describes.
-  `docs/opcua-mapping.md` carries both.
+  by their DA description and typed from their own VARTYPE. A property the source
+  also exposes as an item of its own is writable, which A.3.1.4 requires and
+  `LookupItemIDs` answers; the write reaches that item rather than the one the
+  property describes.
+
+  One of A.3.1.4's rules remains unapplied, and it is a limit of this adapter
+  rather than of the source: an array-valued property is not exposed at all,
+  because the DA layer carries no array VARIANTs. **The row is implemented for
+  scalar properties**; a source whose items carry array properties gets less
+  than A.3.1.4 describes. `docs/opcua-mapping.md` carries both.
 
   This is also the part of Table A.1 the OPC Foundation fixture exercises: it
   offers exactly these properties and none of the nine named ones.
