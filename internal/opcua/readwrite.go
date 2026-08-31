@@ -677,6 +677,14 @@ func (s *DataAccessService) readAttribute(ctx context.Context, node *Node, attri
 			return failedDataValue(StatusBadTypeMismatch)
 		}
 		variant = Variant{Type: BuiltInLocalizedText, Value: LocalizedText{Text: text}}
+	case AttributeMinimumSamplingInterval:
+		// A.3.1.3 assigns the DA Scan Rate to this attribute. An item whose
+		// Scan Rate the source has not stated has no interval to report, and
+		// zero would claim the server samples as fast as possible.
+		if node.Class != NodeClassVariable || !node.MinimumSamplingIntervalKnown {
+			return failedDataValue(StatusBadAttributeIDInvalid)
+		}
+		variant = Variant{Type: BuiltInDouble, Value: node.MinimumSamplingInterval}
 	case AttributeHistorizing:
 		if node.Class != NodeClassVariable {
 			return failedDataValue(StatusBadAttributeIDInvalid)

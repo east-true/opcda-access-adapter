@@ -42,7 +42,10 @@ const (
 	AttributeArrayDimensions uint32 = 16
 	AttributeAccessLevel     uint32 = 17
 	AttributeUserAccessLevel uint32 = 18
-	AttributeHistorizing     uint32 = 20
+	// MinimumSamplingInterval says how current a DataItem's value is.
+	// A.3.1.3 assigns the DA Scan Rate property to it.
+	AttributeMinimumSamplingInterval uint32 = 19
+	AttributeHistorizing             uint32 = 20
 )
 
 // AccessLevel bits from OPC 10000-3 AccessLevelType.
@@ -171,6 +174,14 @@ type Node struct {
 	// bit can be set on a notification, which requires noticing a change.
 	semanticProperties map[string]string
 	semanticGeneration uint64
+
+	// MinimumSamplingInterval is how current the source keeps this item's
+	// value, in milliseconds. A.3.1.3 assigns the DA Scan Rate property to it.
+	// MinimumSamplingIntervalKnown records whether the source said: an item
+	// whose Scan Rate nobody has read carries no interval rather than zero,
+	// which OPC 10000-3 reads as "the server samples as fast as possible".
+	MinimumSamplingInterval      float64
+	MinimumSamplingIntervalKnown bool
 
 	// OwnItemID records that this node is a DA item property that the source
 	// also exposes as an item of its own, so ItemID names the property rather
