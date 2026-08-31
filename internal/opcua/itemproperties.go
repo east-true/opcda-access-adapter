@@ -70,7 +70,15 @@ type itemVariableType struct {
 // EnumStrings comes from EU Info, whose DA value is an array of strings, and
 // the DA layer does not carry array VARIANTs. A type is a promise, and the
 // adapter does not make one it cannot keep.
-func variableTypeFor(available []opcda.AvailableProperty, euType opcda.EUType) itemVariableType {
+//
+// The same rule covers the DataType each type constrains. Clause 5.3.2.3 gives
+// AnalogItemType the DataType Number and 5.3.3.2 gives TwoStateDiscreteType the
+// DataType Boolean. A DA item can perfectly well carry High and Low EU on a
+// string, or Open and Close Label on an integer; claiming the type for it would
+// make the node contradict its own type definition. An item whose DataType the
+// source has not stated yet is not promoted either -- promoting on a guess is
+// the same defect arriving later.
+func variableTypeFor(available []opcda.AvailableProperty, euType opcda.EUType, item *Node) itemVariableType {
 	offered := make(map[opcda.PropertyID]struct{}, len(available))
 	for _, property := range available {
 		offered[property.ID] = struct{}{}
@@ -85,7 +93,7 @@ func variableTypeFor(available []opcda.AvailableProperty, euType opcda.EUType) i
 	}
 
 	switch {
-	case has(opcda.PropertyHighEU, opcda.PropertyLowEU):
+	case has(opcda.PropertyHighEU, opcda.PropertyLowEU) && itemDataTypeIs(item, isNumericDataType):
 		analog := itemVariableType{Name: "AnalogItemType", TypeID: NodeIDAnalogItemType,
 			Properties: []itemPropertyBinding{euRangeBinding}}
 		if has(opcda.PropertyEUUnits) {
@@ -95,7 +103,7 @@ func variableTypeFor(available []opcda.AvailableProperty, euType opcda.EUType) i
 			analog.Properties = append(analog.Properties, instrumentRangeBinding)
 		}
 		return analog
-	case has(opcda.PropertyCloseLabel, opcda.PropertyOpenLabel):
+	case has(opcda.PropertyCloseLabel, opcda.PropertyOpenLabel) && itemDataTypeIs(item, isBooleanDataType):
 		return itemVariableType{Name: "TwoStateDiscreteType", TypeID: NodeIDTwoStateDiscreteType,
 			Properties: []itemPropertyBinding{trueStateBinding, falseStateBinding}}
 	default:
@@ -360,15 +368,15 @@ func ItemPropertyForNode(id NodeID) (opcda.DAItemID, itemPropertyBinding, bool) 
 // way a branch is, so a set that does not fit is refused rather than attached in
 // part. A client cannot tell a truncated property list from a complete one.
 func (s *AddressSpace) AttachItemProperties(itemID opcda.DAItemID, available []opcda.AvailableProperty, euType opcda.EUType, maxNodes int) error {
-	variableType := variableTypeFor(available, euType)
-	bindings := variableType.Properties
-
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	item, ok := s.nodes[nodeKey(ItemNodeID(itemID))]
 	if !ok || item.Class != NodeClassVariable || item.ItemID != itemID {
 		return fmt.Errorf("no DA item node for %q", itemID)
 	}
+	variableType := variableTypeFor(available, euType, item)
+	bindings := variableType.Properties
+
 	others := otherPropertiesFor(available, bindings)
 	needed := 0
 	for _, binding := range bindings {
@@ -682,3 +690,31 @@ func buildRawProperty(_ *AddressSpace, values []opcda.ItemPropertyValue) (Varian
 	}
 	return variant, StatusGood
 }
+
+// itemDataTypeIs reports whether the item's DataType is known and satisfies the
+// constraint a VariableType puts on it.
+func itemDataTypeIs(item *Node, matches func(uint32) bool) bool {
+	if item == nil || !item.DataTypeKnown {
+		return false
+	}
+	if item.DataType.Namespace != 0 || item.DataType.Type != NodeIDTypeNumeric {
+		return false
+	}
+	return matches(item.DataType.Numeric)
+}
+
+// isNumericDataType reports whether a DataType is Number or one of its
+// subtypes, which is what clause 5.3.2.3 requires of an AnalogItemType.
+func isNumericDataType(identifier uint32) bool {
+	switch identifier {
+	case NodeIDSByte, NodeIDByte, NodeIDInt16, NodeIDUInt16, NodeIDInt32,
+		NodeIDUInt32, NodeIDInt64, NodeIDUInt64, NodeIDFloat, NodeIDDouble,
+		NodeIDDecimal:
+		return true
+	default:
+		return false
+	}
+}
+
+// isBooleanDataType is what clause 5.3.3.2 requires of a TwoStateDiscreteType.
+func isBooleanDataType(identifier uint32) bool { return identifier == NodeIDBoolean }
