@@ -488,11 +488,15 @@ func (s *AddressSpace) ResolveVariable(id NodeID, maxNodes int) (*Node, bool) {
 		return nil, false
 	}
 	node := &Node{
-		ID:             id,
-		Class:          NodeClassVariable,
-		BrowseName:     QualifiedName{Namespace: AdapterNamespaceIndex, Name: string(itemID)},
-		DisplayName:    LocalizedText{Text: string(itemID)},
-		TypeDefinition: NumericNodeID(0, NodeIDBaseDataVariableType),
+		ID:          id,
+		Class:       NodeClassVariable,
+		BrowseName:  QualifiedName{Namespace: AdapterNamespaceIndex, Name: string(itemID)},
+		DisplayName: LocalizedText{Text: string(itemID)},
+		// DataItemType is the floor Annex A.3.1.3 sets. An item whose properties
+		// nobody has asked for yet is not known to be analog or discrete, but it
+		// is known to be a DA item, and BaseDataVariableType is a type Annex A
+		// does not offer.
+		TypeDefinition: NumericNodeID(0, NodeIDDataItemType),
 		ValueRank:      ValueRankScalar,
 		ItemID:         itemID,
 		DataType:       NumericNodeID(0, NodeIDBaseDataType),
@@ -564,11 +568,12 @@ func (s *AddressSpace) nodeForEntry(path []string, entry opcda.BrowseEntry) (*No
 			return nil, fmt.Errorf("a browse item carried no ItemID")
 		}
 		node := &Node{
-			ID:             ItemNodeID(*entry.ItemID),
-			Class:          NodeClassVariable,
-			BrowseName:     name,
-			DisplayName:    display,
-			TypeDefinition: NumericNodeID(0, NodeIDBaseDataVariableType),
+			ID:          ItemNodeID(*entry.ItemID),
+			Class:       NodeClassVariable,
+			BrowseName:  name,
+			DisplayName: display,
+			// The Annex A.3.1.3 floor, until the item's properties are known.
+			TypeDefinition: NumericNodeID(0, NodeIDDataItemType),
 			ValueRank:      ValueRankScalar,
 			ItemID:         *entry.ItemID,
 			// A type the mapping cannot express is reported as the abstract

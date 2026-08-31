@@ -98,7 +98,9 @@ func TestBrowseWalksTheAddressSpace(t *testing.T) {
 	if !ok || item.NodeClass != NodeClassVariable {
 		t.Fatalf("item reference = %+v", item)
 	}
-	if item.TypeDefinition.NodeID.Numeric != NodeIDBaseDataVariableType {
+	// The Annex A.3.1.3 floor, which is what an item carries until its
+	// properties are known.
+	if item.TypeDefinition.NodeID.Numeric != NodeIDDataItemType {
 		t.Fatalf("item type definition = %s", item.TypeDefinition.NodeID)
 	}
 	if !item.IsForward {

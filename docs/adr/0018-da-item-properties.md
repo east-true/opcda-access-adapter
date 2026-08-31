@@ -135,8 +135,13 @@ publish. `MultiStateDiscreteType` is never claimed, because its mandatory
 `EnumStrings` comes from EU Info, an array of strings, and the DA layer does not
 carry array VARIANTs. Both are recorded in `docs/opcua-mapping.md`.
 
-What is still open is what happens if a source stops offering the properties a
-claimed type requires. Today a re-attach recomputes the type, so an item can
-change type between browses. That is visible to a client and is not obviously
-better than keeping a stale type; it is the honest behaviour for now because the
-alternative is reporting a range that no longer exists.
+What happens when a source stops offering the properties a claimed type requires
+was left open here, and is now settled by the invariant rather than by a policy:
+a re-attach recomputes the type and replaces the property set **together**, so
+the two never disagree. An item can change type between browses — which is
+visible to a client — but it is never an `AnalogItemType` without an `EURange`.
+Keeping a stale type would break the type's own contract; changing it does not.
+
+A test walks every transition between analog, discrete and plain, in both
+directions, and requires the type and its mandatory properties to agree at every
+step.

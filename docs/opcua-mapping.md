@@ -354,7 +354,14 @@ which appears nowhere in Annex A.
 | anything else | `DataItemType` | — |
 
 The type is chosen when the properties become known, which is when a client
-browses the item. Until then the item carries the type it was created with.
+browses the item. Until then an item sits at `DataItemType`, the floor A.3.1.3
+sets — including an item addressed without being browsed at all, which for a
+source that does not implement Browse is the only type it ever has.
+
+A claimed type and its mandatory property never disagree. Re-attaching
+recomputes the type and replaces the property set together, under one lock, so
+an item can change type between browses but is never briefly an
+`AnalogItemType` without an `EURange`.
 
 **Two departures from the clause, both because a type is a promise.**
 
