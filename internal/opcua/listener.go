@@ -1130,9 +1130,16 @@ func (l *Listener) writeProtocolError(conn net.Conn, cause error) {
 // periodically; it is exposed rather than run on an internal timer so the
 // owning application keeps control of its own scheduling.
 func (l *Listener) ExpireStaleChannels(now time.Time) int {
-	return l.registry.ExpireStale(now) +
+	expired := l.registry.ExpireStale(now) +
 		l.sessions.ExpireStale(now) +
 		l.browse.ExpireContinuationPoints(now)
+	if l.subs != nil {
+		// A subscription whose client stopped publishing holds a DA group open
+		// on the source, so its own lifetime has to be enforced and not merely
+		// reported.
+		expired += l.subs.ExpireStale(context.Background(), now)
+	}
+	return expired
 }
 
 // Shutdown closes the listener and waits for the context.

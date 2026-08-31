@@ -1818,3 +1818,120 @@ func TestInvalidationDiscardsAHeldValue(t *testing.T) {
 		t.Fatalf("a value held before the disconnect surfaced afterwards: %d", stale)
 	}
 }
+
+// Table 82: "when the publishing timer has expired this number of times without
+// a Publish request being available to send a NotificationMessage, then the
+// Subscription shall be deleted by the Server". For this adapter that means the
+// DA group goes back too.
+func TestASubscriptionOutlivesItsClientOnlyForItsLifetime(t *testing.T) {
+	runtime := &subscribingRuntime{}
+	service, _ := testSubscriptionService(t, runtime)
+	response, err := service.CreateSubscription(testSession, CreateSubscriptionRequest{
+		Header:                      RequestHeader{AdditionalHeader: NullExtensionObject()},
+		RequestedPublishingInterval: 100,
+		RequestedMaxKeepAliveCount:  3,
+		RequestedLifetimeCount:      9,
+		PublishingEnabled:           true,
+	}, channelEpoch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := response.SubscriptionID
+	// 9 cycles of 100ms is the lifetime the client was told it had.
+	lifetime := time.Duration(response.RevisedLifetimeCount) * 100 * time.Millisecond
+	monitorItem(t, service, id, ItemNodeID("Test/Int32"), 1)
+	if service.Count() != 1 {
+		t.Fatalf("subscriptions = %d", service.Count())
+	}
+
+	// Just inside the lifetime it survives.
+	if expired := service.ExpireStale(context.Background(), channelEpoch.Add(lifetime-time.Millisecond)); expired != 0 {
+		t.Fatalf("%d subscriptions expired early", expired)
+	}
+	if service.Count() != 1 {
+		t.Fatal("the subscription was deleted inside its lifetime")
+	}
+
+	// Past it, the subscription goes and the DA group with it.
+	if expired := service.ExpireStale(context.Background(), channelEpoch.Add(lifetime)); expired != 1 {
+		t.Fatalf("%d subscriptions expired", expired)
+	}
+	if service.Count() != 0 {
+		t.Fatal("the subscription outlived its lifetime")
+	}
+	if runtime.unsubscribeCount() != 1 {
+		t.Fatal("the DA group was not released")
+	}
+}
+
+// 5.14.1.1: "any Service call that uses the SubscriptionId or the processing of
+// a Publish response resets the lifetime counter of this Subscription."
+func TestUsingASubscriptionResetsItsLifetime(t *testing.T) {
+	for _, testCase := range []struct {
+		name string
+		use  func(t *testing.T, service *SubscriptionService, id uint32, at time.Time)
+	}{
+		{"CreateMonitoredItems", func(t *testing.T, service *SubscriptionService, id uint32, at time.Time) {
+			if _, err := service.CreateMonitoredItems(context.Background(), testSession, CreateMonitoredItemsRequest{
+				Header:             RequestHeader{AdditionalHeader: NullExtensionObject()},
+				SubscriptionID:     id,
+				TimestampsToReturn: TimestampsBoth,
+				ItemsToCreate: []MonitoredItemCreateRequest{{
+					ItemToMonitor:  ReadValueID{NodeID: ItemNodeID("Test/Float"), AttributeID: AttributeValue},
+					MonitoringMode: MonitoringModeReporting,
+					RequestedParameters: MonitoringParameters{
+						ClientHandle: 7, QueueSize: 1, Filter: NullExtensionObject(),
+					},
+				}},
+			}, at); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{"SetPublishingMode", func(t *testing.T, service *SubscriptionService, id uint32, at time.Time) {
+			if _, err := service.SetPublishingMode(testSession, SetPublishingModeRequest{
+				Header:            RequestHeader{AdditionalHeader: NullExtensionObject()},
+				PublishingEnabled: false,
+				SubscriptionIDs:   []uint32{id},
+			}, at); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{"a Publish cycle", func(t *testing.T, service *SubscriptionService, id uint32, at time.Time) {
+			request := PublishRequest{Header: RequestHeader{AdditionalHeader: NullExtensionObject()}}
+			if _, _, err := service.tryPublish(context.Background(), testSession, request, nil, at); err != nil {
+				t.Fatal(err)
+			}
+		}},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			runtime := &subscribingRuntime{}
+			service, _ := testSubscriptionService(t, runtime)
+			response, err := service.CreateSubscription(testSession, CreateSubscriptionRequest{
+				Header:                      RequestHeader{AdditionalHeader: NullExtensionObject()},
+				RequestedPublishingInterval: 100,
+				RequestedMaxKeepAliveCount:  3,
+				RequestedLifetimeCount:      9,
+				PublishingEnabled:           true,
+			}, channelEpoch)
+			if err != nil {
+				t.Fatal(err)
+			}
+			id := response.SubscriptionID
+			lifetime := time.Duration(response.RevisedLifetimeCount) * 100 * time.Millisecond
+			monitorItem(t, service, id, ItemNodeID("Test/Int32"), 1)
+
+			// Used just before it would have expired.
+			testCase.use(t, service, id, channelEpoch.Add(lifetime-time.Millisecond))
+
+			// The clock that would have killed it now finds it alive.
+			if expired := service.ExpireStale(context.Background(), channelEpoch.Add(lifetime)); expired != 0 {
+				t.Fatalf("using the subscription did not reset its lifetime")
+			}
+			// And it still expires a lifetime after that use.
+			if expired := service.ExpireStale(context.Background(),
+				channelEpoch.Add(2*lifetime)); expired != 1 {
+				t.Fatalf("the subscription never expired: %d", expired)
+			}
+		})
+	}
+}

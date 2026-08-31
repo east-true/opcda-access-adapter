@@ -897,6 +897,30 @@ type uaSubscription struct {
 	retransmit map[uint32]NotificationMessage
 	// keepAliveTicks counts publishing intervals with nothing to send.
 	keepAliveTicks uint32
+	// lastKeptAlive is when the client last did something that counts as being
+	// present. Clause 5.14.1.1: the lifetime counter "counts the number of
+	// consecutive publishing cycles in which there have been no Publish
+	// requests available to send a Publish response for the Subscription. Any
+	// Service call that uses the SubscriptionId or the processing of a Publish
+	// response resets the lifetime counter". Elapsed time is used rather than a
+	// tick count because this server has no publishing timer of its own -- a
+	// Publish drives its own cycles, which is precisely what stops when the
+	// client goes away.
+	lastKeptAlive time.Time
+}
+
+// expired reports whether the client has been gone for the lifetime it was
+// promised: lifetimeCount publishing intervals without a sign of it.
+//
+// Neither input needs guarding. The publishing interval is revised to at least
+// the server's minimum, which validate keeps positive, and lastKeptAlive is set
+// when the subscription is created and only ever moved forward. Guarding them
+// would guard against a subscription that cannot exist, while reading as though
+// one could -- and a guard returning false on a zero interval would quietly
+// exempt that subscription from ever expiring.
+func (subscription *uaSubscription) expired(now time.Time) bool {
+	interval := time.Duration(subscription.publishingInterval) * time.Millisecond
+	return now.Sub(subscription.lastKeptAlive) >= time.Duration(subscription.lifetimeCount)*interval
 }
 
 // SubscriptionService answers the subscription services over the DA Subscribe
@@ -969,6 +993,7 @@ func (s *SubscriptionService) CreateSubscription(sessionToken string, request Cr
 		items:              make(map[uint32]*monitoredItem),
 		byHandle:           make(map[uint32]*monitoredItem),
 		retransmit:         make(map[uint32]NotificationMessage),
+		lastKeptAlive:      now,
 	}
 	s.subscriptions[subscription.id] = subscription
 	return CreateSubscriptionResponse{
@@ -985,11 +1010,17 @@ func (s *SubscriptionService) CreateSubscription(sessionToken string, request Cr
 
 // lookup resolves a subscription and enforces that it belongs to the session
 // asking for it, so one client cannot reach another's subscription.
-func (s *SubscriptionService) lookup(sessionToken string, id uint32) (*uaSubscription, error) {
+// lookup finds a subscription and records that its client is still there.
+// Clause 5.14.1.1 resets the lifetime counter on "any Service call that uses
+// the SubscriptionId or the processing of a Publish response", and this is the
+// one funnel every such call passes through -- putting the reset here rather
+// than at each call site means a new service cannot forget it.
+func (s *SubscriptionService) lookup(sessionToken string, id uint32, now time.Time) (*uaSubscription, error) {
 	subscription, ok := s.subscriptions[id]
 	if !ok || subscription.sessionToken != sessionToken {
 		return nil, uacpError(StatusBadSubscriptionIDInvalid, "subscription %d is not known to this session", id)
 	}
+	subscription.lastKeptAlive = now
 	return subscription, nil
 }
 
@@ -1010,7 +1041,7 @@ func (s *SubscriptionService) CreateMonitoredItems(ctx context.Context, sessionT
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	subscription, err := s.lookup(sessionToken, request.SubscriptionID)
+	subscription, err := s.lookup(sessionToken, request.SubscriptionID, now)
 	if err != nil {
 		return CreateMonitoredItemsResponse{}, err
 	}
@@ -1280,7 +1311,7 @@ func (s *SubscriptionService) DeleteMonitoredItems(ctx context.Context, sessionT
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	subscription, err := s.lookup(sessionToken, request.SubscriptionID)
+	subscription, err := s.lookup(sessionToken, request.SubscriptionID, now)
 	if err != nil {
 		return DeleteMonitoredItemsResponse{}, err
 	}
@@ -1324,7 +1355,7 @@ func (s *SubscriptionService) DeleteSubscriptions(ctx context.Context, sessionTo
 	defer s.mu.Unlock()
 	results := make([]StatusCode, len(request.SubscriptionIDs))
 	for index, id := range request.SubscriptionIDs {
-		subscription, err := s.lookup(sessionToken, id)
+		subscription, err := s.lookup(sessionToken, id, now)
 		if err != nil {
 			results[index] = StatusBadSubscriptionIDInvalid
 			continue
@@ -1354,7 +1385,7 @@ func (s *SubscriptionService) SetPublishingMode(sessionToken string, request Set
 	defer s.mu.Unlock()
 	results := make([]StatusCode, len(request.SubscriptionIDs))
 	for index, id := range request.SubscriptionIDs {
-		subscription, err := s.lookup(sessionToken, id)
+		subscription, err := s.lookup(sessionToken, id, now)
 		if err != nil {
 			results[index] = StatusBadSubscriptionIDInvalid
 			continue
@@ -1392,7 +1423,7 @@ func (s *SubscriptionService) SetPublishingMode(sessionToken string, request Set
 // a client sends other requests on the same channel while a Publish is
 // outstanding.
 func (s *SubscriptionService) Publish(ctx context.Context, sessionToken string, request PublishRequest, now time.Time) (PublishResponse, error) {
-	acknowledgements, err := s.acknowledge(sessionToken, request)
+	acknowledgements, err := s.acknowledge(sessionToken, request, now)
 	if err != nil {
 		return PublishResponse{}, err
 	}
@@ -1423,13 +1454,13 @@ func (s *SubscriptionService) Publish(ctx context.Context, sessionToken string, 
 
 // acknowledge applies the request's acknowledgements, which happen as soon as
 // the request arrives rather than when its response is finally sent.
-func (s *SubscriptionService) acknowledge(sessionToken string, request PublishRequest) ([]StatusCode, error) {
+func (s *SubscriptionService) acknowledge(sessionToken string, request PublishRequest, now time.Time) ([]StatusCode, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	acknowledgements := make([]StatusCode, len(request.Acknowledgements))
 	for index, acknowledgement := range request.Acknowledgements {
-		subscription, err := s.lookup(sessionToken, acknowledgement.SubscriptionID)
+		subscription, err := s.lookup(sessionToken, acknowledgement.SubscriptionID, now)
 		if err != nil {
 			acknowledgements[index] = StatusBadSubscriptionIDInvalid
 			continue
@@ -1472,6 +1503,16 @@ func (s *SubscriptionService) tryPublish(ctx context.Context, sessionToken strin
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	// A Publish request is outstanding for this session, so it is available to
+	// every subscription the session owns -- none of them is starving, whichever
+	// one this cycle picks. 5.14.1.1 counts "publishing cycles in which there
+	// have been no Publish requests available", so this is what keeps them all
+	// alive.
+	for _, held := range s.subscriptions {
+		if held.sessionToken == sessionToken {
+			held.lastKeptAlive = now
+		}
+	}
 	subscription := s.nextPublishable(sessionToken)
 	if subscription == nil {
 		return PublishResponse{}, false, uacpError(StatusBadNoSubscription,
@@ -1724,6 +1765,33 @@ func (s *SubscriptionService) buildMessage(subscription *uaSubscription, now tim
 	}
 	subscription.retransmit[message.SequenceNumber] = message
 	return message, true
+}
+
+// ExpireStale deletes subscriptions whose clients have gone quiet for the
+// lifetime they were told they had. Table 82: "when the publishing timer has
+// expired this number of times without a Publish request being available to
+// send a NotificationMessage, then the Subscription shall be deleted by the
+// Server", and 5.14.1.1 adds that "closing the Subscription causes its
+// MonitoredItems to be deleted".
+//
+// For this adapter that is not bookkeeping. A subscription holds a DA group
+// open on the source, and a client that stops publishing while keeping its
+// session alive would otherwise hold that group for as long as it liked.
+func (s *SubscriptionService) ExpireStale(ctx context.Context, now time.Time) int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	expired := make([]*uaSubscription, 0)
+	for id, subscription := range s.subscriptions {
+		if !subscription.expired(now) {
+			continue
+		}
+		delete(s.subscriptions, id)
+		expired = append(expired, subscription)
+	}
+	for _, subscription := range expired {
+		s.releaseDASubscription(ctx, subscription)
+	}
+	return len(expired)
 }
 
 // ReleaseSession removes every subscription a session owned, releasing their DA
