@@ -866,6 +866,13 @@ type uaSubscription struct {
 	nextItemID uint32
 	byHandle   map[uint32]*monitoredItem
 
+	// heldOrder lists the items holding an unreported value, in the order they
+	// began holding one. opcda.Subscription drains "preserving first-seen
+	// order", and that order is the source's own account of what changed
+	// first, so it is carried through rather than being replaced by whatever
+	// order a map happens to yield.
+	heldOrder []uint32
+
 	// deadband is the percent deadband the DA group carries. A.3.5 maps a
 	// client's PercentDeadband onto it, and a DA group has exactly one, so it
 	// is a property of the subscription rather than of a monitored item.
@@ -1533,6 +1540,9 @@ func (s *SubscriptionService) collect(ctx context.Context, subscription *uaSubsc
 		// The newest value wins. queueSize is one, so an older value in the
 		// same sampling interval is one the client would have overwritten
 		// anyway.
+		if item.held == nil {
+			subscription.heldOrder = append(subscription.heldOrder, item.id)
+		}
 		held := notification
 		item.held = &held
 	}
@@ -1544,8 +1554,11 @@ func (s *SubscriptionService) collect(ctx context.Context, subscription *uaSubsc
 // every value the group delivers; one that asked for less reports the newest
 // value it has, which is what a queue of one holds.
 func (s *SubscriptionService) flushHeld(subscription *uaSubscription, now time.Time) {
-	for _, item := range subscription.items {
-		if item.held == nil {
+	stillHeld := subscription.heldOrder[:0]
+	for _, id := range subscription.heldOrder {
+		item, ok := subscription.items[id]
+		if !ok || item.held == nil {
+			// The item was deleted, or reported by an earlier pass.
 			continue
 		}
 		// An item that has never reported has a zero lastReported, which is
@@ -1553,6 +1566,8 @@ func (s *SubscriptionService) flushHeld(subscription *uaSubscription, now time.T
 		// that has just subscribed is waiting for the current value, not for
 		// an interval to elapse before it learns anything.
 		if now.Sub(item.lastReported) < time.Duration(item.samplingInterval)*time.Millisecond {
+			// Not due yet: it keeps its place in the queue as well as its value.
+			stillHeld = append(stillHeld, id)
 			continue
 		}
 		subscription.pending = append(subscription.pending, MonitoredItemNotification{
@@ -1562,6 +1577,7 @@ func (s *SubscriptionService) flushHeld(subscription *uaSubscription, now time.T
 		item.held = nil
 		item.lastReported = now
 	}
+	subscription.heldOrder = stillHeld
 }
 
 // reportInvalidation queues a bad status for every reporting item, so a client

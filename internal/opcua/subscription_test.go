@@ -1597,3 +1597,105 @@ func deleteMonitoredItem(t *testing.T, service *SubscriptionService, id, itemID 
 		t.Fatal(err)
 	}
 }
+
+// opcda.Subscription drains "preserving first-seen order", which is the
+// source's own account of what changed first. Pacing must carry that order
+// through rather than replace it with whatever order a map yields.
+func TestNotificationsKeepTheSourcesOrder(t *testing.T) {
+	for attempt := 0; attempt < 50; attempt++ {
+		runtime := &subscribingRuntime{}
+		service, _ := testSubscriptionService(t, runtime)
+		id := createSubscription(t, service)
+		monitorItem(t, service, id, ItemNodeID("Test/Float"), 1)
+		monitorItem(t, service, id, ItemNodeID("Test/Int32"), 2)
+
+		// The source saw the Int32 change first, whichever order the items
+		// were created in.
+		runtime.latest().push(
+			daNotification("Test/Int32", 1, QualityGood),
+			daNotification("Test/Float", 2, QualityGood),
+		)
+		notifications := publishOnce(t, service, channelEpoch)
+		if len(notifications) != 2 {
+			t.Fatalf("notifications = %d", len(notifications))
+		}
+		if notifications[0].ClientHandle != 2 || notifications[1].ClientHandle != 1 {
+			t.Fatalf("attempt %d: handles = %d, %d, want the source's order",
+				attempt, notifications[0].ClientHandle, notifications[1].ClientHandle)
+		}
+	}
+}
+
+// An item still holding a value keeps its place in the queue, so a paced item
+// does not jump ahead of one that began holding before it.
+func TestAPacedItemKeepsItsPlaceInTheQueue(t *testing.T) {
+	runtime := &subscribingRuntime{revisedRate: 100 * time.Millisecond}
+	service, _ := testSubscriptionService(t, runtime)
+	id := createSubscription(t, service)
+	slow := monitorAt(t, service, id, ItemNodeID("Test/Int32"), 1, 5000)
+	fast := monitorAt(t, service, id, ItemNodeID("Test/Float"), 2, 0)
+	if slow.RevisedSamplingInterval != 5000 || fast.RevisedSamplingInterval != 100 {
+		t.Fatalf("revised = %v, %v", slow.RevisedSamplingInterval, fast.RevisedSamplingInterval)
+	}
+
+	// Both report their first value at once.
+	runtime.latest().push(
+		daNotification("Test/Int32", 1, QualityGood),
+		daNotification("Test/Float", 1, QualityGood),
+	)
+	if first := publishOnce(t, service, channelEpoch); len(first) != 2 {
+		t.Fatalf("first = %d", len(first))
+	}
+
+	// The slow item changes first and is held; the fast one changes after and
+	// is due immediately. The slow item must not lose its place.
+	runtime.latest().push(daNotification("Test/Int32", 2, QualityGood))
+	if held := publishNothing(t, service, channelEpoch.Add(time.Second)); held != 0 {
+		t.Fatalf("the slow item reported early: %d", held)
+	}
+	runtime.latest().push(daNotification("Test/Float", 2, QualityGood))
+	if only := publishOnce(t, service, channelEpoch.Add(2*time.Second)); len(only) != 1 ||
+		only[0].ClientHandle != 2 {
+		t.Fatalf("the fast item alone should have reported, got %d", len(only))
+	}
+	after := publishOnce(t, service, channelEpoch.Add(8*time.Second))
+	if len(after) != 1 || after[0].ClientHandle != 1 {
+		t.Fatalf("the slow item's held value was not reported")
+	}
+}
+
+// A paced item that keeps changing takes one place in the queue, not one per
+// change it absorbs. The output is the same either way -- a place whose value
+// has already been reported is skipped -- so this is checked on the queue
+// itself, which is where the difference lives.
+func TestAPacedItemTakesOnePlaceHoweverOftenItChanges(t *testing.T) {
+	runtime := &subscribingRuntime{revisedRate: 100 * time.Millisecond}
+	service, _ := testSubscriptionService(t, runtime)
+	id := createSubscription(t, service)
+	monitorAt(t, service, id, ItemNodeID("Test/Int32"), 1, 5000)
+
+	// The first value goes out at once, so what follows is all held.
+	runtime.latest().push(daNotification("Test/Int32", 0, QualityGood))
+	publishOnce(t, service, channelEpoch)
+
+	for change := 1; change <= 20; change++ {
+		runtime.latest().push(daNotification("Test/Int32", int32(change), QualityGood))
+		publishNothing(t, service, channelEpoch.Add(time.Duration(change)*100*time.Millisecond))
+	}
+
+	service.mu.Lock()
+	held := len(service.subscriptions[id].heldOrder)
+	service.mu.Unlock()
+	if held != 1 {
+		t.Fatalf("the queue holds %d places for one item", held)
+	}
+
+	// And the value that finally goes out is the newest of all of them.
+	after := publishOnce(t, service, channelEpoch.Add(time.Minute))
+	if len(after) != 1 {
+		t.Fatalf("notifications = %d", len(after))
+	}
+	if value, ok := after[0].Value.Value.Value.(int32); !ok || value != 20 {
+		t.Fatalf("reported %#v, want the newest change", after[0].Value.Value.Value)
+	}
+}

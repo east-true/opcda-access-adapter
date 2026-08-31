@@ -685,7 +685,10 @@ is larger than one".
 A paced item holds its newest value rather than dropping values as they arrive,
 for the same reason: a queue of one holds the newest, and dropping instead would
 leave a client that asked for a slow rate stuck on a stale value whenever the
-source went quiet.
+source went quiet. It also keeps its place while it waits: a DA subscription
+drains "preserving first-seen order", which is the source's own account of what
+changed first, and pacing carries that order through rather than reordering
+around it.
 
 ## `maxAge` on a Read
 
