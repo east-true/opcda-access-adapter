@@ -442,6 +442,38 @@ unit's name and nothing else, and deriving a UNECE code from a name would be
 inventing an identity the source never gave — which a client reading `UnitId`
 would then act on.
 
+## Subscriptions: the one filter a DA group can apply
+
+A.3.5 says a wrapper uses the SamplingInterval and the Deadband to set up the
+DA callback, and that **only `PercentDeadbandType` is supported**. The DA core
+has always carried a percent deadband — it is `AddGroup`'s `pPercentDeadband`,
+and the gRPC frontend has always exposed it. Only the UA frontend refused it,
+along with every other filter.
+
+A `DataChangeFilter` asking for a percent deadband is now accepted and passed to
+the group. Everything else is refused rather than accepted and quietly not
+applied:
+
+| The client asks for | Answer |
+|---|---|
+| no filter | accepted; the group gets no deadband |
+| `DataChangeFilter`, deadband `None` or `Percent` in 0–100 | accepted |
+| `DataChangeFilter`, deadband `Percent` outside 0–100 | `Bad_DeadbandFilterInvalid` |
+| `DataChangeFilter`, deadband `Absolute` | `Bad_MonitoredItemFilterUnsupported` — `AddGroup` takes a percentage and nothing else |
+| trigger `StatusValueTimestamp` | `Bad_MonitoredItemFilterUnsupported` — DA notifies on a change of value or quality, never on a timestamp alone |
+| any other filter | `Bad_MonitoredItemFilterUnsupported` |
+
+The status changed with the behaviour. A filter this server cannot perform is
+`Bad_MonitoredItemFilterUnsupported`; `Bad_FilterNotAllowed`, which the adapter
+used to answer, means the filter cannot be used with the attribute — and a
+`DataChangeFilter` on a Value attribute plainly can.
+
+**A deadband belongs to the subscription, because it belongs to the DA group.**
+One UA subscription is backed by one DA group, and a group has exactly one
+`pPercentDeadband`. A second monitored item asking for a different deadband
+cannot be honoured, so it is refused; applying somebody else's deadband to it
+would report changes the client did not ask to hear about, or hide ones it did.
+
 ## Timestamps
 
 Part 8 A.3.2.4: the DA timestamp becomes the UA **SourceTimestamp**. The UA
