@@ -22,16 +22,22 @@ func TestVariableTypeFollowsPart8AnnexA313(t *testing.T) {
 		}
 		return available
 	}
+	numeric := &Node{DataType: NumericNodeID(0, NodeIDFloat), DataTypeKnown: true}
+	boolean := &Node{DataType: NumericNodeID(0, NodeIDBoolean), DataTypeKnown: true}
+	text := &Node{DataType: NumericNodeID(0, NodeIDString), DataTypeKnown: true}
+	unknown := &Node{DataType: NumericNodeID(0, NodeIDBaseDataType)}
 	for _, testCase := range []struct {
 		name      string
 		available []opcda.AvailableProperty
 		euType    opcda.EUType
+		item      *Node
 		wantType  uint32
 		wantProps []string
 	}{
 		{
 			name:      "High and Low EU make an analog item",
 			available: property(opcda.PropertyHighEU, opcda.PropertyLowEU),
+			item:      numeric,
 			wantType:  NodeIDAnalogItemType,
 			wantProps: []string{"EURange"},
 		},
@@ -39,18 +45,21 @@ func TestVariableTypeFollowsPart8AnnexA313(t *testing.T) {
 			name: "an analog item carries the optional properties it has",
 			available: property(opcda.PropertyHighEU, opcda.PropertyLowEU,
 				opcda.PropertyEUUnits, opcda.PropertyHighIR, opcda.PropertyLowIR),
+			item:      numeric,
 			wantType:  NodeIDAnalogItemType,
 			wantProps: []string{"EURange", "EngineeringUnits", "InstrumentRange"},
 		},
 		{
 			name:      "Open and Close Label make a two-state discrete item",
 			available: property(opcda.PropertyCloseLabel, opcda.PropertyOpenLabel),
+			item:      boolean,
 			wantType:  NodeIDTwoStateDiscreteType,
 			wantProps: []string{"TrueState", "FalseState"},
 		},
 		{
 			name:      "anything else is a data item",
 			available: property(opcda.PropertyScanRate),
+			item:      numeric,
 			wantType:  NodeIDDataItemType,
 		},
 		{
@@ -62,6 +71,7 @@ func TestVariableTypeFollowsPart8AnnexA313(t *testing.T) {
 			name:      "an Analog EU Type without a range is not promoted",
 			available: property(opcda.PropertyEUType),
 			euType:    opcda.EUTypeAnalog,
+			item:      numeric,
 			wantType:  NodeIDDataItemType,
 		},
 		{
@@ -70,11 +80,44 @@ func TestVariableTypeFollowsPart8AnnexA313(t *testing.T) {
 			name:      "an enumerated EU Type is not promoted either",
 			available: property(opcda.PropertyEUType, opcda.PropertyEUInfo),
 			euType:    opcda.EUTypeEnumerated,
+			item:      numeric,
+			wantType:  NodeIDDataItemType,
+		},
+		{
+			// 5.3.2.3 gives AnalogItemType the DataType Number. A string item
+			// with EU bounds cannot have that type without contradicting it.
+			name:      "EU bounds on a string item do not make it analog",
+			available: property(opcda.PropertyHighEU, opcda.PropertyLowEU),
+			item:      text,
+			wantType:  NodeIDDataItemType,
+		},
+		{
+			// 5.3.3.2 gives TwoStateDiscreteType the DataType Boolean.
+			name:      "state labels on a numeric item do not make it discrete",
+			available: property(opcda.PropertyCloseLabel, opcda.PropertyOpenLabel),
+			item:      numeric,
+			wantType:  NodeIDDataItemType,
+		},
+		{
+			// Promoting before the source has stated the item's type would be
+			// a guess, and the same contradiction arriving later.
+			name:      "an item whose DataType is unknown is not promoted",
+			available: property(opcda.PropertyHighEU, opcda.PropertyLowEU),
+			item:      unknown,
+			wantType:  NodeIDDataItemType,
+		},
+		{
+			// DataTypeKnown is what says the source stated the type. A node
+			// carrying a numeric DataType it was never told is a guess, and
+			// the flag is what keeps the two apart.
+			name:      "a numeric DataType nobody stated is still unknown",
+			available: property(opcda.PropertyHighEU, opcda.PropertyLowEU),
+			item:      &Node{DataType: NumericNodeID(0, NodeIDFloat)},
 			wantType:  NodeIDDataItemType,
 		},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
-			chosen := variableTypeFor(testCase.available, testCase.euType)
+			chosen := variableTypeFor(testCase.available, testCase.euType, testCase.item)
 			if chosen.TypeID != testCase.wantType {
 				t.Fatalf("type = %d (%s), want %d", chosen.TypeID, chosen.Name, testCase.wantType)
 			}

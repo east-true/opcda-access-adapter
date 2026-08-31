@@ -418,11 +418,21 @@ A DA item's UA VariableType is chosen from the properties its source offers, as
 A.3.1.3 prescribes. The adapter used to give every item `BaseDataVariableType`,
 which appears nowhere in Annex A.
 
-| The item has | VariableType | Carrying |
-|---|---|---|
-| High EU **and** Low EU | `AnalogItemType` | `EURange`, plus `EngineeringUnits` and `InstrumentRange` when offered |
-| Close Label **and** Open Label | `TwoStateDiscreteType` | `TrueState`, `FalseState` |
-| anything else | `DataItemType` | — |
+| The item has | and its DataType is | VariableType | Carrying |
+|---|---|---|---|
+| High EU **and** Low EU | a `Number` | `AnalogItemType` | `EURange`, plus `EngineeringUnits` and `InstrumentRange` when offered |
+| Close Label **and** Open Label | `Boolean` | `TwoStateDiscreteType` | `TrueState`, `FalseState` |
+| anything else | anything | `DataItemType` | — |
+
+The DataType column is not decoration. Clause 5.3.2.3 gives `AnalogItemType` the
+DataType `Number` and 5.3.3.2 gives `TwoStateDiscreteType` the DataType
+`Boolean`. A DA source can perfectly well put High and Low EU on a string item
+or state labels on an integer; claiming the type there would make the node
+contradict its own type definition, which is the defect this adapter already
+refuses to commit when a node's declared type and delivered value disagree.
+
+An item whose DataType the source has not stated yet is not promoted either.
+Promoting on a guess is the same contradiction arriving later.
 
 The type is chosen when the properties become known, which is when a client
 browses the item. Until then an item sits at `DataItemType`, the floor A.3.1.3
