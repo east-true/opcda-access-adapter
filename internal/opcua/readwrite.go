@@ -27,6 +27,14 @@ const (
 	TimestampsInvalid TimestampsToReturn = 4
 )
 
+// Valid reports whether a TimestampsToReturn names timestamps to return. Table
+// 180 defines five values, and INVALID is "no value specified" -- a request
+// carrying it has not asked for anything, so it is refused alongside the values
+// the table does not define at all.
+func (t TimestampsToReturn) Valid() bool {
+	return t >= TimestampsSource && t <= TimestampsNeither
+}
+
 // ReadValueID is OPC 10000-4 Table 167.
 type ReadValueID struct {
 	NodeID       NodeID
@@ -157,9 +165,11 @@ func (d *Decoder) ReadReadRequest() (ReadRequest, error) {
 	if err != nil {
 		return ReadRequest{}, err
 	}
-	if timestamps < int32(TimestampsSource) || timestamps > int32(TimestampsInvalid) {
-		return ReadRequest{}, decodingError("TimestampsToReturn %d is not defined", timestamps)
-	}
+	// An undefined value is carried through rather than refused here. A
+	// decoding failure drops the connection, and this message decoded
+	// perfectly -- only one enumeration value is out of range. Table 48 has a
+	// service result for exactly that, and answering with it lets a client
+	// correct itself instead of losing every session on the channel.
 	request.TimestampsToReturn = TimestampsToReturn(timestamps)
 	// A ReadValueId is at least a NodeId, an attribute id, and two prefixes.
 	length, isNull, err := d.ReadArrayLength(12)
@@ -373,11 +383,15 @@ func (s *DataAccessService) Read(ctx context.Context, request ReadRequest, now t
 			len(request.NodesToRead), s.limits.MaxNodesPerRead)
 	}
 	if request.MaxAge < 0 {
-		// Table 47: negative values are invalid for maxAge.
-		return ReadResponse{}, uacpError(StatusBadInvalidArgument, "maxAge must not be negative")
+		// Table 47: negative values are invalid for maxAge. Table 48 names the
+		// status for it, and naming the parameter is the difference between a
+		// client that can fix its request and one that can only guess.
+		return ReadResponse{}, uacpError(StatusBadMaxAgeInvalid, "maxAge must not be negative")
 	}
-	if request.TimestampsToReturn == TimestampsInvalid {
-		return ReadResponse{}, uacpError(StatusBadInvalidArgument, "timestampsToReturn is invalid")
+	if !request.TimestampsToReturn.Valid() {
+		return ReadResponse{}, uacpError(StatusBadTimestampsToReturnInvalid,
+			"timestampsToReturn %d is not one of the four Table 180 values",
+			int32(request.TimestampsToReturn))
 	}
 
 	results := make([]DataValue, len(request.NodesToRead))

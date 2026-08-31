@@ -2,6 +2,7 @@ package opcua
 
 import (
 	"context"
+	"errors"
 	"math"
 	"testing"
 	"time"
@@ -1105,4 +1106,95 @@ func TestMaxAgeFollowsTableForty7(t *testing.T) {
 			t.Fatalf("maxAge %v read from %q", maxAge, runtime.readRequest.Source)
 		}
 	}
+}
+
+// Table 48 names two result codes for Read that Bad_InvalidArgument does not
+// replace: each says which parameter was wrong, which is the difference between
+// a client that can fix its request and one that can only guess.
+func TestReadNamesTheParameterItRefuses(t *testing.T) {
+	runtime := &stubRuntime{}
+	service, _ := testDataService(t, runtime)
+
+	request := readRequestFor(readValue(ItemNodeID("Test/Int32")))
+	request.MaxAge = -1
+	_, err := service.Read(context.Background(), request, time.Now())
+	if status := statusOfError(t, err); status != StatusBadMaxAgeInvalid {
+		t.Fatalf("negative maxAge = %s, want Bad_MaxAgeInvalid", status.Hex())
+	}
+
+	// Table 180 defines four values that name timestamps. INVALID is "no value
+	// specified", and anything past it is not in the table at all.
+	for _, timestamps := range []TimestampsToReturn{TimestampsInvalid, 5, -1} {
+		request := readRequestFor(readValue(ItemNodeID("Test/Int32")))
+		request.TimestampsToReturn = timestamps
+		_, err := service.Read(context.Background(), request, time.Now())
+		if status := statusOfError(t, err); status != StatusBadTimestampsToReturnInvalid {
+			t.Fatalf("timestampsToReturn %d = %s, want Bad_TimestampsToReturnInvalid",
+				timestamps, status.Hex())
+		}
+	}
+
+	// The four the table does define are all accepted.
+	for _, timestamps := range []TimestampsToReturn{
+		TimestampsSource, TimestampsServer, TimestampsBoth, TimestampsNeither,
+	} {
+		runtime.readResults = []opcda.ReadResult{{
+			ItemID: "Test/Int32", HRESULT: opcda.SOK, HRESULTPresent: true,
+			Value: &opcda.DAValue{ItemID: "Test/Int32", VarType: opcda.VTI4,
+				Value: int32(1), QualityRaw: QualityGood, HRESULT: opcda.SOK},
+		}}
+		request := readRequestFor(readValue(ItemNodeID("Test/Int32")))
+		request.TimestampsToReturn = timestamps
+		if _, err := service.Read(context.Background(), request, time.Now()); err != nil {
+			t.Fatalf("timestampsToReturn %d was refused: %v", timestamps, err)
+		}
+	}
+}
+
+// An out-of-range enumeration is a service fault, not a dropped connection.
+// The message decoded perfectly; only one value is out of range, and a decoding
+// failure would take every session on the channel down with it.
+func TestAnUndefinedTimestampsToReturnDecodes(t *testing.T) {
+	encoder, err := NewEncoder(DefaultBinaryLimits())
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoder.WriteReadRequest(ReadRequest{
+		Header:             RequestHeader{AdditionalHeader: NullExtensionObject()},
+		TimestampsToReturn: 9,
+		NodesToRead:        []ReadValueID{readValue(ItemNodeID("Test/Int32"))},
+	})
+	encoded, err := encoder.Bytes()
+	if err != nil {
+		t.Fatal(err)
+	}
+	decoder, err := NewDecoder(encoded, DefaultBinaryLimits())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := decoder.ReadServiceTypeID(); err != nil {
+		t.Fatal(err)
+	}
+	decoded, err := decoder.ReadReadRequest()
+	if err != nil {
+		t.Fatalf("an out-of-range timestampsToReturn failed decoding: %v", err)
+	}
+	if decoded.TimestampsToReturn != 9 {
+		t.Fatalf("timestampsToReturn = %d", decoded.TimestampsToReturn)
+	}
+	if decoded.TimestampsToReturn.Valid() {
+		t.Fatal("9 was accepted as a Table 180 value")
+	}
+}
+
+func statusOfError(t *testing.T, err error) StatusCode {
+	t.Helper()
+	if err == nil {
+		t.Fatal("the request was accepted")
+	}
+	var codecErr *CodecError
+	if !errors.As(err, &codecErr) {
+		t.Fatalf("error carries no status: %v", err)
+	}
+	return codecErr.Status
 }
