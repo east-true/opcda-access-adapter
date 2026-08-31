@@ -913,6 +913,30 @@ function Test-GRPCWriteEnabledForeground {
     }
 }
 
+# The script runs under Set-StrictMode, so a JSON field the adapter omits
+# cannot be read directly. This answers whether it is there at all.
+function Test-JSONProperty {
+    param($Object, [string]$Name)
+
+    return $null -ne $Object.PSObject.Properties[$Name] -and $null -ne $Object.PSObject.Properties[$Name].Value
+}
+
+function Get-AvailableItemProperties {
+    param([string]$ItemID)
+
+    $body = ConvertTo-RequestJSON ([ordered]@{ itemId = $ItemID })
+    $response = Send-AdapterRequest -Method POST -Path '/v1/properties/available' -Body $body
+    return Require-Status -Response $response -Expected 200 -Operation 'AvailableItemProperties'
+}
+
+function Get-ItemProperties {
+    param([string]$ItemID, [int[]]$PropertyIDs)
+
+    $body = ConvertTo-RequestJSON ([ordered]@{ itemId = $ItemID; propertyIds = @($PropertyIDs) })
+    $response = Send-AdapterRequest -Method POST -Path '/v1/properties' -Body $body
+    return Require-Status -Response $response -Expected 200 -Operation 'ItemProperties'
+}
+
 function Read-Items {
     param([string[]]$ItemIDs)
 
@@ -1098,6 +1122,41 @@ try {
     foreach ($expectedItemID in @('Test/Int32', 'Test/Float', 'Test/String')) {
         Assert-True (@($browseItems | Where-Object { $_.itemId -ceq $expectedItemID }).Count -eq 1) `
             "Browse did not preserve exact ItemID $expectedItemID"
+    }
+
+    # OPC DA item properties over HTTP. The gRPC probe exercises the same DA
+    # path; this checks that the JSON shape carries the source's answers, which
+    # is the frontend's own job and is not covered by that probe.
+    $available = Get-AvailableItemProperties -ItemID 'Test/Float'
+    Assert-True ($available.itemId -ceq 'Test/Float') 'AvailableItemProperties answered for a different ItemID'
+    $readable = @($available.properties | Where-Object { [int]$_.propertyId -gt 4 })
+    foreach ($property in $available.properties) {
+        Assert-True ([int]$property.propertyId -ne 0) 'source reported an item property with identifier 0'
+        # QueryAvailableProperties states a VARTYPE for every property, and
+        # VT_EMPTY is zero, so the field must be present rather than inferred.
+        Assert-True (Test-JSONProperty $property 'dataType') 'an available property carried no dataType'
+    }
+    if ($readable.Count -gt 0) {
+        $ids = @($readable | ForEach-Object { [int]$_.propertyId })
+        $properties = Get-ItemProperties -ItemID 'Test/Float' -PropertyIDs $ids
+        Assert-True ($properties.results.Count -eq $ids.Count) 'ItemProperties result count did not match the request'
+        for ($index = 0; $index -lt $ids.Count; $index++) {
+            $result = $properties.results[$index]
+            Assert-True ([int]$result.propertyId -eq $ids[$index]) 'ItemProperties returned results out of request order'
+            Assert-True (Test-JSONProperty $result 'hresult') 'an item property result carried no HRESULT'
+            # A source can answer a property and give nothing. Presence is its
+            # own field, so absence is never reported as a failure.
+            $carriesValue = Test-JSONProperty $result 'value'
+            Assert-True ([bool]$result.valuePresent -eq $carriesValue) `
+                'an item property contradicted its own value presence'
+            if (-not [bool]$result.ok) {
+                Assert-True (-not $carriesValue) 'a failed item property carried a value'
+            }
+        }
+        Write-Host "HTTP_ITEM_PROPERTIES_PASS offered=$($ids -join ',') valuesLogged=false"
+    }
+    else {
+        Write-Host 'HTTP_ITEM_PROPERTIES_PASS offered=none valuesLogged=false'
     }
 
     $partial = Read-Items @('Test/Int32', '__opcda_adapter_invalid_item__')

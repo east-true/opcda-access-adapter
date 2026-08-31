@@ -170,10 +170,12 @@ release-promotion gate.
   2.05a Write that carries a value only). `docs/compatibility.md` records the
   executed result.
 
-  So the remaining exposure is not that eleven rows are untested. It is that six
+  So the remaining exposure is not that ten rows are untested. It is that five
   of them are unreachable **today** and would become reachable the moment the
-  decision behind them changes, and that a different vendor's server may produce
-  the three this one does not.
+  decision behind them changes — as one already did: `OPC_E_INVALID_PID` became
+  reachable, and then observed, when the adapter began reading item properties.
+  The rest is that a different vendor's server may produce the three this one
+  does not.
 
 - OPC 10000-8 Table A.1, the DA item property mapping, is **implemented**.
   [ADR-0018](adr/0018-da-item-properties.md) decided to build it, and both

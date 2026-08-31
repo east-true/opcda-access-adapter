@@ -191,7 +191,7 @@ because of decisions this project made on purpose:
 | `OPC_E_RANGE`, `OPC_S_CLAMP` | yes, if the source enforces or clamps a range |
 | `OPC_E_BADTYPE`, `DISP_E_TYPEMISMATCH`, `DISP_E_OVERFLOW` | **no** — ADR-0004 requires the requested VARTYPE to equal the canonical one and answers `TYPE_MISMATCH` itself, so no conversion is ever asked of the source |
 | `OPC_E_INVALIDHANDLE` | **no** — item handles are the adapter's, and a client never supplies one |
-| `OPC_E_INVALID_PID` | **no** — the adapter never reads item properties, because Table A.1 is not implemented |
+| `OPC_E_INVALID_PID` | yes, if the source distinguishes an unknown property identifier — reachable since the adapter reads item properties |
 | `OPC_E_NOTSUPPORTED` | **no** — a 2.05a Write carries a value only, never a quality or timestamp |
 | `E_OUTOFMEMORY` | only under real memory exhaustion |
 | `E_ACCESSDENIED` | activation-level on this source, not per item |

@@ -223,6 +223,16 @@ source's own property identifiers, its own description text, its own VARTYPEs
 and its own HRESULTs, and maps none of them onto anything. OPC 10000-8 Table A.1
 is applied by the OPC UA frontend, not here.
 
+Every available property reports the VARTYPE the source stated for it.
+`VT_EMPTY` is a stated type, not an absent one, so `dataType` is always present
+in that list. In a value result `dataType` is omitted when the source refused
+the property and there is genuinely none.
+
+A source can answer a property **successfully and give nothing**. `valuePresent`
+says whether a value is carried, for the same reason a Read carries
+`timestampPresent`: absence is absence, and it is never reported as a refusal
+the source did not make.
+
 A per-property HRESULT is a **result, not a failure**. A source may offer a
 property for one item and refuse it for another, so the request succeeds and the
 refusal is reported against that property, carrying the exact HRESULT and no
