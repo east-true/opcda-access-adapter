@@ -555,6 +555,14 @@ The status changed with the behaviour. A filter this server cannot perform is
 used to answer, means the filter cannot be used with the attribute — and a
 `DataChangeFilter` on a Value attribute plainly can.
 
+**A percent deadband needs an `EURange`.** Clause 7.2 defines the value as "the
+percentage of the EURange. That is, it applies only to AnalogItems with an
+EURange Property". An item that is not an `AnalogItemType` has no range to take
+a percentage of, so the filter has no defined meaning there and is refused with
+`Bad_MonitoredItemFilterUnsupported`. Passing it to the DA group anyway would
+apply a percentage of nothing. A filter asking for **no** deadband is accepted
+on any item, because there is no percentage in it.
+
 **A deadband belongs to the subscription, because it belongs to the DA group.**
 One UA subscription is backed by one DA group, and a group has exactly one
 `pPercentDeadband`. A second monitored item asking for a different deadband
