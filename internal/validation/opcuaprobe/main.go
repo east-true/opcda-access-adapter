@@ -894,7 +894,14 @@ func (c *client) browseSourceItems(token opcua.ChannelSecurityToken, session opc
 	if err != nil {
 		return nil, err
 	}
-	return c.browseForItems(token, session, folder)
+	items, err := c.browseForItems(token, session, folder)
+	if err != nil {
+		return nil, err
+	}
+	if err := c.validateAddressSpaceStructure(token, session, folder); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 // browseRoot walks Root to Objects to the source folder, which is what a real
@@ -1161,4 +1168,92 @@ func (c *client) readAttributeValue(token opcua.ChannelSecurityToken, session, n
 		return 0, opcua.Variant{}, fmt.Errorf("read returned %d results", len(response.Results))
 	}
 	return response.Results[0].Status, response.Results[0].Value, nil
+}
+
+// The node identifiers Annex A names for the address space a wrapper builds.
+// They are written out here rather than imported from the server, because a
+// probe that checks the server against the server agrees with it by
+// construction -- including where both are wrong.
+const (
+	folderTypeID           = 61
+	dataItemTypeID         = 2365
+	analogItemTypeID       = 2368
+	twoStateDiscreteTypeID = 2373
+	propertyTypeID         = 68
+	organizesID            = 35
+	hasComponentID         = 47
+	hasPropertyID          = 46
+)
+
+// validateAddressSpaceStructure checks the shape Annex A.3.1 prescribes.
+//
+// Nothing checked it before, and two deviations lived in the address space
+// because of that: every item was a BaseDataVariableType, which Annex A does
+// not offer, and DA leaves were referenced with Organizes where A.3.1.2 says
+// HasComponent. Both were found by reading the clause, and both were invisible
+// here -- the probe walked references without ever looking at what type they
+// were or what type the node had.
+func (c *client) validateAddressSpaceStructure(token opcua.ChannelSecurityToken, session, folder opcua.NodeID) error {
+	handle := uint32(700)
+	branches, leaves := 0, 0
+	pending := []opcua.NodeID{folder}
+
+	for depth := 0; depth < 4 && len(pending) > 0; depth++ {
+		next := make([]opcua.NodeID, 0, len(pending))
+		for _, node := range pending {
+			handle++
+			references, err := c.browse(token, session, node, handle)
+			if err != nil {
+				return err
+			}
+			for _, reference := range references {
+				if !reference.IsForward || reference.NodeID.NodeID.Namespace == 0 {
+					continue
+				}
+				switch reference.NodeClass {
+				case opcua.NodeClassObject:
+					// A.3.1.2: a DA branch is an Object of FolderType, and its
+					// parent references it with Organizes.
+					if reference.TypeDefinition.NodeID.Numeric != folderTypeID {
+						return fmt.Errorf("a DA branch has type definition %s, want FolderType",
+							reference.TypeDefinition.NodeID)
+					}
+					if reference.ReferenceTypeID.Numeric != organizesID {
+						return fmt.Errorf("a DA branch is referenced with %s, A.3.1.2 says Organizes",
+							reference.ReferenceTypeID)
+					}
+					branches++
+					next = append(next, reference.NodeID.NodeID)
+				case opcua.NodeClassVariable:
+					// A.3.1.2: a DA leaf is referenced with HasComponent, and
+					// A.3.1.3 gives it one of the DataItem types. A property is
+					// a Variable too, and is told apart by its reference type.
+					if reference.ReferenceTypeID.Numeric == hasPropertyID {
+						if reference.TypeDefinition.NodeID.Numeric != propertyTypeID {
+							return fmt.Errorf("a property has type definition %s, A.3.1.4 says PropertyType",
+								reference.TypeDefinition.NodeID)
+						}
+						continue
+					}
+					if reference.ReferenceTypeID.Numeric != hasComponentID {
+						return fmt.Errorf("a DA leaf is referenced with %s, A.3.1.2 says HasComponent",
+							reference.ReferenceTypeID)
+					}
+					switch reference.TypeDefinition.NodeID.Numeric {
+					case dataItemTypeID, analogItemTypeID, twoStateDiscreteTypeID:
+					default:
+						return fmt.Errorf("a DA item has type definition %s, which A.3.1.3 does not choose",
+							reference.TypeDefinition.NodeID)
+					}
+					leaves++
+				}
+			}
+		}
+		pending = next
+	}
+	if leaves == 0 {
+		return fmt.Errorf("the address space exposed no DA items to check")
+	}
+	fmt.Printf("opcua address space annexA branches=%d leaves=%d valuesLogged=false\n", branches, leaves)
+	return nil
 }
