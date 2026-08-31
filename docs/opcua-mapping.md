@@ -532,10 +532,19 @@ property's reconciles the two, and A.3.1.3 is the clause that forces the
 reading. This adapter followed A.1 literally at first; it now follows A.3.1.3.
 
 `EngineeringUnits` carries the DA unit string as the `DisplayName` of an
-`EUInformation`. Its `NamespaceUri` and `UnitId` are left empty: DA supplies a
-unit's name and nothing else, and deriving a UNECE code from a name would be
-inventing an identity the source never gave — which a client reading `UnitId`
-would then act on.
+`EUInformation` — which is what `DisplayName` is for: clause 5.6.4.3 calls it
+"typically the abbreviation of the engineering unit", and an abbreviation is
+what DA supplies.
+
+The other three fields say, precisely, that nothing more is known.
+`NamespaceUri` is empty because no organization defined this unit — a DA source
+handed over a bare string. `UnitId` is **−1**, which 5.6.4.3 defines as the
+value for "a unitId is not available"; zero would say *unit zero*, and zero is
+a number a code set may legitimately use. `Description` is empty because it
+holds the unit's full name and DA gave an abbreviation.
+
+Deriving a UNECE code from a unit's name would be inventing an identity the
+source never gave, which a client reading `UnitId` would then act on.
 
 ## Subscriptions: the one filter a DA group can apply
 

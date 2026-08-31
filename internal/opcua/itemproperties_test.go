@@ -1117,3 +1117,34 @@ func TestARangeWithAnUnknownLimitUsesNaN(t *testing.T) {
 		t.Fatalf("a refused limit answered %s", status.Hex())
 	}
 }
+
+// Clause 5.6.4.3: EUInformation's unitId is an "identifier for programmatic
+// lookup. -1 is used if a unitId is not available." DA supplies a unit string
+// and no identifier, so -1 is the answer. Zero is a number a code set may
+// legitimately use, and writing it would say "unit zero" where the truth is
+// "no unit identifier".
+func TestEngineeringUnitsCarriesNoUnitIdentifierAsMinusOne(t *testing.T) {
+	space := testAddressSpace(t)
+	variant, status := buildEngineeringUnits(space, []opcda.ItemPropertyValue{
+		{OK: true, Value: "degC", ValuePresent: true, HRESULTPresent: true},
+	})
+	if status != StatusGood {
+		t.Fatalf("status = %s", status.Hex())
+	}
+	object, ok := variant.Value.(ExtensionObject)
+	if !ok {
+		t.Fatalf("value = %#v", variant.Value)
+	}
+	// namespaceUri is an empty String: four bytes of length, all zero for "".
+	// unitId is the Int32 that follows it.
+	if len(object.Body) < 8 {
+		t.Fatalf("body is %d bytes", len(object.Body))
+	}
+	unitID := int32(binary.LittleEndian.Uint32(object.Body[4:8]))
+	if unitID != -1 {
+		t.Fatalf("unitId = %d, clause 5.6.4.3 says -1 when it is not available", unitID)
+	}
+	if !bytes.Contains(object.Body, []byte("degC")) {
+		t.Fatal("the unit string is not in the displayName")
+	}
+}
