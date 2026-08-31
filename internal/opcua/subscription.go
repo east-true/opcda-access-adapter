@@ -37,12 +37,16 @@ const (
 	StatusBadSubscriptionIDInvalid  StatusCode = 0x80280000
 	StatusBadMonitoringModeInvalid  StatusCode = 0x80410000
 	StatusBadMonitoredItemIDInvalid StatusCode = 0x80420000
-	StatusBadFilterNotAllowed       StatusCode = 0x80450000
-	StatusBadTooManySubscriptions   StatusCode = 0x80770000
-	StatusBadTooManyPublishRequests StatusCode = 0x80780000
-	StatusBadNoSubscription         StatusCode = 0x80790000
-	StatusBadSequenceNumberUnknown  StatusCode = 0x807A0000
-	StatusBadTooManyMonitoredItems  StatusCode = 0x80DB0000
+	// A filter the server cannot perform, as distinct from one the attribute
+	// does not allow: OPC 10000-4 keeps those apart and so does this.
+	StatusBadMonitoredItemFilterUnsupported StatusCode = 0x80440000
+	StatusBadDeadbandFilterInvalid          StatusCode = 0x808E0000
+	StatusBadFilterNotAllowed               StatusCode = 0x80450000
+	StatusBadTooManySubscriptions           StatusCode = 0x80770000
+	StatusBadTooManyPublishRequests         StatusCode = 0x80780000
+	StatusBadNoSubscription                 StatusCode = 0x80790000
+	StatusBadSequenceNumberUnknown          StatusCode = 0x807A0000
+	StatusBadTooManyMonitoredItems          StatusCode = 0x80DB0000
 )
 
 // MonitoringMode values from OPC 10000-4 Table 148.
@@ -840,6 +844,12 @@ type uaSubscription struct {
 	nextItemID uint32
 	byHandle   map[uint32]*monitoredItem
 
+	// deadband is the percent deadband the DA group carries. A.3.5 maps a
+	// client's PercentDeadband onto it, and a DA group has exactly one, so it
+	// is a property of the subscription rather than of a monitored item.
+	deadband    float32
+	deadbandSet bool
+
 	// da is the DA subscription that supplies notifications. It is nil until
 	// the first monitored item is created, because a DA group needs its items.
 	da opcda.Subscription
@@ -1047,11 +1057,19 @@ func (s *SubscriptionService) prepareMonitoredItem(subscription *uaSubscription,
 		// Only the Value attribute changes, so only it can be monitored here.
 		return failed(StatusBadAttributeIDInvalid), nil
 	}
-	// A monitoring filter is not supported: the DA group's deadband is the
-	// only filtering the source offers, and silently ignoring a filter the
-	// client asked for would misreport what it will receive.
-	if !create.RequestedParameters.Filter.TypeID.IsNull() {
-		return failed(StatusBadFilterNotAllowed), nil
+	// A.3.5: a percent deadband is the one filter a DA group can apply. One is
+	// accepted and passed to the group; anything else is refused rather than
+	// accepted and quietly not applied, which would misreport what the client
+	// will receive.
+	deadband, filterStatus := deadbandForFilter(create.RequestedParameters.Filter, DefaultBinaryLimits())
+	if filterStatus != StatusGood {
+		return failed(filterStatus), nil
+	}
+	// The group has one deadband, so every item in the subscription shares it.
+	// A second item asking for a different one cannot be honoured, and saying
+	// so is better than applying somebody else's.
+	if subscription.deadbandSet && subscription.deadband != deadband {
+		return failed(StatusBadMonitoredItemFilterUnsupported), nil
 	}
 	// A node identifier naming a DA item can be monitored without having been
 	// browsed, since a source need not implement Browse at all.
@@ -1077,6 +1095,8 @@ func (s *SubscriptionService) prepareMonitoredItem(subscription *uaSubscription,
 		return failed(StatusBadInvalidArgument), nil
 	}
 
+	subscription.deadband = deadband
+	subscription.deadbandSet = true
 	subscription.nextItemID++
 	item := &monitoredItem{
 		id:           subscription.nextItemID,
@@ -1126,6 +1146,7 @@ func (s *SubscriptionService) rebuildDASubscription(ctx context.Context, subscri
 	created, err := s.runtime.Subscribe(createCtx, opcda.SubscribeRequest{
 		Items:               itemIDs,
 		RequestedUpdateRate: updateRate,
+		Deadband:            subscription.deadband,
 	})
 	if err != nil {
 		return err

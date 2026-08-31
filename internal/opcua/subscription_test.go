@@ -568,14 +568,37 @@ func TestMonitoredItemsRefuseWhatTheyCannotMonitor(t *testing.T) {
 			RequestedParameters: MonitoringParameters{ClientHandle: 13, Filter: NullExtensionObject()},
 		}, StatusBadIndexRangeInvalid},
 		// Silently ignoring a filter would misreport what the client receives.
-		{"a monitoring filter", MonitoredItemCreateRequest{
+		// Bad_MonitoredItemFilterUnsupported, not Bad_FilterNotAllowed: the
+		// filter is allowed on the Value attribute, this server cannot do it.
+		{"a filter that is not a DataChangeFilter", MonitoredItemCreateRequest{
 			ItemToMonitor: ReadValueID{NodeID: ItemNodeID("Test/Int32"), AttributeID: AttributeValue},
 			RequestedParameters: MonitoringParameters{
 				ClientHandle: 14,
 				Filter: ExtensionObject{
 					TypeID: NumericNodeID(0, 583), Encoding: ExtensionObjectNoBody},
 			},
-		}, StatusBadFilterNotAllowed},
+		}, StatusBadMonitoredItemFilterUnsupported},
+		{"an absolute deadband, which a DA group has no form of", MonitoredItemCreateRequest{
+			ItemToMonitor: ReadValueID{NodeID: ItemNodeID("Test/Int32"), AttributeID: AttributeValue},
+			RequestedParameters: MonitoringParameters{
+				ClientHandle: 15,
+				Filter:       dataChangeFilter(t, DataChangeTriggerStatusValue, DeadbandAbsolute, 2),
+			},
+		}, StatusBadMonitoredItemFilterUnsupported},
+		{"a percent deadband outside its range", MonitoredItemCreateRequest{
+			ItemToMonitor: ReadValueID{NodeID: ItemNodeID("Test/Int32"), AttributeID: AttributeValue},
+			RequestedParameters: MonitoringParameters{
+				ClientHandle: 16,
+				Filter:       dataChangeFilter(t, DataChangeTriggerStatusValue, DeadbandPercent, 101),
+			},
+		}, StatusBadDeadbandFilterInvalid},
+		{"a trigger DA cannot report on", MonitoredItemCreateRequest{
+			ItemToMonitor: ReadValueID{NodeID: ItemNodeID("Test/Int32"), AttributeID: AttributeValue},
+			RequestedParameters: MonitoringParameters{
+				ClientHandle: 17,
+				Filter:       dataChangeFilter(t, DataChangeTriggerStatusValueTimestamp, DeadbandNone, 0),
+			},
+		}, StatusBadMonitoredItemFilterUnsupported},
 	}
 	for _, testCase := range cases {
 		t.Run(testCase.name, func(t *testing.T) {
@@ -1173,5 +1196,85 @@ func TestASubscribedValueAndAReadValueCannotDisagree(t *testing.T) {
 				t.Errorf("value: read %+v, subscribed %+v", read.Value, subscribed.Value)
 			}
 		})
+	}
+}
+
+// dataChangeFilter builds the ExtensionObject a client sends.
+func dataChangeFilter(t *testing.T, trigger, deadbandType uint32, value float64) ExtensionObject {
+	t.Helper()
+	encoder, err := NewEncoder(DefaultBinaryLimits())
+	if err != nil {
+		t.Fatalf("NewEncoder: %v", err)
+	}
+	encoder.WriteUInt32(trigger)
+	encoder.WriteUInt32(deadbandType)
+	encoder.WriteDouble(value)
+	body, err := encoder.Bytes()
+	if err != nil {
+		t.Fatalf("encode the filter: %v", err)
+	}
+	return ExtensionObject{
+		TypeID:   NumericNodeID(0, NodeIDDataChangeFilterEncodingDefaultBinary),
+		Encoding: ExtensionObjectByteString,
+		Body:     body,
+	}
+}
+
+// A.3.5 names the percent deadband as the one filter the wrapper supports, and
+// the DA core has always been able to carry it. A UA client asking for one now
+// gets it applied to the group rather than refused.
+func TestAPercentDeadbandReachesTheDAGroup(t *testing.T) {
+	runtime := &subscribingRuntime{}
+	service, _ := testSubscriptionService(t, runtime)
+	id := createSubscription(t, service)
+
+	response, err := service.CreateMonitoredItems(context.Background(), testSession, CreateMonitoredItemsRequest{
+		Header:             RequestHeader{AdditionalHeader: NullExtensionObject()},
+		SubscriptionID:     id,
+		TimestampsToReturn: TimestampsBoth,
+		ItemsToCreate: []MonitoredItemCreateRequest{{
+			ItemToMonitor:  ReadValueID{NodeID: ItemNodeID("Test/Int32"), AttributeID: AttributeValue},
+			MonitoringMode: MonitoringModeReporting,
+			RequestedParameters: MonitoringParameters{
+				ClientHandle: 40, SamplingInterval: 250, QueueSize: 1,
+				Filter: dataChangeFilter(t, DataChangeTriggerStatusValue, DeadbandPercent, 12.5),
+			},
+		}},
+	}, channelEpoch)
+	if err != nil {
+		t.Fatalf("CreateMonitoredItems: %v", err)
+	}
+	if response.Results[0].StatusCode != StatusGood {
+		t.Fatalf("status = %s", response.Results[0].StatusCode.Hex())
+	}
+	requests := runtime.subscribeRequests()
+	if len(requests) != 1 {
+		t.Fatalf("DA subscriptions = %d", len(requests))
+	}
+	if requests[0].Deadband != 12.5 {
+		t.Fatalf("the DA group was given deadband %v, want 12.5", requests[0].Deadband)
+	}
+
+	// A DA group has one deadband. A second item asking for a different one
+	// cannot be honoured, and saying so is better than applying somebody
+	// else's.
+	differing, err := service.CreateMonitoredItems(context.Background(), testSession, CreateMonitoredItemsRequest{
+		Header:             RequestHeader{AdditionalHeader: NullExtensionObject()},
+		SubscriptionID:     id,
+		TimestampsToReturn: TimestampsBoth,
+		ItemsToCreate: []MonitoredItemCreateRequest{{
+			ItemToMonitor:  ReadValueID{NodeID: ItemNodeID("Test/Float"), AttributeID: AttributeValue},
+			MonitoringMode: MonitoringModeReporting,
+			RequestedParameters: MonitoringParameters{
+				ClientHandle: 41, SamplingInterval: 250, QueueSize: 1,
+				Filter: dataChangeFilter(t, DataChangeTriggerStatusValue, DeadbandPercent, 30),
+			},
+		}},
+	}, channelEpoch)
+	if err != nil {
+		t.Fatalf("CreateMonitoredItems: %v", err)
+	}
+	if differing.Results[0].StatusCode != StatusBadMonitoredItemFilterUnsupported {
+		t.Fatalf("a differing deadband answered %s", differing.Results[0].StatusCode.Hex())
 	}
 }
