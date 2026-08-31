@@ -335,13 +335,23 @@ reports `unsupported`, browsing its items succeeds with the references they do
 have, and no property node is created. The answer is recorded once rather than
 re-asked for every browse of every item.
 
-### Not decided
+### A deviation, not an open choice: the VariableType
 
-Whether a node whose EU range is known should be promoted from
-`BaseDataVariableType` to `AnalogItemType`. `EURange` is reachable as a property
-of a `BaseDataVariableType` node, so the value is delivered either way, and
-promoting a node means claiming a type whose mandatory properties must then
-always exist — including for items the source later stops describing.
+Every source item is a `BaseDataVariableType`. **Annex A.3.1.3 does not permit
+that**, and `BaseDataVariableType` appears nowhere in Annex A: the wrapper is
+told to choose between `AnalogItemType`, `TwoStateDiscreteType`,
+`MultiStateDiscreteType` and `DataItemType` according to which DA properties the
+item has, with `DataItemType` as the floor.
+
+This was recorded here as an undecided improvement — "should a node be promoted
+to `AnalogItemType`?" — which understated it. It is a deviation that had not
+been identified as one.
+
+[ADR-0018](adr/0018-da-item-properties.md) carries the full rule, what
+implementing it would cost, and the second thing reading A.3.1.3 turned up: the
+property types above follow Table A.1's "String" column, and A.3.1.3 puts those
+same values on the standard types where they are `EUInformation` and
+`LocalizedText`. The two readings have to be settled together.
 
 ## Timestamps
 
