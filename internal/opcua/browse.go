@@ -422,8 +422,11 @@ func (d *Decoder) ReadBrowseNextResponse() (BrowseNextResponse, error) {
 
 // BrowseLimits bounds what one Browse can cost the server.
 type BrowseLimits struct {
-	MaxNodesPerBrowse       int
-	MaxReferencesPerNode    int
+	MaxNodesPerBrowse    int
+	MaxReferencesPerNode int
+	// MaxContinuationPoints is per session, as 7.9 defines it: "Servers
+	// specify a maximum number of ContinuationPoints per Session". The total
+	// the process can hold is therefore this times the session limit.
 	MaxContinuationPoints   int
 	ContinuationPointExpiry time.Duration
 }
@@ -451,6 +454,18 @@ func (limits BrowseLimits) ValidateForConfiguration() error { return limits.vali
 type continuation struct {
 	remaining []ReferenceDescription
 	createdAt time.Time
+	// session owns this point. Clause 5.9.3.1: "the BrowseNext shall be
+	// submitted on the same Session that was used to submit the Browse or
+	// BrowseNext that is being continued", and 7.9 has points released when
+	// that session closes.
+	session string
+	// maximum is the per-node limit the original Browse asked for, carried
+	// forward because BrowseNext has no parameter to restate it. Clause
+	// 5.9.3.1 defines "too large" as exceeding "the maximum number of results
+	// to return that was specified by the Client in the original Browse
+	// request", so it governs every response continuing that Browse, not just
+	// the first.
+	maximum int
 }
 
 // BrowseService answers Browse and BrowseNext against the address space.
@@ -480,7 +495,7 @@ func (s *BrowseService) AttachPopulator(populator *Populator) { s.populator = po
 // Browse answers one request. Table 34: the size and order of the results match
 // the size and order of nodesToBrowse, so a per-node failure occupies its slot
 // rather than shortening the list.
-func (s *BrowseService) Browse(ctx context.Context, request BrowseRequest, now time.Time) (BrowseResponse, error) {
+func (s *BrowseService) Browse(ctx context.Context, session string, request BrowseRequest, now time.Time) (BrowseResponse, error) {
 	if len(request.NodesToBrowse) == 0 {
 		return BrowseResponse{}, uacpError(StatusBadNothingToDo, "the browse request named no nodes")
 	}
@@ -512,7 +527,7 @@ func (s *BrowseService) Browse(ctx context.Context, request BrowseRequest, now t
 			results = append(results, BrowseResult{StatusCode: statusForPopulationError(err)})
 			continue
 		}
-		results = append(results, s.browseNode(description, maximum, now))
+		results = append(results, s.browseNode(session, description, maximum, now))
 	}
 	return BrowseResponse{
 		Header: ResponseHeader{
@@ -557,7 +572,7 @@ func statusForPopulationError(err error) StatusCode {
 	return statusForRuntimeError(err)
 }
 
-func (s *BrowseService) browseNode(description BrowseDescription, maximum int, now time.Time) BrowseResult {
+func (s *BrowseService) browseNode(session string, description BrowseDescription, maximum int, now time.Time) BrowseResult {
 	if description.BrowseDirection == BrowseDirectionInvalid {
 		return BrowseResult{StatusCode: StatusBadBrowseDirectionInvalid}
 	}
@@ -593,11 +608,13 @@ func (s *BrowseService) browseNode(description BrowseDescription, maximum int, n
 	if len(matched) <= maximum {
 		return BrowseResult{StatusCode: StatusGood, References: matched}
 	}
-	point, err := s.storeContinuation(matched[maximum:], now)
+	point, err := s.storeContinuation(session, matched[maximum:], maximum, now)
 	if err != nil {
-		// Table 113 and Bad_NoContinuationPoints: the server cannot hold more,
-		// so the operation fails rather than silently truncating.
-		return BrowseResult{StatusCode: StatusBadNoContinuationPoints}
+		// The operation fails rather than silently truncating: a client that
+		// received part of an answer and no continuation point would have no
+		// way of knowing the rest existed. The error carries its own status --
+		// a failed random read is not the server running out of points.
+		return BrowseResult{StatusCode: statusForPopulationError(err)}
 	}
 	return BrowseResult{StatusCode: StatusGood, ContinuationPoint: point, References: matched[:maximum]}
 }
@@ -693,19 +710,68 @@ func applyResultMask(reference Reference, mask uint32) ReferenceDescription {
 	return description
 }
 
-func (s *BrowseService) storeContinuation(remaining []ReferenceDescription, now time.Time) ([]byte, error) {
+func (s *BrowseService) storeContinuation(session string, remaining []ReferenceDescription, maximum int, now time.Time) ([]byte, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.expireLocked(now)
-	if len(s.points) >= s.limits.MaxContinuationPoints {
-		return nil, uacpError(StatusBadNoContinuationPoints, "no continuation point is available")
+	// Clause 7.9: "a Server shall automatically free ContinuationPoints from
+	// prior requests from a Session if they are needed to process a new request
+	// from this Session". So a session at its limit loses its own oldest point
+	// rather than being refused -- the newest request is the one the client is
+	// waiting on, and the abandoned one is what it has stopped asking about.
+	// Only this session's points are touched: another session's are not this
+	// one's to spend.
+	//
+	// "Prior requests" is the whole of it. A point handed out earlier in this
+	// same response is not spare capacity: 7.9 continues, "a Server shall
+	// process the operations until it uses the maximum number of continuation
+	// points in this response. Once that happens the Server shall return a
+	// Bad_NoContinuationPoints error for any remaining operations". Freeing
+	// those would revoke a point in the very response that carries it.
+	if !s.freeOldestLocked(session, now) {
+		return nil, uacpError(StatusBadNoContinuationPoints,
+			"this session holds its %d continuation points for this response alone",
+			s.limits.MaxContinuationPoints)
 	}
 	identifier := make([]byte, 16)
 	if _, err := rand.Read(identifier); err != nil {
 		return nil, uacpError(StatusBadTcpInternalError, "could not generate a continuation point")
 	}
-	s.points[string(identifier)] = &continuation{remaining: remaining, createdAt: now}
+	s.points[string(identifier)] = &continuation{
+		remaining: remaining, createdAt: now, session: session, maximum: maximum,
+	}
 	return identifier, nil
+}
+
+// freeOldestLocked drops this session's oldest points from prior requests until
+// it has room for one more, and reports whether it made any. It cannot touch a
+// point this request itself created, which is what a createdAt of now marks.
+func (s *BrowseService) freeOldestLocked(session string, now time.Time) bool {
+	for {
+		held := 0
+		oldestKey := ""
+		var oldest time.Time
+		for key, point := range s.points {
+			if point.session != session {
+				continue
+			}
+			held++
+			if !point.createdAt.Before(now) {
+				continue
+			}
+			if oldestKey == "" || point.createdAt.Before(oldest) {
+				oldestKey, oldest = key, point.createdAt
+			}
+		}
+		if held < s.limits.MaxContinuationPoints {
+			return true
+		}
+		if oldestKey == "" {
+			// Every point this session holds belongs to this response.
+			return false
+		}
+		delete(s.points, oldestKey)
+	}
 }
 
 func (s *BrowseService) expireLocked(now time.Time) {
@@ -717,7 +783,7 @@ func (s *BrowseService) expireLocked(now time.Time) {
 }
 
 // BrowseNext continues or releases continuation points.
-func (s *BrowseService) BrowseNext(request BrowseNextRequest, now time.Time) (BrowseNextResponse, error) {
+func (s *BrowseService) BrowseNext(session string, request BrowseNextRequest, now time.Time) (BrowseNextResponse, error) {
 	if len(request.ContinuationPoints) == 0 {
 		return BrowseNextResponse{}, uacpError(StatusBadNothingToDo, "no continuation point was supplied")
 	}
@@ -736,7 +802,10 @@ func (s *BrowseService) BrowseNext(request BrowseNextRequest, now time.Time) (Br
 	if request.ReleaseContinuationPoints {
 		s.mu.Lock()
 		for _, point := range request.ContinuationPoints {
-			delete(s.points, string(point))
+			// A session releases only what it owns.
+			if held, ok := s.points[string(point)]; ok && held.session == session {
+				delete(s.points, string(point))
+			}
 		}
 		s.mu.Unlock()
 		return BrowseNextResponse{Header: header, Results: []BrowseResult{}, Diagnostics: []DiagnosticInfo{}}, nil
@@ -744,32 +813,47 @@ func (s *BrowseService) BrowseNext(request BrowseNextRequest, now time.Time) (Br
 
 	results := make([]BrowseResult, 0, len(request.ContinuationPoints))
 	for _, point := range request.ContinuationPoints {
-		results = append(results, s.continueBrowse(point, now))
+		results = append(results, s.continueBrowse(session, point, now))
 	}
 	return BrowseNextResponse{Header: header, Results: results, Diagnostics: []DiagnosticInfo{}}, nil
 }
 
-func (s *BrowseService) continueBrowse(point []byte, now time.Time) BrowseResult {
+func (s *BrowseService) continueBrowse(session string, point []byte, now time.Time) BrowseResult {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.expireLocked(now)
 	stored, ok := s.points[string(point)]
-	if !ok {
+	// Clause 5.9.3.1: "the BrowseNext shall be submitted on the same Session
+	// that was used to submit the Browse ... that is being continued". Another
+	// session's point is not invalid in general, but it is invalid here, and
+	// saying so is all a client on the wrong session needs to hear.
+	if !ok || stored.session != session {
 		return BrowseResult{StatusCode: StatusBadContinuationPointInvalid}
 	}
 	// A continuation point is consumed by use: the client gets a new one if
 	// more remains, so a stale point can never be replayed.
 	delete(s.points, string(point))
 
-	maximum := s.limits.MaxReferencesPerNode
+	// The original Browse's limit, not the server's: 5.9.3.1 defines "too
+	// large" against "the maximum number of results to return that was
+	// specified by the Client in the original Browse request", so a client that
+	// asked for five per node gets five here too rather than the server's own
+	// far larger bound.
+	maximum := stored.maximum
 	if len(stored.remaining) <= maximum {
 		return BrowseResult{StatusCode: StatusGood, References: stored.remaining}
 	}
 	next := make([]byte, 16)
 	if _, err := rand.Read(next); err != nil {
-		return BrowseResult{StatusCode: StatusBadNoContinuationPoints}
+		// Never Bad_NoContinuationPoints: 7.9 says a server "shall never return
+		// Bad_NoContinuationPoints error when continuing a previously halted
+		// operation", and this is not that failure in any case.
+		return BrowseResult{StatusCode: StatusBadTcpInternalError}
 	}
-	s.points[string(next)] = &continuation{remaining: stored.remaining[maximum:], createdAt: now}
+	s.points[string(next)] = &continuation{
+		remaining: stored.remaining[maximum:], createdAt: now,
+		session: session, maximum: maximum,
+	}
 	return BrowseResult{
 		StatusCode: StatusGood, ContinuationPoint: next, References: stored.remaining[:maximum],
 	}
@@ -781,6 +865,22 @@ func (s *BrowseService) ContinuationPointCount() int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return len(s.points)
+}
+
+// ReleaseSession drops every continuation point a session held. Clause 7.9:
+// points "remain active until the Client retrieves the remaining results, the
+// Client releases the ContinuationPoint or the Session is closed".
+func (s *BrowseService) ReleaseSession(session string) int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	released := 0
+	for key, point := range s.points {
+		if point.session == session {
+			delete(s.points, key)
+			released++
+		}
+	}
+	return released
 }
 
 // ExpireContinuationPoints drops points a client abandoned.

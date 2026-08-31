@@ -269,6 +269,8 @@ func NewListenerWithRuntime(config ListenerConfig, runtime opcda.Runtime, channe
 		// call site that forgets is a leak on a real DA server.
 		sessions.OnSessionEnd(func(session SessionInfo) {
 			subs.ReleaseSession(context.Background(), session.Key())
+			// 7.9: a session's continuation points do not outlive it.
+			browse.ReleaseSession(session.Key())
 		})
 	}
 	return listener, nil
@@ -879,10 +881,11 @@ func (l *Listener) dispatchService(channelID uint32, identifier uint32, decoder 
 		if requestErr != nil {
 			return nil, 0, nil, requestErr
 		}
-		if sessionErr := l.requireActivatedSession(request.Header, channelID, now); sessionErr != nil {
+		session, sessionErr := l.activatedSession(request.Header, channelID, now)
+		if sessionErr != nil {
 			return nil, request.Header.RequestHandle, sessionErr, nil
 		}
-		response, browseErr := l.browse.Browse(context.Background(), request, now)
+		response, browseErr := l.browse.Browse(context.Background(), session, request, now)
 		if browseErr != nil {
 			return nil, request.Header.RequestHandle, browseErr, nil
 		}
@@ -893,10 +896,11 @@ func (l *Listener) dispatchService(channelID uint32, identifier uint32, decoder 
 		if requestErr != nil {
 			return nil, 0, nil, requestErr
 		}
-		if sessionErr := l.requireActivatedSession(request.Header, channelID, now); sessionErr != nil {
+		session, sessionErr := l.activatedSession(request.Header, channelID, now)
+		if sessionErr != nil {
 			return nil, request.Header.RequestHandle, sessionErr, nil
 		}
-		response, browseErr := l.browse.BrowseNext(request, now)
+		response, browseErr := l.browse.BrowseNext(session, request, now)
 		if browseErr != nil {
 			return nil, request.Header.RequestHandle, browseErr, nil
 		}

@@ -391,7 +391,7 @@ func TestBrowsingAnItemExposesItsTableA1Properties(t *testing.T) {
 	}
 	browse.AttachPopulator(populator)
 
-	response, err := browse.Browse(context.Background(), BrowseRequest{
+	response, err := browse.Browse(context.Background(), testSession, BrowseRequest{
 		NodesToBrowse: []BrowseDescription{{
 			NodeID:          ItemNodeID("Test/Float"),
 			BrowseDirection: BrowseDirectionForward,
@@ -691,7 +691,7 @@ func TestBrowsingAnUnknownItemDoesNotCreateIt(t *testing.T) {
 
 	before := space.SourceNodeCount()
 	for index := 0; index < 25; index++ {
-		if _, err := browse.Browse(context.Background(), BrowseRequest{
+		if _, err := browse.Browse(context.Background(), testSession, BrowseRequest{
 			NodesToBrowse: []BrowseDescription{{
 				NodeID:          ItemNodeID(opcda.DAItemID(fmt.Sprintf("Invented/Item%d", index))),
 				BrowseDirection: BrowseDirectionForward,

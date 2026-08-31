@@ -1463,11 +1463,50 @@ matches nothing.
 ### Continuation points
 
 A continuation point is **consumed by use**: the client receives a new one if
-more remains, so a stale point cannot be replayed. Points are bounded in number,
-expire if a client abandons a browse, and `BrowseNext` with
-`releaseContinuationPoints` returns empty arrays and frees them, as Table 37
-requires. When no point can be issued the operation reports
-`Bad_NoContinuationPoints` rather than silently truncating the result.
+more remains, so a stale point cannot be replayed. Points expire if a client
+abandons a browse, and `BrowseNext` with `releaseContinuationPoints` returns
+empty arrays and frees them, as Table 37 requires.
+
+**A point belongs to one session.** Clause 5.9.3.1: "the BrowseNext shall be
+submitted on the same Session that was used to submit the Browse or BrowseNext
+that is being continued." Another session offering the same opaque value gets
+`Bad_ContinuationPointInvalid` and does not consume it, and a release from the
+wrong session leaves it alone. Clause 7.9 adds the other end of a point's life:
+they "remain active until the Client retrieves the remaining results, the Client
+releases the ContinuationPoint or the Session is closed", so closing a session
+frees everything it held.
+
+**The allowance is per session**, as 7.9 has it — "Servers specify a maximum
+number of ContinuationPoints per Session". One session filling its allowance
+neither blocks another nor is spent by it.
+
+**A new request frees this session's oldest point rather than being refused.**
+7.9: "a Server shall automatically free ContinuationPoints from prior requests
+from a Session if they are needed to process a new request from this Session."
+The newest request is the one the client is waiting on; the abandoned one is
+what it has stopped asking about. A client that then offers the freed point gets
+`Bad_ContinuationPointInvalid`, which is what 7.9 specifies for a point "that has
+been released".
+
+*Prior* requests is the whole of it. A point handed out earlier in the same
+response is not spare capacity, because freeing it would revoke a point in the
+very response that carries it. 7.9 says what happens instead: "a Server shall
+process the operations until it uses the maximum number of continuation points
+in this response. Once that happens the Server shall return a
+Bad_NoContinuationPoints error for any remaining operations."
+
+**The original Browse's limit governs every continuation of it.** `BrowseNext`
+has no parameter to restate `requestedMaxReferencesPerNode`, and 5.9.3.1 defines
+"too large" as exceeding "the maximum number of results to return that was
+specified by the Client in the original Browse request" — so a client that asked
+for five references per node gets five from each `BrowseNext` too, not the
+server's own far larger bound. The limit is carried in the point.
+
+When a point cannot be issued the operation reports the failure rather than
+silently truncating the result: a client holding part of an answer and no
+continuation point has no way of knowing the rest existed. `BrowseNext` never
+answers `Bad_NoContinuationPoints`, because 7.9 says a server "shall never return
+Bad_NoContinuationPoints error when continuing a previously halted operation".
 
 ### Session enforcement
 
