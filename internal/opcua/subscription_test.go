@@ -37,10 +37,32 @@ func (f *fakeDASubscription) Drain() []opcda.SubscriptionValue {
 	f.pending = nil
 	return values
 }
+
+// push coalesces per ItemID, because opcda.Subscription says its pending set
+// does: "between two update-rate ticks a server reports only the latest cache
+// value, so the adapter coalesces per item in the same way", and a Drain
+// "removes and returns the whole pending set" -- a set with one entry per item.
+// A fake that queued every push instead would let a test assert on a batch no
+// DA source can produce, and the assertion would pass forever without ever
+// having been true.
 func (f *fakeDASubscription) push(values ...opcda.SubscriptionValue) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.pending = append(f.pending, values...)
+	for _, value := range values {
+		replaced := false
+		for index, existing := range f.pending {
+			if existing.ItemID == value.ItemID {
+				// A handle already pending keeps its first-seen position and
+				// takes the newer tuple.
+				f.pending[index] = value
+				replaced = true
+				break
+			}
+		}
+		if !replaced {
+			f.pending = append(f.pending, value)
+		}
+	}
 }
 func (f *fakeDASubscription) invalidate() {
 	f.mu.Lock()
@@ -397,10 +419,13 @@ func TestPublishMapsQualityLikeARead(t *testing.T) {
 	service, _ := testSubscriptionService(t, runtime)
 	id := createSubscription(t, service)
 	monitorItem(t, service, id, ItemNodeID("Test/Int32"), 1)
+	monitorItem(t, service, id, ItemNodeID("Test/Float"), 2)
 
+	// Two items, not two values for one item: a DA group's pending set holds
+	// one value per item, so two qualities can only be observed on two items.
 	runtime.latest().push(
 		daNotification("Test/Int32", 1, QualityUncertain),
-		daNotification("Test/Int32", 2, QualityCommFailure),
+		daNotification("Test/Float", 2, QualityCommFailure),
 	)
 	response, err := service.Publish(context.Background(), testSession, PublishRequest{
 		Header: RequestHeader{AdditionalHeader: NullExtensionObject()},
@@ -809,10 +834,11 @@ func TestMaxNotificationsPerPublishIsHonoured(t *testing.T) {
 	}
 	id := response.SubscriptionID
 	monitorItem(t, service, id, ItemNodeID("Test/Int32"), 1)
+	monitorItem(t, service, id, ItemNodeID("Test/Float"), 2)
 
 	runtime.latest().push(
 		daNotification("Test/Int32", 1, QualityGood),
-		daNotification("Test/Int32", 2, QualityGood),
+		daNotification("Test/Float", 2, QualityGood),
 	)
 	published, err := service.Publish(context.Background(), testSession, PublishRequest{
 		Header: RequestHeader{AdditionalHeader: NullExtensionObject()},
@@ -1390,5 +1416,184 @@ func TestAPercentDeadbandNeedsAnEURange(t *testing.T) {
 	}
 	if none.Results[0].StatusCode != StatusGood {
 		t.Fatalf("a filter with no deadband answered %s", none.Results[0].StatusCode.Hex())
+	}
+}
+
+// monitorAt creates one monitored item asking for a named sampling interval.
+func monitorAt(t *testing.T, service *SubscriptionService, id uint32, node NodeID, handle uint32, interval float64) MonitoredItemCreateResult {
+	t.Helper()
+	response, err := service.CreateMonitoredItems(context.Background(), testSession, CreateMonitoredItemsRequest{
+		Header:             RequestHeader{RequestHandle: 2, AdditionalHeader: NullExtensionObject()},
+		SubscriptionID:     id,
+		TimestampsToReturn: TimestampsBoth,
+		ItemsToCreate: []MonitoredItemCreateRequest{{
+			ItemToMonitor:  ReadValueID{NodeID: node, AttributeID: AttributeValue},
+			MonitoringMode: MonitoringModeReporting,
+			RequestedParameters: MonitoringParameters{
+				ClientHandle: handle, SamplingInterval: interval, QueueSize: 1,
+				Filter: NullExtensionObject(),
+			},
+		}},
+	}, channelEpoch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return response.Results[0]
+}
+
+// OPC 10000-4 7.21: "The Server shall always return a revisedSamplingInterval
+// that is equal or higher than the requested samplingInterval." The DA group's
+// rate is the floor -- nothing can be sampled faster -- and an item asking for
+// something slower keeps what it asked for.
+func TestRevisedSamplingIntervalIsNeverFasterThanRequested(t *testing.T) {
+	for _, testCase := range []struct {
+		name      string
+		requested float64
+		want      float64
+	}{
+		// The group settles on 1000ms, so a faster request cannot be met and
+		// the rate actually delivered is reported instead.
+		{"faster than the group", 100, 1000},
+		{"the group's own rate", 1000, 1000},
+		// Slower is met exactly: the item is paced rather than being handed
+		// everything the group delivers.
+		{"slower than the group", 5000, 5000},
+		// "The value 0 indicates that the Server should use the fastest
+		// practical rate", which is the group's.
+		{"fastest practical", 0, 1000},
+		// "Any negative number is interpreted as -1", the publishing interval.
+		{"negative means the publishing interval", -7, 1000},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			runtime := &subscribingRuntime{revisedRate: 1000 * time.Millisecond}
+			service, _ := testSubscriptionService(t, runtime)
+			id := createSubscription(t, service)
+			result := monitorAt(t, service, id, ItemNodeID("Test/Int32"), 1, testCase.requested)
+			if result.StatusCode != StatusGood {
+				t.Fatalf("create = %s", result.StatusCode.Hex())
+			}
+			if result.RevisedSamplingInterval != testCase.want {
+				t.Fatalf("revised = %v, want %v", result.RevisedSamplingInterval, testCase.want)
+			}
+			if testCase.requested > 0 && result.RevisedSamplingInterval < testCase.requested {
+				t.Fatalf("revised %v is faster than the requested %v",
+					result.RevisedSamplingInterval, testCase.requested)
+			}
+		})
+	}
+}
+
+// An item that asked for a slower rate than the group runs at is paced to it:
+// the interval it was promised is the interval it gets, and the value it
+// finally receives is the newest one, not the one that happened to arrive first.
+func TestASlowItemIsPacedToTheIntervalItWasPromised(t *testing.T) {
+	runtime := &subscribingRuntime{revisedRate: 1000 * time.Millisecond}
+	service, _ := testSubscriptionService(t, runtime)
+	id := createSubscription(t, service)
+	result := monitorAt(t, service, id, ItemNodeID("Test/Int32"), 1, 5000)
+	if result.RevisedSamplingInterval != 5000 {
+		t.Fatalf("revised = %v", result.RevisedSamplingInterval)
+	}
+
+	// The first notification is not paced: a client that has just subscribed
+	// is waiting for the current value.
+	runtime.latest().push(daNotification("Test/Int32", 1, QualityGood))
+	first := publishOnce(t, service, channelEpoch)
+	if len(first) != 1 {
+		t.Fatalf("the first notification did not go out at once: %d", len(first))
+	}
+
+	// A second value inside the promised interval is held, not sent.
+	runtime.latest().push(daNotification("Test/Int32", 2, QualityGood))
+	if held := publishNothing(t, service, channelEpoch.Add(time.Second)); held != 0 {
+		t.Fatalf("a value inside the sampling interval was reported: %d", held)
+	}
+	// A third arrives while the second is still held. The newest wins, which
+	// is what a queue of one holds.
+	runtime.latest().push(daNotification("Test/Int32", 3, QualityGood))
+
+	// Once the interval has passed, the held value goes out -- and it is the
+	// newest, not the one that was held first.
+	after := publishOnce(t, service, channelEpoch.Add(6*time.Second))
+	if len(after) != 1 {
+		t.Fatalf("the held value was not reported: %d", len(after))
+	}
+	if value, ok := after[0].Value.Value.Value.(int32); !ok || value != 3 {
+		t.Fatalf("reported %#v, want the newest value", after[0].Value.Value.Value)
+	}
+}
+
+// publishOnce runs one publishing cycle at a named time and requires it to have
+// something to send. tryPublish is used rather than Publish because pacing is
+// about when a value is reported, and only tryPublish takes the clock.
+func publishOnce(t *testing.T, service *SubscriptionService, now time.Time) []MonitoredItemNotification {
+	t.Helper()
+	request := PublishRequest{Header: RequestHeader{AdditionalHeader: NullExtensionObject()}}
+	response, ready, err := service.tryPublish(context.Background(), testSession, request, nil, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ready {
+		t.Fatal("the cycle had nothing to send")
+	}
+	return response.NotificationMessage.Notifications
+}
+
+// publishNothing runs one publishing cycle and reports how many notifications
+// it produced, which a paced item requires to be none.
+func publishNothing(t *testing.T, service *SubscriptionService, now time.Time) int {
+	t.Helper()
+	request := PublishRequest{Header: RequestHeader{AdditionalHeader: NullExtensionObject()}}
+	response, ready, err := service.tryPublish(context.Background(), testSession, request, nil, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ready {
+		return 0
+	}
+	return len(response.NotificationMessage.Notifications)
+}
+
+// OPC 10000-4 5.13.1.2: "If the Server specifies a value for the
+// MinimumSamplingInterval Attribute it shall always return a
+// revisedSamplingInterval that is equal or higher than the
+// MinimumSamplingInterval if the Client subscribes to the Value Attribute."
+// Here that attribute is the source's own DA Scan Rate, so a faster promise
+// would be a promise the source has already said it will not keep.
+func TestRevisedSamplingIntervalRespectsTheScanRate(t *testing.T) {
+	runtime := &subscribingRuntime{revisedRate: 100 * time.Millisecond}
+	service, space := testSubscriptionService(t, runtime)
+	// The source says this item is only scanned every two seconds.
+	space.NoteScanRate(*itemID("Test/Int32"), 2000)
+	id := createSubscription(t, service)
+
+	// Neither a fast request nor the group's own faster rate may lower it.
+	for _, requested := range []float64{0, 50, 100, 1999} {
+		result := monitorAt(t, service, id, ItemNodeID("Test/Int32"), 1, requested)
+		if result.StatusCode != StatusGood {
+			t.Fatalf("requested %v: create = %s", requested, result.StatusCode.Hex())
+		}
+		if result.RevisedSamplingInterval != 2000 {
+			t.Fatalf("requested %v: revised = %v, want the 2000ms scan rate",
+				requested, result.RevisedSamplingInterval)
+		}
+		deleteMonitoredItem(t, service, id, result.MonitoredItemID)
+	}
+
+	// A request slower than the scan rate is still honoured as asked.
+	result := monitorAt(t, service, id, ItemNodeID("Test/Int32"), 1, 9000)
+	if result.RevisedSamplingInterval != 9000 {
+		t.Fatalf("revised = %v, want the slower requested interval", result.RevisedSamplingInterval)
+	}
+}
+
+func deleteMonitoredItem(t *testing.T, service *SubscriptionService, id, itemID uint32) {
+	t.Helper()
+	if _, err := service.DeleteMonitoredItems(context.Background(), testSession, DeleteMonitoredItemsRequest{
+		Header:           RequestHeader{AdditionalHeader: NullExtensionObject()},
+		SubscriptionID:   id,
+		MonitoredItemIDs: []uint32{itemID},
+	}, channelEpoch); err != nil {
+		t.Fatal(err)
 	}
 }
