@@ -192,8 +192,11 @@ to `all`.
 
 The runtime resets a hierarchical server to root and walks each source browse
 name serially on the DA thread. Flat namespaces accept only the root path.
-Item entries use the exact ItemID returned by `GetItemID`; branch entries do
-not invent an ItemID. Canonical type and access rights are omitted when this
+Item entries use the exact ItemID returned by `GetItemID`. A branch entry
+carries one too when the source names it — A.3.1.2 has a wrapper obtain a
+branch's ItemID from the same call — and carries none when the source declines.
+Nothing is invented either way: an ItemID is never reconstructed from a browse
+path. Canonical type and access rights are omitted when this
 Browse interface does not supply them.
 
 `IOPCBrowseServerAddressSpace` is optional. A server returning

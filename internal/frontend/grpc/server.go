@@ -273,8 +273,17 @@ func (s *Server) Browse(ctx context.Context, request *opcdav1.DABrowseRequest) (
 		encoded := &opcdav1.DABrowseEntry{Name: entry.Name, AccessRights: encodeAccessRights(entry.AccessRights)}
 		switch entry.Kind {
 		case opcda.BrowseEntryBranch:
+			// A branch carries an ItemID when the source names it through
+			// GetItemID, which OPC 10000-8 A.3.1.2 asks a wrapper to obtain.
+			// This used to refuse one outright, on the belief that a branch has
+			// none; what the adapter must not do is invent one, and an ItemID
+			// that arrives here came from the source.
 			if entry.ItemID != nil {
-				return nil, internalResultMismatch("runtime returned an ItemID for a Browse branch")
+				if err := validateText(string(*entry.ItemID), "Browse branch ItemID", s.config.MaxItemIDBytes); err != nil {
+					return nil, internalResultMismatch("runtime returned an invalid Browse branch ItemID")
+				}
+				encoded.ItemId = string(*entry.ItemID)
+				encoded.ItemIdPresent = true
 			}
 			encoded.Kind = opcdav1.DABrowseEntryKind_DA_BROWSE_ENTRY_KIND_BRANCH
 		case opcda.BrowseEntryItem:
