@@ -1121,3 +1121,57 @@ func (*subscribingRuntime) AvailableItemProperties(context.Context, string) ([]o
 func (*subscribingRuntime) ItemProperties(context.Context, opcda.ItemPropertiesRequest) ([]opcda.ItemPropertyValue, error) {
 	return nil, opcda.NewAdapterError(opcda.CodePropertiesUnsupported, "this source offers no item properties")
 }
+
+// A value read and the same value delivered by a subscription must be the same
+// DataValue. dataValueForSubscription says so in a comment and keeps it by
+// delegating to dataValueForRead; nothing checked that it still delegates, and
+// a comment that stops being true is a defect this project has shipped before.
+func TestASubscribedValueAndAReadValueCannotDisagree(t *testing.T) {
+	actual := opcda.VTI4
+	canonical := opcda.VTI4
+	rights := &opcda.DAAccessRights{Raw: 3, Read: true, Write: true}
+	sourceTime := time.Date(2026, 3, 4, 5, 6, 7, 8, time.UTC)
+	now := time.Date(2026, 3, 4, 5, 6, 9, 0, time.UTC)
+
+	for _, testCase := range []struct {
+		name    string
+		value   *opcda.DAValue
+		hresult opcda.HRESULT
+		errCode string
+	}{
+		{"a good value", &opcda.DAValue{ItemID: "Test/Int32", VarType: actual, Value: int32(7),
+			QualityRaw: QualityGood, Timestamp: sourceTime, TimestampPresent: true}, opcda.SOK, ""},
+		{"a bad quality", &opcda.DAValue{ItemID: "Test/Int32", VarType: actual, Value: int32(7),
+			QualityRaw: QualityCommFailure, Timestamp: sourceTime, TimestampPresent: true}, opcda.SOK, ""},
+		{"a quality with limit bits", &opcda.DAValue{ItemID: "Test/Int32", VarType: actual, Value: int32(7),
+			QualityRaw: QualityGood | 0x02, TimestampPresent: false}, opcda.SOK, ""},
+		{"an item the source refused", nil, opcda.HRESULT(-1073479674), ""},
+		{"a value the adapter cannot represent", nil, opcda.SOK, string(opcda.CodeUnsupportedVarType)},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			read := dataValueForRead(opcda.ReadResult{
+				ItemID: "Test/Int32", Value: testCase.value, VarType: &actual,
+				CanonicalType: &canonical, AccessRights: rights,
+				HRESULT: testCase.hresult, HRESULTPresent: true, ErrorCode: testCase.errCode,
+			}, TimestampsBoth, now)
+			subscribed := dataValueForSubscription(opcda.SubscriptionValue{
+				ItemID: "Test/Int32", Value: testCase.value, VarType: &actual,
+				CanonicalType: &canonical, AccessRights: rights,
+				HRESULT: testCase.hresult, HRESULTPresent: true, ErrorCode: testCase.errCode,
+			}, TimestampsBoth, now)
+
+			if read.Status != subscribed.Status {
+				t.Errorf("status: read %s, subscribed %s", read.Status.Hex(), subscribed.Status.Hex())
+			}
+			if read.SourceTimestamp != subscribed.SourceTimestamp {
+				t.Errorf("source timestamp: read %v, subscribed %v", read.SourceTimestamp, subscribed.SourceTimestamp)
+			}
+			if read.ServerTimestamp != subscribed.ServerTimestamp {
+				t.Errorf("server timestamp: read %v, subscribed %v", read.ServerTimestamp, subscribed.ServerTimestamp)
+			}
+			if read.Value.Type != subscribed.Value.Type || read.Value.Value != subscribed.Value.Value {
+				t.Errorf("value: read %+v, subscribed %+v", read.Value, subscribed.Value)
+			}
+		})
+	}
+}
