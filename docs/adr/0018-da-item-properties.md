@@ -82,8 +82,50 @@ the follow-up change has to decide when to ask, and that decision — not this o
 — determines whether the address space carries a property node for an item
 before anyone asks for it.
 
-Whether a node whose EU range is known should be promoted from
-`BaseDataVariableType` to `AnalogItemType` is deliberately **not** decided here.
-`EURange` is reachable as a property of a `BaseDataVariableType` node, so the
-value is delivered either way, and promoting a node means claiming a type whose
-mandatory properties must then always exist.
+### The VariableType a source item is given
+
+This was left open here as "should a node whose EU range is known be promoted to
+`AnalogItemType`?", framed as a nicety, on the grounds that `EURange` is
+reachable either way. **That framing was wrong**, and reading Annex A.3.1.3
+end to end is what showed it: the specification does not leave the type open. It
+prescribes a four-way choice driven by the DA properties an item has.
+
+> A.3.1.3: "DA items (leafs) are represented in the COM UA Wrapper as Variables.
+> The VariableType depends on the existance of special DA properties as follows"
+
+| The item has | VariableType | Carrying |
+|---|---|---|
+| High EU and Low EU, **or** EU Type is Analog | `AnalogItemType` (i=2368) | `EURange`, `EngineeringUnits`, `InstrumentRange` |
+| Open Label and Close Label | `TwoStateDiscreteType` (i=2373) | `TrueState` from Close Label, `FalseState` from Open Label |
+| EU Type is enumerated | `MultiStateDiscreteType` (i=2376) | `EnumStrings` from EU Info |
+| none of the above | `DataItemType` (i=2365) | — |
+
+The adapter gives every source item `BaseDataVariableType`, which **appears
+nowhere in Annex A**. So this is not an undecided improvement; it is a deviation
+that had not been identified as one. The floor the specification sets is
+`DataItemType`, not `BaseDataVariableType`.
+
+Two consequences worth stating before anyone implements it.
+
+**A promoted type is a promise.** `AnalogItemType` *requires* `EURange`
+(clause 5.3.2.3). Once a node claims that type, the property has to be there
+whenever the node is — including after a reconnect in which the source stops
+offering High/Low EU. Today's property nodes are attached from what the source
+says it offers and dropped when it stops; a type definition cannot be dropped
+the same way without the node changing type underneath a client.
+
+**Annex A contradicts itself about the property types, and the adapter picked
+the wrong half.** Table A.1 gives "String" as the OPC UA DataType for EU Units,
+Close Label and Open Label, and this adapter followed that column literally.
+A.3.1.3 puts those same values on `EngineeringUnits`, `TrueState` and
+`FalseState` of the standard types, where they are `EUInformation` and
+`LocalizedText`. Reading A.1's third column as the DA value's mapped type rather
+than the UA property's type reconciles them — and that reading is the one
+A.3.1.3 forces. `docs/opcua-mapping.md` records the current choice as following
+A.1; that note needs revisiting with this, not independently of it.
+
+**Status: undecided, and now with a cost on both sides.** Implementing it means
+the type hierarchy, `EUInformation` and `Range` encodings, `EnumStrings`, and a
+rule for what happens when a source stops offering the properties a claimed type
+requires. Not implementing it means the adapter's items are typed as something
+Annex A never mentions, which a Part 8-aware client may reasonably not expect.
