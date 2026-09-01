@@ -157,6 +157,7 @@ question without rotting.
   | **DA COM vtable slot order** | `opcda.idl` | 6 |
   | StatusCode bit ranges | Part 4 Table 176 | 4 |
   | built-in type ids | Part 6 Table 1 | 25 |
+  | enumeration values | `Opc.Ua.Types.bsd` | 36 |
   | DA error mappings | Part 8 Tables A.4/A.5 | 19 |
   | DA data type mappings | Part 8 Table A.2 | 14 |
   | DA quality mappings | Part 8 Table A.3 | 16 |
