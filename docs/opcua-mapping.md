@@ -33,7 +33,7 @@ suits their source should not have to find them scattered through the document.
 | OPC 10000-4 5.14.1.1 | on lifetime expiry the server "shall issue a StatusChangeNotification notificationMessage with the status code Bad_Timeout" | the subscription is deleted and its DA group released, but no notification is sent: expiry happens precisely because no Publish request was available to carry one |
 | OPC 10000-4 5.7.2.1 | subscriptions survive a session the server terminated, so they can be transferred | they are deleted with the session, because TransferSubscriptions is not implemented and a subscription nothing can reach would hold a DA group open indefinitely |
 | OPC 10000-4 5.13.2.1 | "if the access rights change to read rights, the Server shall start sending data for the MonitoredItem" | access rights are learned once and never revised, so an item that becomes readable stays silent until it is created again. The half of the clause that matters more — the create succeeding, with the status delivered through Publish — is met |
-| OPC 10000-4 Table 47 | a `maxAge` of max Int32 or greater "shall attempt to get a cached value" | every Read goes to the device — the adapter maintains no cache (its DA group is inactive, and the design forbids serving cached values), and a fresh value satisfies any staleness bound a client can ask for. The cost is source load, never correctness |
+| OPC 10000-4 Table 47 | a `maxAge` of max Int32 or greater "shall attempt to get a cached value" | every Read goes to the device. The DA group is created inactive, so the source keeps no cache for it, and design §16.2 makes device the v0 default "for correctness". A fresh value satisfies any staleness bound a client can ask for, so the cost is source load and never correctness. §16.2 permits exposing the DA cache source later, so this is a v0 choice rather than a closed question |
 | 5.4 | a DataItem is never "defined by itself" | an item addressed without being browsed has no parent, because the adapter does not know where it sits in the source's hierarchy and inventing a place would point clients at the wrong one |
 
 `scripts/spec-check/check.py` carries the Table A.3 row as a recorded deviation:
@@ -932,14 +932,19 @@ which is what every Read here does.
 
 **A `maxAge` of max Int32 or greater "shall attempt to get a cached value"**, and
 this adapter reads from the device anyway. It has no cache to offer: its DA group
-is created inactive, so the source maintains nothing for it, and design forbids
-the adapter serving cached values at all. Serving that rule would mean activating
-the group, which makes the source push updates for every item ever read — load an
-operator did not ask for.
+is created inactive, so the source maintains nothing for it, and design §16.2
+makes `device` the v0 default "for correctness". Serving that rule would mean
+activating the group, which makes the source push updates for every item ever
+read — load an operator did not ask for.
 
 Nothing is misreported by this. `maxAge` bounds how **stale** a value may be, and
 a value read now is within any bound. The client receives something fresher than
 it asked for, and the source does more work than it needed to.
+
+This is a v0 choice and not a closed question. §16.2 permits representing the DA
+`cache` source and says that exposing it later "scope 위반이 아니다" — what INV-6
+forbids is a persistent value store, which is a different thing from the source's
+own cache. A later version that exposed `cache` could meet this rule as written.
 
 ## Timestamps
 
