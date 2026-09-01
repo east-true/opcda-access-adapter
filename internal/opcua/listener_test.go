@@ -92,6 +92,18 @@ func dialTestClient(t *testing.T, address string) *testClient {
 	return &testClient{t: t, conn: conn, limits: DefaultBinaryLimits()}
 }
 
+// trySend writes a framed message and reports a write failure instead of
+// failing the test, so a caller can observe the server closing the connection.
+func (c *testClient) trySend(messageType MessageType, chunk byte, body []byte) error {
+	c.t.Helper()
+	header, err := EncodeMessageHeader(messageType, chunk, len(body), 1<<20)
+	if err != nil {
+		return err
+	}
+	_, err = c.conn.Write(append(header, body...))
+	return err
+}
+
 func (c *testClient) send(messageType MessageType, chunk byte, body []byte) {
 	c.t.Helper()
 	header, err := EncodeMessageHeader(messageType, chunk, len(body), 1<<20)
@@ -2075,5 +2087,124 @@ func TestAnAbortedMessageIsDiscardedAndTheChannelSurvives(t *testing.T) {
 	}
 	if response.Results[0].StatusCode != StatusGood {
 		t.Fatalf("browse after abort = %s", response.Results[0].StatusCode.Hex())
+	}
+}
+
+// A server may announce no request bound, which Table 75 allows with a zero
+// MaxMessageSize. That cannot mean an unbounded buffer: with reassembly in
+// place, a peer would otherwise decide how much memory this process spends, one
+// intermediate chunk at a time and never sending a final one.
+func TestAnUnboundedServerStillRefusesAnEndlessRequest(t *testing.T) {
+	config := testListenerConfig()
+	// Neither bound announced, which is the configuration that has nothing
+	// else to stop the buffer growing.
+	config.MaxMessageSize = 0
+	config.MaxChunkCount = 0
+	listener, address := startTestListener(t, config)
+	_ = listener
+
+	client := dialTestClient(t, address)
+	client.hello()
+	opened, err := client.openChannel(0, TokenRequestIssue, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Intermediate chunks, never a final one. The binary message bound is the
+	// ceiling, so this ends in a refusal rather than in memory.
+	filler := make([]byte, 32*1024)
+	ceiling := config.Binary.MaxMessageBytes
+	for sent := 0; sent <= ceiling+len(filler); sent += len(filler) {
+		body, encodeErr := NewEncoder(client.limits)
+		if encodeErr != nil {
+			t.Fatal(encodeErr)
+		}
+		body.WriteUInt32(opened.SecurityToken.SecureChannelID)
+		body.WriteUInt32(opened.SecurityToken.TokenID)
+		client.sequence++
+		body.WriteUInt32(client.sequence)
+		body.WriteUInt32(9)
+		body.write(filler)
+		encoded, bytesErr := body.Bytes()
+		if bytesErr != nil {
+			t.Fatal(bytesErr)
+		}
+		if err := client.trySend(MessageTypeSecure, ChunkIntermediate, encoded); err != nil {
+			// The server closed the connection on us, which is the refusal
+			// arriving as a broken pipe.
+			return
+		}
+	}
+
+	// Every write succeeded, so the server has to have answered with an error
+	// rather than buffered it all. A read that merely times out is not that --
+	// it is what an unbounded server would do, so it fails here.
+	_ = client.conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+	_, _, err = client.readServiceResponse()
+	var codecErr *CodecError
+	if !errors.As(err, &codecErr) {
+		t.Fatalf("the server neither refused nor closed the connection: %v", err)
+	}
+	if codecErr.Status != StatusBadRequestTooLarge {
+		t.Fatalf("error = %s, want Bad_RequestTooLarge", codecErr.Status.Hex())
+	}
+}
+
+// A server may announce a request bound larger than it could ever decode. The
+// accumulator holds it to the smaller of the two, so a message that could only
+// end in a decoding failure is refused as too large instead of being buffered
+// to the announced size first.
+func TestAnAnnouncedBoundIsHeldToWhatCanBeDecoded(t *testing.T) {
+	config := testListenerConfig()
+	// Announce four times what the binary layer will decode.
+	config.MaxMessageSize = uint32(config.Binary.MaxMessageBytes) * 4
+	config.MaxChunkCount = 0
+	listener, address := startTestListener(t, config)
+	_ = listener
+
+	client := dialTestClient(t, address)
+	ack := client.hello()
+	if ack.MaxMessageSize != config.MaxMessageSize {
+		t.Fatalf("the server announced %d, want its configured %d",
+			ack.MaxMessageSize, config.MaxMessageSize)
+	}
+	opened, err := client.openChannel(0, TokenRequestIssue, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Push past what can be decoded but stay under what was announced. The
+	// chunks stay well inside the negotiated receive buffer, so what refuses
+	// them is the accumulated size and not the size of any one chunk.
+	filler := make([]byte, 32*1024)
+	ceiling := config.Binary.MaxMessageBytes
+	for sent := 0; sent <= ceiling+len(filler); sent += len(filler) {
+		body, encodeErr := NewEncoder(client.limits)
+		if encodeErr != nil {
+			t.Fatal(encodeErr)
+		}
+		body.WriteUInt32(opened.SecurityToken.SecureChannelID)
+		body.WriteUInt32(opened.SecurityToken.TokenID)
+		client.sequence++
+		body.WriteUInt32(client.sequence)
+		body.WriteUInt32(9)
+		body.write(filler)
+		encoded, bytesErr := body.Bytes()
+		if bytesErr != nil {
+			t.Fatal(bytesErr)
+		}
+		if err := client.trySend(MessageTypeSecure, ChunkIntermediate, encoded); err != nil {
+			return
+		}
+	}
+
+	_ = client.conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+	_, _, err = client.readServiceResponse()
+	var codecErr *CodecError
+	if !errors.As(err, &codecErr) {
+		t.Fatalf("a request past the decodable size was buffered: %v", err)
+	}
+	if codecErr.Status != StatusBadRequestTooLarge {
+		t.Fatalf("error = %s, want Bad_RequestTooLarge", codecErr.Status.Hex())
 	}
 }
