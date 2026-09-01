@@ -766,11 +766,34 @@ that name timestamps plus `INVALID`, "no value specified". A request carrying
 table does not define at all. `NEITHER` is a real answer and is accepted: Table
 180 forbids it only for HistoryRead.
 
-An out-of-range value reaches that check rather than being refused while
+### An undefined enumeration value is answered, not disconnected
+
+An out-of-range value reaches the service rather than being refused while
 decoding. A decoding failure drops the connection, and such a message decoded
-perfectly — one enumeration value is out of range. Table 48 has a service result
-for exactly that, and answering with it lets a client correct itself instead of
+perfectly — one enumeration value is out of range. The spec has a result code
+for each of these, and answering with it lets a client correct itself instead of
 losing every session on the channel.
+
+Three enumerations are handled this way, and where the spec makes the code an
+**operation level** result, one bad operation fails on its own rather than
+taking its neighbours down with it:
+
+| Enumeration | Table | Result code | Level |
+| --- | --- | --- | --- |
+| `TimestampsToReturn` | 180 | `Bad_TimestampsToReturnInvalid` | service (Tables 48, 64) |
+| `BrowseDirection` | 112 | `Bad_BrowseDirectionInvalid` | operation (Table 36) |
+| `MonitoringMode` | 148 | `Bad_MonitoringModeInvalid` | operation (Table 65) |
+
+Each table defines the values that mean something plus, in two cases, an
+`INVALID` meaning "no value specified". A request carrying `INVALID` has not
+asked for anything, so it is refused alongside the values the table does not
+define at all — the client is equally unable to say what it wanted either way.
+
+What stays a decoding failure is an encoding the message could not have carried:
+a built-in type identifier outside OPC 10000-6's range, a NodeId carrying
+ExpandedNodeId flags, a Variant nested in a Variant. Those are not a client
+naming something the standard does not define; they are bytes that are not a
+message.
 
 ## `maxAge` on a Read
 

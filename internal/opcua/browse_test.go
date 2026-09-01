@@ -638,9 +638,13 @@ func TestBrowseRoundTrip(t *testing.T) {
 	}
 }
 
-func TestBrowseDirectionDecodeRejectsUndefinedValues(t *testing.T) {
+// Table 36 makes Bad_BrowseDirectionInvalid an operation level result, so an
+// undefined direction decodes and then fails on its own node. Refusing it while
+// decoding would drop the connection over one field of one operation, taking
+// the rest of the request and every other session on the channel with it.
+func TestAnUndefinedBrowseDirectionFailsItsOwnNode(t *testing.T) {
 	limits := DefaultBinaryLimits()
-	for _, direction := range []int32{-1, 4, 1000} {
+	for _, direction := range []int32{-1, int32(BrowseDirectionInvalid), 4, 1000} {
 		encoder := newTestEncoder(t, limits)
 		encoder.WriteNodeID(NumericNodeID(0, 85))
 		encoder.WriteInt32(direction)
@@ -653,9 +657,31 @@ func TestBrowseDirectionDecodeRejectsUndefinedValues(t *testing.T) {
 			t.Fatal(err)
 		}
 		decoder := newTestDecoder(t, encoded, limits)
-		if _, err := decoder.ReadBrowseDescription(); err == nil {
-			t.Fatalf("BrowseDirection %d was accepted", direction)
+		decoded, err := decoder.ReadBrowseDescription()
+		if err != nil {
+			t.Fatalf("BrowseDirection %d failed decoding: %v", direction, err)
 		}
+		if decoded.BrowseDirection.Valid() {
+			t.Fatalf("BrowseDirection %d passed as a Table 112 value", direction)
+		}
+	}
+
+	// And the service answers per node, leaving its neighbours alone.
+	service, space := testBrowseService(t, DefaultBrowseLimits())
+	populateItems(t, space, 2)
+	bad := browseAll(space.SourceFolderID())
+	bad.BrowseDirection = 77
+	response, err := service.Browse(context.Background(), testSession,
+		browseRequest(browseAll(space.SourceFolderID()), bad), channelEpoch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if response.Results[0].StatusCode != StatusGood {
+		t.Fatalf("the good node = %s", response.Results[0].StatusCode.Hex())
+	}
+	if response.Results[1].StatusCode != StatusBadBrowseDirectionInvalid {
+		t.Fatalf("the bad node = %s, want Bad_BrowseDirectionInvalid",
+			response.Results[1].StatusCode.Hex())
 	}
 }
 

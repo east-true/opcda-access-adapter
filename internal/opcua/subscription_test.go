@@ -1996,3 +1996,82 @@ func monitorWithTimestamps(t *testing.T, service *SubscriptionService, id uint32
 	}
 	return response.Results[0]
 }
+
+// Table 65 makes Bad_MonitoringModeInvalid an operation level result, so an
+// undefined mode decodes and then fails on its own item. Refusing it while
+// decoding would drop the connection over one field of one item, taking every
+// other item in the request and every other session on the channel with it.
+func TestAnUndefinedMonitoringModeFailsItsOwnItem(t *testing.T) {
+	runtime := &subscribingRuntime{}
+	service, _ := testSubscriptionService(t, runtime)
+	id := createSubscription(t, service)
+
+	item := func(node NodeID, handle uint32, mode MonitoringMode) MonitoredItemCreateRequest {
+		return MonitoredItemCreateRequest{
+			ItemToMonitor:  ReadValueID{NodeID: node, AttributeID: AttributeValue},
+			MonitoringMode: mode,
+			RequestedParameters: MonitoringParameters{
+				ClientHandle: handle, QueueSize: 1, Filter: NullExtensionObject(),
+			},
+		}
+	}
+	response, err := service.CreateMonitoredItems(context.Background(), testSession,
+		CreateMonitoredItemsRequest{
+			Header:             RequestHeader{AdditionalHeader: NullExtensionObject()},
+			SubscriptionID:     id,
+			TimestampsToReturn: TimestampsBoth,
+			ItemsToCreate: []MonitoredItemCreateRequest{
+				item(ItemNodeID("Test/Int32"), 1, MonitoringModeReporting),
+				item(ItemNodeID("Test/Float"), 2, 9),
+				item(ItemNodeID("Test/Float"), 3, -1),
+			},
+		}, channelEpoch)
+	if err != nil {
+		t.Fatalf("one bad mode failed the whole request: %v", err)
+	}
+	if response.Results[0].StatusCode != StatusGood {
+		t.Fatalf("the good item = %s", response.Results[0].StatusCode.Hex())
+	}
+	for index, result := range response.Results[1:] {
+		if result.StatusCode != StatusBadMonitoringModeInvalid {
+			t.Fatalf("item %d = %s, want Bad_MonitoringModeInvalid", index+1,
+				result.StatusCode.Hex())
+		}
+	}
+	// The one good item was still created, and only it reached the group.
+	requests := runtime.subscribeRequests()
+	last := requests[len(requests)-1]
+	if len(last.Items) != 1 || last.Items[0] != *itemID("Test/Int32") {
+		t.Fatalf("the group carries %v", last.Items)
+	}
+
+	// An undefined mode decodes rather than failing the message.
+	encoder, err := NewEncoder(DefaultBinaryLimits())
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoder.WriteCreateMonitoredItemsRequest(CreateMonitoredItemsRequest{
+		Header:             RequestHeader{AdditionalHeader: NullExtensionObject()},
+		SubscriptionID:     id,
+		TimestampsToReturn: TimestampsBoth,
+		ItemsToCreate:      []MonitoredItemCreateRequest{item(ItemNodeID("Test/Int32"), 1, 42)},
+	})
+	encoded, err := encoder.Bytes()
+	if err != nil {
+		t.Fatal(err)
+	}
+	decoder, err := NewDecoder(encoded, DefaultBinaryLimits())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := decoder.ReadServiceTypeID(); err != nil {
+		t.Fatal(err)
+	}
+	decoded, err := decoder.ReadCreateMonitoredItemsRequest()
+	if err != nil {
+		t.Fatalf("an undefined MonitoringMode failed decoding: %v", err)
+	}
+	if decoded.ItemsToCreate[0].MonitoringMode.Valid() {
+		t.Fatal("42 passed as a Table 148 value")
+	}
+}
