@@ -823,6 +823,29 @@ that name timestamps plus `INVALID`, "no value specified". A request carrying
 table does not define at all. `NEITHER` is a real answer and is accepted: Table
 180 forbids it only for HistoryRead.
 
+### Every attribute OPC 10000-3 makes mandatory
+
+The attribute matrix in OPC 10000-3 clause 5.9 says which attributes each node
+class shall have. This adapter exposes two of the eight classes, so its whole
+obligation is those two columns.
+
+A **Variable** shall answer `NodeId`, `NodeClass`, `BrowseName`, `DisplayName`,
+`Value`, `DataType`, `ValueRank`, `AccessLevel`, `UserAccessLevel` and
+`Historizing`. An **Object** shall answer `NodeId`, `NodeClass`, `BrowseName`,
+`DisplayName` and `EventNotifier`.
+
+`EventNotifier` reads as a zero Byte. Table 43 gives it three meaningful bits,
+and all three are false here: bit 0 clear says the node "cannot be used to
+subscribe to Events", and bits 2 and 3 that its event history is neither
+readable nor writeable. This adapter serves no events and keeps no history — the
+design forbids a historian — so zero is the honest answer, and answering nothing
+would have a client read a mandatory attribute as missing.
+
+The optional attributes are answered where the source supplies them:
+`Description` from the DA Item Description property, and
+`MinimumSamplingInterval` from the DA Scan Rate. `ArrayDimensions` is not
+answered, which the matrix permits and the scalar-only mapping makes moot.
+
 ### AccessLevel and UserAccessLevel answer alike
 
 A.3.1.3 maps `OPC_READABLE` and `OPC_WRITABLE` onto the AccessLevel attribute

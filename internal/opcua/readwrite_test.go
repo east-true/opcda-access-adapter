@@ -1229,3 +1229,72 @@ func TestUserAccessLevelMatchesAccessLevel(t *testing.T) {
 		}
 	}
 }
+
+// OPC 10000-3's attribute matrix (clause 5.9) says which attributes each node
+// class shall have. This adapter exposes two of the eight classes, so its whole
+// obligation is those two columns, and a mandatory attribute that answers
+// Bad_AttributeIdInvalid is a node that is not the class it claims to be.
+func TestEveryMandatoryAttributeIsAnswered(t *testing.T) {
+	runtime := &stubRuntime{}
+	runtime.readResults = []opcda.ReadResult{{
+		ItemID: "Test/Int32", HRESULT: opcda.SOK, HRESULTPresent: true,
+		Value: &opcda.DAValue{ItemID: "Test/Int32", VarType: opcda.VTI4,
+			Value: int32(1), QualityRaw: QualityGood, HRESULT: opcda.SOK},
+	}}
+	service, space := testDataService(t, runtime)
+
+	// Column "Variable" of the matrix, in its own order.
+	variable := map[string]uint32{
+		"AccessLevel": AttributeAccessLevel, "BrowseName": AttributeBrowseName,
+		"DataType": AttributeDataType, "DisplayName": AttributeDisplayName,
+		"Historizing": AttributeHistorizing, "NodeClass": AttributeNodeClass,
+		"NodeId": AttributeNodeID, "UserAccessLevel": AttributeUserAccessLevel,
+		"Value": AttributeValue, "ValueRank": AttributeValueRank,
+	}
+	// Column "Object". EventNotifier is the one this adapter did not answer.
+	object := map[string]uint32{
+		"BrowseName": AttributeBrowseName, "DisplayName": AttributeDisplayName,
+		"EventNotifier": AttributeEventNotifier, "NodeClass": AttributeNodeClass,
+		"NodeId": AttributeNodeID,
+	}
+
+	read := func(node NodeID, attribute uint32) DataValue {
+		t.Helper()
+		response, err := service.Read(context.Background(), readRequestFor(
+			ReadValueID{NodeID: node, AttributeID: attribute}), time.Now().UTC())
+		if err != nil {
+			t.Fatal(err)
+		}
+		return response.Results[0]
+	}
+
+	for name, attribute := range variable {
+		if got := read(ItemNodeID("Test/Int32"), attribute); got.Status != StatusGood {
+			t.Errorf("a Variable answers %s with %s, and 10000-3 makes it mandatory",
+				name, got.Status.Hex())
+		}
+	}
+	for name, attribute := range object {
+		if got := read(space.SourceFolderID(), attribute); got.Status != StatusGood {
+			t.Errorf("an Object answers %s with %s, and 10000-3 makes it mandatory",
+				name, got.Status.Hex())
+		}
+	}
+
+	// Table 43: every bit of EventNotifier is zero here. Bit 0 clear says the
+	// node cannot be used to subscribe to Events, bits 2 and 3 that its event
+	// history is neither readable nor writeable, and all three are true.
+	notifier := read(space.SourceFolderID(), AttributeEventNotifier)
+	if got, ok := notifier.Value.Value.(byte); !ok || got != 0 {
+		t.Fatalf("EventNotifier = %#v, want a zero Byte", notifier.Value.Value)
+	}
+	if notifier.Value.Type != BuiltInByte {
+		t.Fatalf("EventNotifier type = %d, want Byte", notifier.Value.Type)
+	}
+
+	// The matrix gives EventNotifier to Objects and Views only, and this
+	// adapter publishes no Views.
+	if got := read(ItemNodeID("Test/Int32"), AttributeEventNotifier); got.Status != StatusBadAttributeIDInvalid {
+		t.Fatalf("a Variable answered EventNotifier with %s", got.Status.Hex())
+	}
+}
