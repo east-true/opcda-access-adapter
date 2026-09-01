@@ -100,3 +100,33 @@ jobs:
         env:
           GOARCH: ${{ matrix.arch }}
         run: go test ./...
+
+  # Both jobs below verify this server against something outside it, and both
+  # need network access to do it. That is a deliberate trade: a transient
+  # fetch failure fails a job visibly and costs a re-run, while a check that
+  # only runs when somebody remembers costs nothing until it matters. The
+  # interop suite went nineteen pull requests failing on a stale assertion
+  # before anyone ran it, which is what these two jobs exist to prevent.
+  spec-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Cross-check transcriptions against the OPC Foundation schema
+        # Each source is verified against scripts/spec-check/digests.txt before
+        # it is read, so an upstream change fails here as a reviewable event
+        # rather than silently redefining what "conformant" means.
+        run: python3 scripts/spec-check/check.py
+
+  interop:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Third-party OPC UA client interoperability
+        # asyncua judges the UA frontend from outside. open62541 and the .NET
+        # stack skip here for want of their toolchains, which the runner
+        # reports rather than passing over; they stay runnable locally.
+        run: scripts/interop/run.sh
