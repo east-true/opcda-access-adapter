@@ -635,6 +635,60 @@ def check_status_code_bits(files, src):
     print(f"  {checked} status code bit ranges")
 
 
+def check_enumerations(files, src):
+    """Every enumeration this adapter transcribes, against Opc.Ua.Types.bsd.
+
+    These are the constants that decide what a value means rather than what it
+    is, and getting one wrong changes behaviour without changing a type. This
+    project has already shipped exactly that: MessageSecurityMode was declared
+    with iota, so None took the value 0 and inverted the safety property
+    Invalid=0 exists to provide. Nothing has compared it with the schema since.
+
+    Both directions are checked. A missing constant is as bad as a wrong one:
+    a value the adapter never declared is one it cannot recognise on the wire,
+    and the enumerations below are decoded from client requests.
+    """
+    spec = {}
+    for match in re.finditer(
+            r'<opc:EnumeratedType Name="(\w+)"[^>]*>(.*?)</opc:EnumeratedType>',
+            files["Opc.Ua.Types.bsd"], re.S):
+        spec[match.group(1)] = {
+            value.group(1): int(value.group(2))
+            for value in re.finditer(
+                r'<opc:EnumeratedValue Name="(\w+)" Value="(-?\d+)"', match.group(2))}
+
+    # The Go constant for a schema value is its prefix plus the value's name.
+    # Only TimestampsToReturn and MessageSecurityMode are spelled differently,
+    # and both are shortened rather than renamed.
+    prefixes = {
+        "NodeClass": "NodeClass",
+        "BrowseDirection": "BrowseDirection",
+        "MonitoringMode": "MonitoringMode",
+        "TimestampsToReturn": "Timestamps",
+        "MessageSecurityMode": "SecurityMode",
+        "ApplicationType": "ApplicationType",
+        "UserTokenType": "UserTokenType",
+        "DataChangeTrigger": "DataChangeTrigger",
+    }
+    declared = {match.group(1): int(match.group(2)) for match in re.finditer(
+        r'\b([A-Z][A-Za-z0-9]*)\s+(?:[A-Za-z][A-Za-z0-9]*)\s*=\s*(-?\d+)\b', src)}
+
+    checked = 0
+    for enum, prefix in sorted(prefixes.items()):
+        if enum not in spec:
+            fail(f"{enum} is not an enumeration in Opc.Ua.Types.bsd")
+            continue
+        for name, value in sorted(spec[enum].items()):
+            constant = prefix + name
+            if constant not in declared:
+                fail(f"{enum}.{name} has no {constant} constant")
+                continue
+            checked += 1
+            if declared[constant] != value:
+                fail(f"{constant} is {declared[constant]}, the schema says {value}")
+    print(f"  {checked} enumeration values")
+
+
 def check_built_in_type_ids(files, src):
     """The built-in type identifiers, from Part 6 Table 1.
 
@@ -775,6 +829,7 @@ def main():
     check_da(files)
     check_status_code_bits(files, src)
     check_built_in_type_ids(files, src)
+    check_enumerations(files, src)
     check_da_error_mapping(files, src + da_sources())
     check_da_type_mapping(files, src + da_sources())
     check_da_quality_mapping(files, src + da_sources())
