@@ -444,8 +444,10 @@ func (l *Listener) serveConnection(conn net.Conn) {
 		// Until a Hello arrives nothing has been negotiated, so the server's
 		// own bound is all there is to answer within.
 		maxMessageSize: l.config.MaxMessageSize,
-		// Until the Hello names the client's bounds, the server's own apply.
-		incoming: NewChunkAccumulator(l.config.MaxChunkCount, l.config.MaxMessageSize,
+		// A placeholder so the field is never nil. Nothing reaches it: a
+		// secure message before the Hello is refused, and the Hello replaces
+		// this with the accumulator the Acknowledge announced.
+		incoming: NewChunkAccumulator(0, uint32(l.config.Binary.MaxMessageBytes),
 			StatusBadRequestTooLarge),
 		done: make(chan struct{}),
 	}
@@ -540,8 +542,8 @@ func (l *Listener) handleHello(conn net.Conn, state *connectionState, body []byt
 	state.maxMessageSize = hello.MaxMessageSize
 	// The Acknowledge announced what this server accepts, so that is what
 	// incoming requests are held to.
-	state.incoming = NewChunkAccumulator(ack.MaxChunkCount, ack.MaxMessageSize,
-		StatusBadRequestTooLarge)
+	state.incoming = NewChunkAccumulator(ack.MaxChunkCount,
+		l.acceptableRequestBytes(ack.MaxMessageSize), StatusBadRequestTooLarge)
 	state.service = NewChannelService(l.registry, hello.ProtocolVersion)
 	// The sequence rule set is a property of the SecurityPolicy. Only the
 	// legacy rules are exercised here; see docs/opcua-mapping.md for why the
@@ -718,6 +720,22 @@ func (l *Listener) splitSecureMessage(state *connectionState, body []byte, asymm
 // OPC 10000-4 Table 5 states explicitly, so it can be answered here; every
 // other service is reported as unsupported through a ServiceFault rather than
 // closing the connection, because the channel itself is still healthy.
+// acceptableRequestBytes is the largest reassembled request this server will
+// hold, which is the smaller of what it announced and what it could decode.
+//
+// A zero announced limit means no bound was declared, and Table 75 allows that.
+// It cannot mean an unbounded buffer: a peer would then decide how much memory
+// this process spends, one intermediate chunk at a time. The binary message
+// bound is the honest ceiling, because a message past it could not be decoded
+// even if it were kept.
+func (l *Listener) acceptableRequestBytes(announced uint32) uint32 {
+	ceiling := uint32(l.config.Binary.MaxMessageBytes)
+	if announced == 0 || announced > ceiling {
+		return ceiling
+	}
+	return announced
+}
+
 func (l *Listener) handleSecureMessage(conn net.Conn, state *connectionState, chunk byte, body []byte) error {
 	if !state.negotiated {
 		return uacpError(StatusBadTcpMessageTypeInvalid, "a secure message arrived before the Hello")

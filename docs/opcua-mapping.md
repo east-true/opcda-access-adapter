@@ -1130,7 +1130,15 @@ before processing it".
 
 `ChunkAccumulator` enforces the chunk count and message size the Acknowledge
 announced while a multi-chunk message arrives, refusing a breach **before**
-copying anything. An abort chunk discards the partial message and leaves the
+copying anything.
+
+A server may announce no bound at all, which Table 75 allows with a zero
+`MaxMessageSize`. That cannot mean an unbounded buffer: a peer would otherwise
+decide how much memory this process spends, one intermediate chunk at a time and
+never sending a final one. The binary message bound is the ceiling in that case,
+and it caps an announced bound larger than itself too — a message past it could
+not be decoded even if it were kept, so buffering that far only delays the same
+refusal. An abort chunk discards the partial message and leaves the
 channel open, which 6.7.3 requires in as many words: the receiver "shall ignore
 the Message but shall not close the SecureChannel".
 
