@@ -643,6 +643,20 @@ One UA subscription is backed by one DA group, and a group has exactly one
 cannot be honoured, so it is refused; applying somebody else's deadband to it
 would report changes the client did not ask to hear about, or hide ones it did.
 
+### Disabled publishing holds the newest value, it does not bank them
+
+Clause 5.14.1.1: disabling "causes the Subscription to cease sending
+NotificationMessages to the Client", while the subscription "continues to execute
+cyclically and continues to send keep-alive Messages". The monitored items keep
+sampling throughout — `MonitoringMode` is a separate setting — so something has
+to hold what they produce.
+
+What holds it is each item's own slot, which is the queue of one it was promised.
+A disabled subscription therefore accumulates nothing to send: when publishing
+resumes, each item reports once, with the newest value it saw. Banking every
+value instead would grow the send queue for as long as the client left publishing
+off, and then hand it a history it had explicitly asked not to receive.
+
 ### Republish, because the queue is already there
 
 Every Publish response carries its subscription's available sequence numbers,

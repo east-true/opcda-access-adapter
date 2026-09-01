@@ -1751,6 +1751,16 @@ func (s *SubscriptionService) collect(ctx context.Context, subscription *uaSubsc
 // every value the group delivers; one that asked for less reports the newest
 // value it has, which is what a queue of one holds.
 func (s *SubscriptionService) flushHeld(subscription *uaSubscription, now time.Time) {
+	if !subscription.publishingEnabled {
+		// Clause 5.14.1.1: disabling "causes the Subscription to cease sending
+		// NotificationMessages to the Client", while the items keep sampling.
+		// So values stay held rather than queueing up to be sent later: the
+		// held slot is one value per item, which is exactly the queue of one
+		// each item was promised, and moving them into the send queue would
+		// both grow it without bound and hand the client every value that
+		// occurred while it had asked for none.
+		return
+	}
 	stillHeld := subscription.heldOrder[:0]
 	for _, id := range subscription.heldOrder {
 		item, ok := subscription.items[id]

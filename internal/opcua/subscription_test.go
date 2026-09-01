@@ -2427,3 +2427,79 @@ func TestAKeepAliveNamesTheNextSequenceNumber(t *testing.T) {
 		t.Fatalf("a keep-alive changed the queue from %d to %d", queued, stillQueued)
 	}
 }
+
+// Clause 5.14.1.1: disabling "causes the Subscription to cease sending
+// NotificationMessages to the Client", while the Subscription "continues to
+// execute cyclically and continues to send keep-alive Messages". The items keep
+// sampling, so what accumulates has to be the queue of one each was promised --
+// not every value that occurred while the client had asked for none.
+func TestDisabledPublishingHoldsOnlyTheNewestValue(t *testing.T) {
+	runtime := &subscribingRuntime{}
+	service, _ := testSubscriptionService(t, runtime)
+	response, err := service.CreateSubscription(testSession, CreateSubscriptionRequest{
+		Header:                      RequestHeader{AdditionalHeader: NullExtensionObject()},
+		RequestedPublishingInterval: 100,
+		RequestedMaxKeepAliveCount:  1,
+		RequestedLifetimeCount:      9,
+		PublishingEnabled:           true,
+	}, channelEpoch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := response.SubscriptionID
+	monitorItem(t, service, id, ItemNodeID("Test/Int32"), 1)
+	monitorItem(t, service, id, ItemNodeID("Test/Float"), 2)
+
+	setPublishing := func(enabled bool, at time.Time) {
+		t.Helper()
+		if _, err := service.SetPublishingMode(testSession, SetPublishingModeRequest{
+			Header:            RequestHeader{AdditionalHeader: NullExtensionObject()},
+			PublishingEnabled: enabled, SubscriptionIDs: []uint32{id},
+		}, at); err != nil {
+			t.Fatal(err)
+		}
+	}
+	cycle := func(at time.Time) (NotificationMessage, bool) {
+		t.Helper()
+		request := PublishRequest{Header: RequestHeader{AdditionalHeader: NullExtensionObject()}}
+		published, ready, err := service.tryPublish(context.Background(), testSession, request, nil, at)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return published.NotificationMessage, ready
+	}
+
+	setPublishing(false, channelEpoch)
+	for step := 1; step <= 50; step++ {
+		runtime.latest().push(daNotification("Test/Int32", int32(step), QualityGood))
+		runtime.latest().push(daNotification("Test/Float", int32(step), QualityGood))
+		message, ready := cycle(channelEpoch.Add(time.Duration(step) * time.Second))
+		if ready && message.HasData {
+			t.Fatalf("a disabled subscription sent notifications at step %d", step)
+		}
+	}
+
+	// Nothing queued to send: the newest value sits in each item's own slot.
+	service.mu.Lock()
+	pending := len(service.subscriptions[id].pending)
+	service.mu.Unlock()
+	if pending != 0 {
+		t.Fatalf("%d notifications queued while publishing was disabled", pending)
+	}
+
+	// Re-enabled, each item reports once, with the newest value it saw.
+	setPublishing(true, channelEpoch.Add(time.Minute))
+	message, ready := cycle(channelEpoch.Add(2 * time.Minute))
+	if !ready || !message.HasData {
+		t.Fatal("nothing was reported after publishing was re-enabled")
+	}
+	if len(message.Notifications) != 2 {
+		t.Fatalf("%d notifications, want one for each item", len(message.Notifications))
+	}
+	for _, notification := range message.Notifications {
+		if got := notification.Value.Value.Value; got != int32(50) {
+			t.Fatalf("handle %d reported %#v, want the newest value",
+				notification.ClientHandle, got)
+		}
+	}
+}
