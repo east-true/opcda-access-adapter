@@ -383,6 +383,65 @@ def written_fields(ident, body):
     return fields
 
 
+# The Go writer each schema field type is written with. Only the types this
+# adapter builds inline are listed; an unlisted type fails rather than passing
+# unchecked.
+FIELD_WRITERS = {
+    "opc:String": "WriteString",
+    "opc:Int32": "WriteInt32",
+    "opc:Double": "WriteDouble",
+    "ua:LocalizedText": "WriteLocalizedText",
+}
+
+
+def check_inline_structures(files, src):
+    """Structures written field by field into an ExtensionObject body.
+
+    Range and EUInformation are built by closures rather than by a named
+    encoder, so the structure check above cannot read them -- and they are hand
+    written field sequences like any other, with a client-visible value in each
+    field.
+
+    This compares the sequence of writer calls with the schema's field types.
+    It cannot see a swap between two fields of the same type, which is exactly
+    the mistake most worth catching here: Range is two Doubles and EUInformation
+    ends in two LocalizedTexts. That half is covered by a Go test that decodes
+    the body and reads the values back, which is the only thing that can tell
+    Low from High.
+    """
+    spec = {}
+    for match in re.finditer(
+            r'<opc:StructuredType\s+Name="([A-Za-z0-9_]+)"(.*?)</opc:StructuredType>',
+            files["Opc.Ua.Types.bsd"], re.S):
+        spec[match.group(1)] = re.findall(r'<opc:Field\s+Name="[A-Za-z0-9_]+"\s+TypeName="([\w:]+)"',
+                                          match.group(2))
+
+    checked = 0
+    for match in re.finditer(
+            r'extensionObject\(NodeID(\w+?)EncodingDefaultBinary,\s*func\(e \*Encoder\) \{(.*?)\n\t\}\)',
+            src, re.S):
+        name, body = match.group(1), match.group(2)
+        want = spec.get(name)
+        if want is None:
+            fail(f"{name} is written inline but is not in the binary schema")
+            continue
+        got = re.findall(r'e\.(Write[A-Za-z0-9]+)\(', body)
+        expected = []
+        for field_type in want:
+            writer = FIELD_WRITERS.get(field_type)
+            if writer is None:
+                fail(f"{name} has a {field_type} field and this check knows no writer for it")
+                expected = None
+                break
+            expected.append(writer)
+        if expected is None:
+            continue
+        checked += 1
+        if expected != got:
+            fail(f"{name} writes {got}, the schema's fields are {want}")
+    print(f"  {checked} inline structures")
+
+
 def check_response_encoders(files, src):
     """Field order for every response this server writes, against the schema.
 
@@ -1073,6 +1132,7 @@ def main():
     check_request_decoders(files, src)
     check_response_encoders(files, src)
     check_structure_encoders(files, src)
+    check_inline_structures(files, src)
     check_da(files)
     check_status_code_bits(files, src)
     check_built_in_type_ids(files, src)

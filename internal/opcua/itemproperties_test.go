@@ -1260,3 +1260,94 @@ func TestAPropertyNameIsUniqueWithinItsItem(t *testing.T) {
 		t.Fatalf("the vendor EURange is missing: %v", seen)
 	}
 }
+
+// decodeExtensionBody returns a decoder over the body of an ExtensionObject a
+// property built, so a test can read back the fields in the order they were
+// written.
+func decodeExtensionBody(t *testing.T, variant Variant, wantEncoding uint32) *Decoder {
+	t.Helper()
+	object, ok := variant.Value.(ExtensionObject)
+	if !ok {
+		t.Fatalf("value is %T, want an ExtensionObject", variant.Value)
+	}
+	if object.TypeID.Numeric != wantEncoding {
+		t.Fatalf("encoding id = %d, want %d", object.TypeID.Numeric, wantEncoding)
+	}
+	decoder, err := NewDecoder(object.Body, DefaultBinaryLimits())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return decoder
+}
+
+// A Range is two Doubles and an EUInformation ends in two LocalizedTexts, so
+// nothing about their shape says which is which. These structures are written
+// field by field into an ExtensionObject body, and swapping a pair would report
+// an EURange of 0..100 as 100..0 while every round trip still agreed with
+// itself. The values are read back here in the order OPC 10000-8 5.6.2 and
+// 5.6.4.3 define them.
+func TestARangeAndEUInformationCarryTheirFieldsInOrder(t *testing.T) {
+	space := testAddressSpace(t)
+
+	low := opcda.ItemPropertyValue{ID: opcda.PropertyLowEU, OK: true,
+		Value: float64(-40), ValuePresent: true, HRESULT: opcda.SOK, HRESULTPresent: true}
+	high := opcda.ItemPropertyValue{ID: opcda.PropertyHighEU, OK: true,
+		Value: float64(250), ValuePresent: true, HRESULT: opcda.SOK, HRESULTPresent: true}
+	variant, status := buildRangeProperty(space, []opcda.ItemPropertyValue{low, high})
+	if status != StatusGood {
+		t.Fatalf("range status = %s", status.Hex())
+	}
+	decoder := decodeExtensionBody(t, variant, NodeIDRangeEncodingDefaultBinary)
+	// Table: Low first, then High.
+	gotLow, err := decoder.ReadDouble()
+	if err != nil {
+		t.Fatal(err)
+	}
+	gotHigh, err := decoder.ReadDouble()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotLow != -40 || gotHigh != 250 {
+		t.Fatalf("Range = Low %v, High %v, want -40 and 250", gotLow, gotHigh)
+	}
+
+	units := opcda.ItemPropertyValue{ID: opcda.PropertyEUUnits, OK: true,
+		Value: "degC", ValuePresent: true, HRESULT: opcda.SOK, HRESULTPresent: true}
+	variant, status = buildEngineeringUnits(space, []opcda.ItemPropertyValue{units})
+	if status != StatusGood {
+		t.Fatalf("engineering units status = %s", status.Hex())
+	}
+	decoder = decodeExtensionBody(t, variant, NodeIDEUInformationEncodingDefaultBinary)
+	// NamespaceUri, UnitId, DisplayName, Description.
+	namespaceURI, isNull, err := decoder.ReadString()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if namespaceURI != "" && !isNull {
+		t.Fatalf("NamespaceUri = %q, want empty: no organization defined this unit", namespaceURI)
+	}
+	unitID, err := decoder.ReadInt32()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if unitID != unitIDNotAvailable {
+		t.Fatalf("UnitId = %d, want %d for \"a unitId is not available\"", unitID, unitIDNotAvailable)
+	}
+	displayName, err := decoder.ReadLocalizedText()
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 5.6.4.3 calls DisplayName "typically the abbreviation of the engineering
+	// unit", which is what DA supplies -- so the unit lands there and not in
+	// Description, which holds the unit's full name.
+	if displayName.Text != "degC" {
+		t.Fatalf("DisplayName = %q, want the DA unit string", displayName.Text)
+	}
+	description, err := decoder.ReadLocalizedText()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if description.Text != "" {
+		t.Fatalf("Description = %q, want empty: DA gave an abbreviation", description.Text)
+	}
+}
