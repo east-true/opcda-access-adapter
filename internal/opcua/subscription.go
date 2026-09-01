@@ -58,6 +58,12 @@ const (
 	MonitoringModeReporting MonitoringMode = 2
 )
 
+// Valid reports whether a MonitoringMode names a mode. Table 148 defines three,
+// and a value outside them says nothing about how the item should be monitored.
+func (m MonitoringMode) Valid() bool {
+	return m >= MonitoringModeDisabled && m <= MonitoringModeReporting
+}
+
 // MonitoringParameters is OPC 10000-4 Table 140.
 type MonitoringParameters struct {
 	ClientHandle     uint32
@@ -436,10 +442,12 @@ func (d *Decoder) ReadCreateMonitoredItemsRequest() (CreateMonitoredItemsRequest
 			if modeErr != nil {
 				return CreateMonitoredItemsRequest{}, modeErr
 			}
-			// A mode outside the enumeration is refused rather than reduced.
-			if mode < int32(MonitoringModeDisabled) || mode > int32(MonitoringModeReporting) {
-				return CreateMonitoredItemsRequest{}, decodingError("MonitoringMode %d is not defined", mode)
-			}
+			// Carried through, never reduced to a neighbouring mode and never
+			// refused here. Table 65 makes Bad_MonitoringModeInvalid an
+			// operation level result, so one item with a bad mode fails on its
+			// own -- while a decoding failure would drop the connection and
+			// take every other item, and every other session on the channel,
+			// with it.
 			item.MonitoringMode = MonitoringMode(mode)
 			if item.RequestedParameters, err = d.ReadMonitoringParameters(); err != nil {
 				return CreateMonitoredItemsRequest{}, err
@@ -1123,6 +1131,9 @@ func (s *SubscriptionService) monitoredItemsResponse(request CreateMonitoredItem
 func (s *SubscriptionService) prepareMonitoredItem(subscription *uaSubscription, create MonitoredItemCreateRequest, timestamps TimestampsToReturn) (MonitoredItemCreateResult, *monitoredItem) {
 	failed := func(status StatusCode) MonitoredItemCreateResult {
 		return MonitoredItemCreateResult{StatusCode: status, FilterResult: NullExtensionObject()}
+	}
+	if !create.MonitoringMode.Valid() {
+		return failed(StatusBadMonitoringModeInvalid), nil
 	}
 	// This adapter exposes no arrays, so an indexRange cannot apply.
 	if create.ItemToMonitor.IndexRange != "" {

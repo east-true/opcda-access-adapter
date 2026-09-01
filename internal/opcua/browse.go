@@ -38,6 +38,14 @@ const (
 	BrowseDirectionInvalid BrowseDirection = 3
 )
 
+// Valid reports whether a BrowseDirection names a direction. Table 112 defines
+// three that do, plus INVALID, "no value specified" -- a description carrying
+// it has not said which way to look, which is the same answer as a value the
+// table does not define at all.
+func (d BrowseDirection) Valid() bool {
+	return d >= BrowseDirectionForward && d <= BrowseDirectionBoth
+}
+
 // resultMask bits from OPC 10000-4 Table 34. A client asks for exactly the
 // ReferenceDescription fields it wants; anything not asked for is omitted.
 const (
@@ -150,11 +158,11 @@ func (d *Decoder) ReadBrowseDescription() (BrowseDescription, error) {
 	if err != nil {
 		return BrowseDescription{}, err
 	}
-	// A direction outside the enumeration is refused rather than reduced to a
-	// neighbouring one.
-	if direction < int32(BrowseDirectionForward) || direction > int32(BrowseDirectionInvalid) {
-		return BrowseDescription{}, decodingError("BrowseDirection %d is not defined", direction)
-	}
+	// Carried through, never reduced to a neighbouring direction and never
+	// refused here. Table 36 makes Bad_BrowseDirectionInvalid an operation
+	// level result, so one node with a bad direction fails on its own -- while
+	// a decoding failure would drop the connection and take the rest of the
+	// request, and every other session on the channel, with it.
 	value.BrowseDirection = BrowseDirection(direction)
 	if value.ReferenceTypeID, err = d.ReadNodeID(); err != nil {
 		return BrowseDescription{}, err
@@ -573,7 +581,9 @@ func statusForPopulationError(err error) StatusCode {
 }
 
 func (s *BrowseService) browseNode(session string, description BrowseDescription, maximum int, now time.Time) BrowseResult {
-	if description.BrowseDirection == BrowseDirectionInvalid {
+	// Table 112's INVALID and anything outside the enumeration alike: neither
+	// names a direction to browse in.
+	if !description.BrowseDirection.Valid() {
 		return BrowseResult{StatusCode: StatusBadBrowseDirectionInvalid}
 	}
 	node, ok := s.space.Node(description.NodeID)
