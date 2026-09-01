@@ -431,9 +431,18 @@ func (s *AddressSpace) AttachItemProperties(itemID opcda.DAItemID, available []o
 		id := ItemPropertyNodeID(itemID, binding.BrowseName)
 		if _, exists := s.nodes[nodeKey(id)]; !exists {
 			s.nodes[nodeKey(id)] = &Node{
-				ID:             id,
-				Class:          NodeClassVariable,
-				BrowseName:     QualifiedName{Namespace: AdapterNamespaceIndex, Name: binding.BrowseName},
+				ID:    id,
+				Class: NodeClassVariable,
+				// OPC 10000-3 8.3: "if they want to provide a standard
+				// Property, its BrowseName shall have the namespace of the
+				// standards body although the namespace of the NodeId reflects
+				// something else, for example the local Server". These five are
+				// the OPC Foundation's own properties of AnalogItemType and
+				// TwoStateDiscreteType, so their names live in namespace zero
+				// and only their identifiers are this adapter's. A client
+				// following the standard VariableType model looks for
+				// 0:EURange, and would not find one named anywhere else.
+				BrowseName:     QualifiedName{Namespace: 0, Name: binding.BrowseName},
 				DisplayName:    LocalizedText{Text: binding.BrowseName},
 				TypeDefinition: NumericNodeID(0, NodeIDPropertyType),
 				DataType:       NumericNodeID(0, binding.DataType),
@@ -454,10 +463,11 @@ func (s *AddressSpace) AttachItemProperties(itemID opcda.DAItemID, available []o
 	}
 	// Table A.1's last row: everything else the source offers, named by its own
 	// description and typed by its own VARTYPE.
+	duplicated := duplicateDescriptions(others)
 	for _, offered := range others {
 		id := OtherPropertyNodeID(itemID, offered.ID)
 		if _, exists := s.nodes[nodeKey(id)]; !exists {
-			s.nodes[nodeKey(id)] = otherPropertyNode(itemID, offered)
+			s.nodes[nodeKey(id)] = otherPropertyNode(itemID, offered, duplicated[offered.Description])
 		}
 		property := s.nodes[nodeKey(id)]
 		addForward(item, NumericNodeID(0, NodeIDHasProperty), property)
@@ -654,12 +664,38 @@ func otherPropertiesFor(available []opcda.AvailableProperty, claimed []itemPrope
 
 // otherPropertyNode builds the node for one unnamed DA property, following
 // A.3.1.4: the description names it, and its DA DataType is its DataType.
-func otherPropertyNode(itemID opcda.DAItemID, property opcda.AvailableProperty) *Node {
+// duplicateDescriptions reports which descriptions a source used more than
+// once. OPC 10000-3 5.6.3 requires that "the BrowseName of a Property shall be
+// unique in the context of the Node containing the Properties", and nothing
+// stops a source describing two of an item's properties identically.
+func duplicateDescriptions(properties []opcda.AvailableProperty) map[string]bool {
+	seen := make(map[string]int, len(properties))
+	for _, property := range properties {
+		seen[property.Description]++
+	}
+	duplicated := make(map[string]bool)
+	for description, count := range seen {
+		if count > 1 && description != "" {
+			duplicated[description] = true
+		}
+	}
+	return duplicated
+}
+
+func otherPropertyNode(itemID opcda.DAItemID, property opcda.AvailableProperty, shared bool) *Node {
 	// A source that offers no description still needs a BrowseName, and the
 	// property identifier is the only other thing that names it.
 	name := property.Description
-	if name == "" {
-		name = "Property" + strconv.FormatUint(uint64(property.ID), 10)
+	if name == "" || shared {
+		// The identifier is what A.3.1.4 keys these properties by, so it is
+		// the one thing that distinguishes two the source described alike.
+		// The description is kept alongside it rather than discarded, because
+		// it is still what the source called the property.
+		if name == "" {
+			name = "Property" + strconv.FormatUint(uint64(property.ID), 10)
+		} else {
+			name += " (" + strconv.FormatUint(uint64(property.ID), 10) + ")"
+		}
 	}
 	node := &Node{
 		ID:             OtherPropertyNodeID(itemID, property.ID),

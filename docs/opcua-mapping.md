@@ -574,6 +574,34 @@ supply. Such an item is given `DataItemType`.
 from EU Info, whose DA value is an array of strings, and the DA layer does not
 carry array VARIANTs — so the promise could never be kept.
 
+### A standard property's name belongs to the standards body
+
+OPC 10000-3 8.3: "if they want to provide a standard Property, its BrowseName
+shall have the namespace of the standards body although the namespace of the
+NodeId reflects something else, for example the local Server."
+
+`EURange`, `InstrumentRange`, `EngineeringUnits`, `TrueState` and `FalseState`
+are the OPC Foundation's own properties of `AnalogItemType` and
+`TwoStateDiscreteType`, so their BrowseNames are in **namespace 0**. Only their
+NodeIds are this server's, which is exactly the split 8.3 describes. A client
+following the standard VariableType model looks for `0:EURange` and would not
+find one named anywhere else.
+
+A vendor property from Table A.1's "Other Properties" row keeps **this
+adapter's** namespace, because its name is a description the source chose rather
+than a name any standards body defined. That is also what keeps a vendor
+property described "EURange" distinct from the standard one: 8.3 says the
+namespace "is provided to make the BrowseName unique in some cases in the
+context of a Node (e.g. Properties of a Node)".
+
+Two vendor properties described identically are told apart by their property
+identifier, which A.3.1.4 keys them by: `Loop Gain (5001)` and `Loop Gain
+(5002)`. Clause 5.6.3 requires that "the BrowseName of a Property shall be
+unique in the context of the Node containing the Properties", and nothing stops
+a source describing two of an item's properties the same way. The description is
+kept alongside the identifier rather than replaced by it, because it is still
+what the source called the property.
+
 ### The property types are the standard types', not Table A.1's column
 
 Table A.1 gives `String` as the "OPC UA DataType" for EU Units, Close Label and

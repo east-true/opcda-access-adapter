@@ -1148,3 +1148,115 @@ func TestEngineeringUnitsCarriesNoUnitIdentifierAsMinusOne(t *testing.T) {
 		t.Fatal("the unit string is not in the displayName")
 	}
 }
+
+// OPC 10000-3 8.3: "if they want to provide a standard Property, its BrowseName
+// shall have the namespace of the standards body although the namespace of the
+// NodeId reflects something else, for example the local Server."
+//
+// EURange, InstrumentRange, EngineeringUnits, TrueState and FalseState are the
+// OPC Foundation's own properties of AnalogItemType and TwoStateDiscreteType. A
+// client following the standard VariableType model looks for 0:EURange, and
+// would not find one named in any other namespace.
+func TestStandardPropertiesCarryTheStandardNamespace(t *testing.T) {
+	space := testAddressSpace(t)
+	if err := space.PopulateBranch(nil, []opcda.BrowseEntry{
+		{Kind: opcda.BrowseEntryItem, Name: "Float", ItemID: itemID("Test/Float"),
+			CanonicalType: varType(opcda.VTR4)},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := space.AttachItemProperties("Test/Float", []opcda.AvailableProperty{
+		{ID: opcda.PropertyLowEU}, {ID: opcda.PropertyHighEU},
+		{ID: opcda.PropertyLowIR}, {ID: opcda.PropertyHighIR},
+		{ID: opcda.PropertyEUUnits},
+	}, opcda.EUTypeAnalog, testNodeBudget); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, name := range []string{"EURange", "InstrumentRange", "EngineeringUnits"} {
+		node, ok := space.Node(ItemPropertyNodeID("Test/Float", name))
+		if !ok {
+			t.Fatalf("%s was not attached", name)
+		}
+		if node.BrowseName.Namespace != 0 {
+			t.Errorf("%s has BrowseName namespace %d, want the standards body's 0",
+				name, node.BrowseName.Namespace)
+		}
+		if node.BrowseName.Name != name {
+			t.Errorf("browse name = %q, want %q", node.BrowseName.Name, name)
+		}
+		// Only the name is the standards body's. The identifier stays this
+		// server's, which is the case 8.3 describes.
+		if node.ID.Namespace != AdapterNamespaceIndex {
+			t.Errorf("%s has NodeId namespace %d, want this server's %d",
+				name, node.ID.Namespace, AdapterNamespaceIndex)
+		}
+	}
+}
+
+// OPC 10000-3 5.6.3: "the BrowseName of a Property shall be unique in the
+// context of the Node containing the Properties". A vendor property is named by
+// its own description, and nothing stops a source describing two of an item's
+// properties identically.
+func TestAPropertyNameIsUniqueWithinItsItem(t *testing.T) {
+	space := testAddressSpace(t)
+	if err := space.PopulateBranch(nil, []opcda.BrowseEntry{
+		{Kind: opcda.BrowseEntryItem, Name: "Float", ItemID: itemID("Test/Float"),
+			CanonicalType: varType(opcda.VTR4)},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	varType := opcda.VTR4
+	if err := space.AttachItemProperties("Test/Float", []opcda.AvailableProperty{
+		// The standard EURange, so the vendor property below has something
+		// real to collide with.
+		{ID: opcda.PropertyLowEU}, {ID: opcda.PropertyHighEU},
+		{ID: 5001, Description: "Loop Gain", VarType: varType},
+		{ID: 5002, Description: "Loop Gain", VarType: varType},
+		{ID: 5003, Description: "Distinct", VarType: varType},
+		// A vendor description that repeats a standard property's name is kept
+		// apart by its namespace, not by its text. OPC 10000-3 8.3: the
+		// namespace "is provided to make the BrowseName unique in some cases
+		// in the context of a Node (e.g. Properties of a Node)".
+		{ID: 5004, Description: "EURange", VarType: varType},
+	}, opcda.EUTypeAnalog, testNodeBudget); err != nil {
+		t.Fatal(err)
+	}
+
+	item, ok := space.Node(ItemNodeID("Test/Float"))
+	if !ok {
+		t.Fatal("the item is not in the address space")
+	}
+	seen := map[QualifiedName]string{}
+	for _, reference := range item.References {
+		if reference.ReferenceTypeID.Numeric != NodeIDHasProperty || !reference.IsForward {
+			continue
+		}
+		if previous, clash := seen[reference.BrowseName]; clash {
+			t.Fatalf("two properties share the browse name %v: %s and %s",
+				reference.BrowseName, previous, reference.TargetID.NodeID.StringID)
+		}
+		seen[reference.BrowseName] = reference.TargetID.NodeID.StringID
+	}
+
+	// The repeated description keeps its text and gains what tells the two
+	// apart; the distinct one is left alone.
+	names := map[string]bool{}
+	for name := range seen {
+		names[name.Name] = true
+	}
+	for _, want := range []string{"Loop Gain (5001)", "Loop Gain (5002)", "Distinct"} {
+		if !names[want] {
+			t.Fatalf("property names = %v, want %q among them", names, want)
+		}
+	}
+	// Both EURanges are present and told apart by namespace alone.
+	standard := QualifiedName{Namespace: 0, Name: "EURange"}
+	vendor := QualifiedName{Namespace: AdapterNamespaceIndex, Name: "EURange"}
+	if seen[standard] == "" {
+		t.Fatalf("the standard EURange is missing: %v", seen)
+	}
+	if seen[vendor] == "" {
+		t.Fatalf("the vendor EURange is missing: %v", seen)
+	}
+}
