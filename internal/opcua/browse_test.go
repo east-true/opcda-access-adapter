@@ -84,8 +84,11 @@ func TestBrowseWalksTheAddressSpace(t *testing.T) {
 		t.Fatalf("results = %+v", response.Results)
 	}
 	references := response.Results[0].References
-	if len(references) != 2 {
-		t.Fatalf("references = %d, want 2", len(references))
+	// Two children and the folder's own HasTypeDefinition, which OPC 10000-3
+	// 5.5.2 makes every Object the source of.
+	if len(references) != 3 {
+		t.Fatalf("references = %d, want two children and a type definition",
+			len(references))
 	}
 	byName := map[string]ReferenceDescription{}
 	for _, reference := range references {
@@ -160,14 +163,17 @@ func TestBrowseDirectionSelectsReferences(t *testing.T) {
 		}
 		counts[direction] = len(response.Results[0].References)
 	}
-	if counts[BrowseDirectionForward] != 1 {
-		t.Fatalf("forward = %d, want the child", counts[BrowseDirectionForward])
+	// The child, and the node's own HasTypeDefinition, which is forward too.
+	if counts[BrowseDirectionForward] != 2 {
+		t.Fatalf("forward = %d, want the child and the type definition",
+			counts[BrowseDirectionForward])
 	}
 	if counts[BrowseDirectionInverse] != 1 {
 		t.Fatalf("inverse = %d, want the parent", counts[BrowseDirectionInverse])
 	}
-	if counts[BrowseDirectionBoth] != 2 {
-		t.Fatalf("both = %d, want child and parent", counts[BrowseDirectionBoth])
+	if counts[BrowseDirectionBoth] != 3 {
+		t.Fatalf("both = %d, want child, parent and type definition",
+			counts[BrowseDirectionBoth])
 	}
 
 	// The invalid direction is refused per node.
@@ -197,10 +203,13 @@ func TestBrowseNodeClassMaskIsAMask(t *testing.T) {
 		mask uint32
 		want int
 	}{
-		{"zero returns everything", 0, 2},
+		// The folder's references are one Object child, one Variable child, and
+		// its own HasTypeDefinition, whose target is an ObjectType.
+		{"zero returns everything", 0, 3},
 		{"objects only", uint32(NodeClassObject), 1},
 		{"variables only", uint32(NodeClassVariable), 1},
 		{"objects and variables", uint32(NodeClassObject | NodeClassVariable), 2},
+		{"object types only", uint32(NodeClassObjectType), 1},
 		{"methods only", uint32(NodeClassMethod), 0},
 	}
 	for _, testCase := range cases {
@@ -375,8 +384,8 @@ func TestBrowseContinuationPoints(t *testing.T) {
 		seen += len(next.Results[0].References)
 		point = next.Results[0].ContinuationPoint
 	}
-	if seen != 5 {
-		t.Fatalf("saw %d references across pages, want 5", seen)
+	if seen != 6 {
+		t.Fatalf("saw %d references across pages, want 6", seen)
 	}
 	// Every point was consumed, so none is left held.
 	if service.ContinuationPointCount() != 0 {
@@ -550,7 +559,8 @@ func TestRequestedMaxReferencesIsHonoured(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(response.Results[0].References) != 4 {
+	// Four items plus the folder's own HasTypeDefinition.
+	if len(response.Results[0].References) != 5 {
 		t.Fatalf("unlimited request returned %d", len(response.Results[0].References))
 	}
 
@@ -569,7 +579,7 @@ func TestRequestedMaxReferencesIsHonoured(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(response.Results[0].References) != 4 {
+	if len(response.Results[0].References) != 5 {
 		t.Fatalf("a client could not raise the server bound: %d", len(response.Results[0].References))
 	}
 }
@@ -843,8 +853,9 @@ func TestBrowseNextKeepsTheOriginalRequestsLimit(t *testing.T) {
 		total += len(result.References)
 		point = result.ContinuationPoint
 	}
-	if total != 7 {
-		t.Fatalf("the continuation delivered %d references, want all 7", total)
+	// Seven items plus the folder's own HasTypeDefinition.
+	if total != 8 {
+		t.Fatalf("the continuation delivered %d references, want all 8", total)
 	}
 }
 
@@ -1075,5 +1086,85 @@ func TestOneSessionsPointsAreNotAnothersToSpend(t *testing.T) {
 			t.Fatalf("point %d was spent by the other session: %s", index,
 				response.Results[0].StatusCode.Hex())
 		}
+	}
+}
+
+// OPC 10000-3 5.6.2 and 5.5.2: each Variable and each Object "shall have
+// exactly one type definition and therefore be the SourceNode of exactly one
+// HasTypeDefinition Reference". The adapter knew each node's type definition
+// and reported it in the ReferenceDescription of a browse from the parent, but
+// browsing the node itself found no such reference at all.
+func TestEveryInstanceIsTheSourceOfOneTypeDefinitionReference(t *testing.T) {
+	service, space := testBrowseService(t, DefaultBrowseLimits())
+	rights := &opcda.DAAccessRights{Raw: 3, Read: true, Write: true}
+	if err := space.PopulateBranch(nil, []opcda.BrowseEntry{
+		{Kind: opcda.BrowseEntryItem, Name: "Int32", ItemID: itemID("Test/Int32"),
+			CanonicalType: varType(opcda.VTI4), AccessRights: rights},
+		{Kind: opcda.BrowseEntryBranch, Name: "Folder"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, testCase := range []struct {
+		name     string
+		node     NodeID
+		wantType uint32
+		wantName string
+	}{
+		{"a DA item", ItemNodeID(*itemID("Test/Int32")), NodeIDDataItemType, "DataItemType"},
+		{"the source folder", space.SourceFolderID(), NodeIDFolderType, "FolderType"},
+		{"the Objects folder", NumericNodeID(0, NodeIDObjectsFolder), NodeIDFolderType, "FolderType"},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			description := browseAll(testCase.node)
+			description.ReferenceTypeID = NumericNodeID(0, NodeIDHasTypeDefinition)
+			response, err := service.Browse(context.Background(), testSession,
+				browseRequest(description), channelEpoch)
+			if err != nil {
+				t.Fatal(err)
+			}
+			result := response.Results[0]
+			if result.StatusCode != StatusGood {
+				t.Fatalf("browse = %s", result.StatusCode.Hex())
+			}
+			// "Exactly one" is the whole of the rule.
+			if len(result.References) != 1 {
+				t.Fatalf("%d HasTypeDefinition references, want exactly one",
+					len(result.References))
+			}
+			reference := result.References[0]
+			if !reference.IsForward {
+				t.Fatal("the instance is not the source of its own type definition")
+			}
+			if reference.NodeID.NodeID.Numeric != testCase.wantType {
+				t.Fatalf("type definition = %d, want %d",
+					reference.NodeID.NodeID.Numeric, testCase.wantType)
+			}
+			if reference.BrowseName.Name != testCase.wantName {
+				t.Fatalf("browse name = %q, want %q",
+					reference.BrowseName.Name, testCase.wantName)
+			}
+			// A TypeDefinitionNode is neither an Object nor a Variable, so
+			// Table 168 gives it no type definition of its own.
+			if !reference.TypeDefinition.NodeID.IsNull() {
+				t.Fatalf("the type node carries a type definition: %v",
+					reference.TypeDefinition)
+			}
+		})
+	}
+
+	// It follows the subtype hierarchy like any other reference: 10000-5 makes
+	// HasTypeDefinition a subtype of NonHierarchicalReferences.
+	description := browseAll(ItemNodeID(*itemID("Test/Int32")))
+	description.ReferenceTypeID = NumericNodeID(0, NodeIDNonHierarchicalRefs)
+	description.IncludeSubtypes = true
+	response, err := service.Browse(context.Background(), testSession,
+		browseRequest(description), channelEpoch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(response.Results[0].References) != 1 {
+		t.Fatalf("browsing NonHierarchicalReferences with subtypes found %d",
+			len(response.Results[0].References))
 	}
 }

@@ -597,8 +597,17 @@ func (s *BrowseService) browseNode(session string, description BrowseDescription
 		return BrowseResult{StatusCode: StatusBadReferenceTypeIDInvalid}
 	}
 
-	matched := make([]ReferenceDescription, 0, len(node.References))
-	for _, reference := range node.References {
+	references := node.References
+	if typeDefinition, ok := node.TypeDefinitionReference(); ok {
+		// OPC 10000-3 4.6: "the HasTypeDefinition Reference shall be used to
+		// link an instance with its type definition". It is not stored on the
+		// node, so it joins the list here rather than being missing from it.
+		references = append(append(make([]Reference, 0, len(references)+1),
+			references...), typeDefinition)
+	}
+
+	matched := make([]ReferenceDescription, 0, len(references))
+	for _, reference := range references {
 		if !directionMatches(description.BrowseDirection, reference.IsForward) {
 			continue
 		}

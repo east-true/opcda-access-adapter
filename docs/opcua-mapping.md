@@ -1680,6 +1680,25 @@ test:
 Table 168 adds one more: a type definition exists only for `Object` and
 `Variable`, so any other node class carries a null NodeId there.
 
+**Every instance is also the source of its own `HasTypeDefinition` reference.**
+OPC 10000-3 5.6.2 says each Variable "shall have exactly one type definition and
+therefore be the SourceNode of exactly one HasTypeDefinition Reference", and
+5.5.2 says the same of each Object. Browsing an item for its type definition
+finds that one reference; browsing it for everything finds it alongside the
+item's other references.
+
+The type nodes themselves are not materialised, which 4.6 allows: a server may
+"use well-known NodeIds without representing the corresponding
+TypeDefinitionNodes in their AddressSpace". Their browse names and node classes
+come from the OPC Foundation's `NodeIds.csv` and the spec check compares them
+with it, because a name carried in code rather than read from a node is a
+transcription like any other.
+
+The reference is built when a node is browsed rather than stored on it, because
+a node's type definition can change after the node exists: A.3.1.3 promotes an
+item from `DataItemType` once its properties say it is an `AnalogItemType`, and
+a stored reference would still name the type the item had when it was created.
+
 The results array matches `nodesToBrowse` in size and order, so a node that
 fails occupies its slot with a per-node status rather than shortening the list —
 the service call itself still succeeds. A `referenceTypeId` that names no

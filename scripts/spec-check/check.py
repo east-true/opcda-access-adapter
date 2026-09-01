@@ -789,6 +789,45 @@ def check_status_code_bits(files, src):
     print(f"  {checked} status code bit ranges")
 
 
+def check_type_definition_nodes(files, src):
+    """The standard type nodes this address space points its instances at.
+
+    OPC 10000-3 4.6 lets a server "use well-known NodeIds without representing
+    the corresponding TypeDefinitionNodes in their AddressSpace", which is what
+    this adapter does -- so each one's browse name and node class are carried in
+    Go rather than read from a node, and a wrong one is a wrong answer to a
+    client that browsed for its type. Both come from NodeIds.csv.
+    """
+    spec = {}
+    for row in csv_rows(files["NodeIds.csv"]):
+        if len(row) >= 3 and row[1].strip().isdigit():
+            spec[int(row[1].strip())] = (row[0].strip(), row[2].strip())
+
+    table = re.search(r'var typeDefinitionNodes = map\[uint32\]struct \{.*?\n\}\{(.*?)\n\}',
+                      src, re.S)
+    if table is None:
+        fail("the typeDefinitionNodes table could not be read")
+        return
+    checked = 0
+    for entry in re.finditer(r'(NodeID\w+):\s*\{"(\w+)",\s*NodeClass(\w+)\}', table.group(1)):
+        constant, name, node_class = entry.group(1), entry.group(2), entry.group(3)
+        value = re.search(r'\b' + constant + r'\s+uint32\s*=\s*(\d+)', src)
+        if value is None:
+            fail(f"{constant} has no value")
+            continue
+        identifier = int(value.group(1))
+        if identifier not in spec:
+            fail(f"{constant} ({identifier}) names no row in NodeIds.csv")
+            continue
+        checked += 1
+        want_name, want_class = spec[identifier]
+        if want_name != name:
+            fail(f"{constant} is browse name {name}, NodeIds.csv says {want_name}")
+        if want_class != node_class:
+            fail(f"{constant} is a {node_class}, NodeIds.csv says {want_class}")
+    print(f"  {checked} type definition nodes")
+
+
 def check_enumerations(files, src):
     """Every enumeration this adapter transcribes, against Opc.Ua.Types.bsd.
 
@@ -986,6 +1025,7 @@ def main():
     check_status_code_bits(files, src)
     check_built_in_type_ids(files, src)
     check_enumerations(files, src)
+    check_type_definition_nodes(files, src)
     check_da_error_mapping(files, src + da_sources())
     check_da_type_mapping(files, src + da_sources())
     check_da_quality_mapping(files, src + da_sources())
