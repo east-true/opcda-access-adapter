@@ -418,10 +418,11 @@ func TestPublishSendsAKeepAliveWhenIdle(t *testing.T) {
 	if len(response.NotificationMessage.Notifications) != 0 {
 		t.Fatal("a keep-alive carried notifications")
 	}
-	// A keep-alive does not consume a sequence number, because sequence
-	// numbers count notifications rather than responses.
-	if response.NotificationMessage.SequenceNumber != 0 {
-		t.Fatalf("keep-alive sequence = %d", response.NotificationMessage.SequenceNumber)
+	// 5.14.1.1: the first keep-alive "contains a sequence number of 1,
+	// indicating that the first NotificationMessage has not yet been sent".
+	if response.NotificationMessage.SequenceNumber != 1 {
+		t.Fatalf("keep-alive sequence = %d, want the next message's number",
+			response.NotificationMessage.SequenceNumber)
 	}
 }
 
@@ -1169,8 +1170,8 @@ func TestPublishSendsAKeepAliveAfterTheKeepAliveCount(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// A keep-alive carries no NotificationData and reuses the last sequence
-	// number, because Table 164 counts notifications rather than responses.
+	// A keep-alive carries no NotificationData, and names the sequence number
+	// of the message that has not been sent yet.
 	if response.NotificationMessage.HasData {
 		t.Fatalf("keep-alive carried data: %+v", response.NotificationMessage)
 	}
@@ -2328,5 +2329,101 @@ func TestRepublishRoundTrip(t *testing.T) {
 	}
 	if decoded.SubscriptionID != 11 || decoded.RetransmitSequenceNumber != 22 {
 		t.Fatalf("decoded %+v", decoded)
+	}
+}
+
+// Clause 5.14.1.1: each keep-alive "contains the sequence number of the next
+// NotificationMessage that is to be sent". That is what tells a client holding
+// a gap whether the message it is missing is still coming or was never
+// produced, so repeating the last number instead would have it wait for a
+// message it already has.
+func TestAKeepAliveNamesTheNextSequenceNumber(t *testing.T) {
+	runtime := &subscribingRuntime{}
+	service, _ := testSubscriptionService(t, runtime)
+	response, err := service.CreateSubscription(testSession, CreateSubscriptionRequest{
+		Header:                      RequestHeader{AdditionalHeader: NullExtensionObject()},
+		RequestedPublishingInterval: 100,
+		RequestedMaxKeepAliveCount:  1,
+		RequestedLifetimeCount:      9,
+		PublishingEnabled:           true,
+	}, channelEpoch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := response.SubscriptionID
+	monitorItem(t, service, id, ItemNodeID("Test/Int32"), 1)
+
+	cycle := func(at time.Time) NotificationMessage {
+		t.Helper()
+		request := PublishRequest{Header: RequestHeader{AdditionalHeader: NullExtensionObject()}}
+		published, ready, err := service.tryPublish(context.Background(), testSession, request, nil, at)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !ready {
+			t.Fatal("the cycle had nothing to send")
+		}
+		return published.NotificationMessage
+	}
+
+	// Nothing sent yet, so the next message will be number one.
+	first := cycle(channelEpoch)
+	if first.HasData {
+		t.Fatal("the first cycle carried data")
+	}
+	if first.SequenceNumber != 1 {
+		t.Fatalf("the first keep-alive named %d, want 1", first.SequenceNumber)
+	}
+
+	// A real notification takes that number.
+	runtime.latest().push(daNotification("Test/Int32", 1, QualityGood))
+	data := cycle(channelEpoch.Add(time.Second))
+	if !data.HasData {
+		t.Fatal("the notification carried no data")
+	}
+	if data.SequenceNumber != first.SequenceNumber {
+		t.Fatalf("the notification took %d, but the keep-alive promised %d",
+			data.SequenceNumber, first.SequenceNumber)
+	}
+
+	// The next keep-alive names the one after it, not the one just sent.
+	next := cycle(channelEpoch.Add(2 * time.Second))
+	if next.HasData {
+		t.Fatal("the cycle carried data")
+	}
+	if next.SequenceNumber != data.SequenceNumber+1 {
+		t.Fatalf("the keep-alive named %d after sending %d",
+			next.SequenceNumber, data.SequenceNumber)
+	}
+
+	// And a keep-alive does not consume the number it names: the next real
+	// message still takes it.
+	runtime.latest().push(daNotification("Test/Int32", 2, QualityGood))
+	after := cycle(channelEpoch.Add(3 * time.Second))
+	if after.SequenceNumber != next.SequenceNumber {
+		t.Fatalf("the notification took %d, but the keep-alive promised %d",
+			after.SequenceNumber, next.SequenceNumber)
+	}
+
+	// A keep-alive is not a NotificationMessage, so it is not held for
+	// retransmission: 5.14.1.1 reserves that queue for responses that "actually
+	// contain one or more Notifications". Only the two messages carrying data
+	// are in it. This is checked on the queue rather than through Republish,
+	// because the number a keep-alive names is the one the next real message
+	// takes -- asking for it back would find that message, not the keep-alive.
+	service.mu.Lock()
+	queued := len(service.subscriptions[id].retransmit)
+	service.mu.Unlock()
+	if queued != 2 {
+		t.Fatalf("the queue holds %d messages, want only the two carrying data", queued)
+	}
+
+	// One more keep-alive leaves it exactly as it was.
+	cycle(channelEpoch.Add(4 * time.Second))
+	service.mu.Lock()
+	stillQueued := len(service.subscriptions[id].retransmit)
+	service.mu.Unlock()
+	if stillQueued != queued {
+		t.Fatalf("a keep-alive changed the queue from %d to %d", queued, stillQueued)
 	}
 }

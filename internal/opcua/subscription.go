@@ -1868,9 +1868,18 @@ func (s *SubscriptionService) buildMessage(subscription *uaSubscription, now tim
 			return NotificationMessage{}, false
 		}
 		subscription.keepAliveTicks = 0
-		// A keep-alive reuses the last sequence number, because Table 164's
-		// sequence numbers count notifications rather than responses.
-		return NotificationMessage{SequenceNumber: subscription.sequenceNumber, PublishTime: now}, true
+		// A keep-alive does not consume a sequence number -- they count
+		// notifications rather than responses -- but it does not repeat the
+		// last one either. Clause 5.14.1.1: each keep-alive "contains the
+		// sequence number of the next NotificationMessage that is to be sent",
+		// which is what tells a client holding a gap whether the message it is
+		// missing is still coming or has not been produced yet.
+		//
+		// On a subscription that has sent nothing this is 1, and 5.14.1.1 says
+		// so in as many words: the first keep-alive "contains a sequence number
+		// of 1, indicating that the first NotificationMessage has not yet been
+		// sent".
+		return NotificationMessage{SequenceNumber: subscription.sequenceNumber + 1, PublishTime: now}, true
 	}
 
 	maximum := s.limits.MaxNotificationsPerPublish

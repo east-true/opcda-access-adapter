@@ -1886,6 +1886,19 @@ With nothing to report for `maxKeepAliveCount` publishing cycles it answers a
 keep-alive, which carries no `NotificationData` at all and does not consume a
 sequence number.
 
+It does not repeat the last one either. Clause 5.14.1.1: each keep-alive
+"contains the sequence number of the **next** NotificationMessage that is to be
+sent". That number is what tells a client holding a gap whether the message it
+is missing is still coming or was never produced — repeating the last one would
+have it wait for a message it already has. On a subscription that has sent
+nothing, the number is 1, which 5.14.1.1 states outright: the first keep-alive
+"contains a sequence number of 1, indicating that the first NotificationMessage
+has not yet been sent".
+
+A keep-alive is not held for retransmission. 5.14.1.1 reserves that queue for
+responses that "actually contain one or more Notifications", which is the same
+distinction the clause uses to define the word NotificationMessage.
+
 Table 82's `maxNotificationsPerPublish` of zero means the client imposes no
 limit; a smaller client value tightens the server's bound. What does not fit is
 reported through `moreNotifications` rather than dropped.
