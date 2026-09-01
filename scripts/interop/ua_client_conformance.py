@@ -94,11 +94,21 @@ async def main():
                   f"{dv.StatusCode} {dv.Value.VariantType} {dv.Value.Value!r}")
 
         # --- quality: Part 8 Table A.3 ---
+        #
+        # LAST_KNOWN is the one row this adapter does not take from Table A.3,
+        # and the deviation is recorded rather than accidental: Table 61 says
+        # the fieldbus code Bad_LastKnown "shall be mapped to
+        # Uncertain_NoCommunicationLastUsable", because a Bad severity must
+        # return a Null value, which would discard the last known value
+        # LAST_KNOWN exists to carry. scripts/spec-check/check.py records the
+        # same deviation against Table A.3, and docs/opcua-mapping.md explains
+        # it. Asserting Table A.3 here would ask a foreign client to confirm a
+        # mapping this server deliberately does not implement.
         print("\n[quality]")
         qual = {
             "Quality.Bad":           ua.StatusCodes.BadNotConnected if False else 0x80000000,
             "Quality.Uncertain":     0x40000000,
-            "Quality.LastKnown":     ua.StatusCodes.BadOutOfService,
+            "Quality.LastKnown":     0x408F0000,
             "Quality.OutOfService":  ua.StatusCodes.BadOutOfService,
         }
         for item, code in qual.items():
