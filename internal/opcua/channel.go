@@ -43,8 +43,9 @@ func (t TokenRequestType) String() string {
 }
 
 // ChannelSecurityToken is the token of OPC 10000-6 Table 64. RevisedLifetime is
-// a UInt32 count of milliseconds rather than the abstract Duration of
-// OPC 10000-4, which 6.7.4 states is a deliberate optimisation.
+// a UInt32 count of milliseconds rather than the Double Duration of
+// OPC 10000-4: OPC 10000-6 6.7.4 calls that a deliberate optimisation, possible
+// because sub-millisecond timeouts are not supported.
 type ChannelSecurityToken struct {
 	SecureChannelID uint32
 	TokenID         uint32
