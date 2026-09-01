@@ -2072,6 +2072,36 @@ The endpoint settings have **no defaults**:
 | `transportProfileUri` | Same. |
 | `endpointUrl`, `applicationUri`, `namespaceUri` | These identify a deployment, and the namespace URI must stay stable across restarts because design §35.2 forbids treating a namespace index as identity. |
 
+### Configuration
+
+The no-argument startup path reads these. They are the same settings guided
+setup writes into a file, under their environment names:
+
+| Environment variable | Default | Purpose |
+|---|---:|---|
+| `OPCDA_OPCUA_LISTEN` | `127.0.0.1:4840` | OPC UA bind address |
+| `OPCDA_OPCUA_ENDPOINT_URL` | *required* | endpoint URL published to clients |
+| `OPCDA_OPCUA_APPLICATION_URI` | *required* | application identity, stable across restarts |
+| `OPCDA_OPCUA_NAMESPACE_URI` | *required* | this adapter's namespace, stable across restarts |
+| `OPCDA_OPCUA_SECURITY_POLICY_URI` | *required* | SecurityPolicy URI |
+| `OPCDA_OPCUA_TRANSPORT_PROFILE_URI` | *required* | transport profile URI |
+| `OPCDA_OPCUA_SOURCE_FOLDER` | `Source` | folder name for the DA source |
+| `OPCDA_OPCUA_PRODUCT_URI` | empty | product identity in the endpoint description |
+| `OPCDA_OPCUA_APPLICATION_NAME` | empty | display name in the endpoint description |
+
+`OPCDA_FRONTEND=opcua` selects the frontend. The DA batch, Browse, ItemID,
+BSTR, queue, reconnect and watchdog variables are shared with the other
+frontends and are documented in the [HTTP reference](http-api.md#configuration);
+the per-session and per-operation bounds a UA client meets are the ones
+published in `ServerCapabilities` above, which are fixed rather than configured.
+
+The five *required* settings have no default for the reason the table in the
+previous section gives: a guessed value would make the server unusable by a
+real client rather than merely misconfigured. `OPCDA_OPCUA_PRODUCT_URI` and
+`OPCDA_OPCUA_APPLICATION_NAME` are the two that stay empty rather than being
+invented — an empty display name is honest, and a wrong one is not. Neither has
+a setup flag; both are environment-only.
+
 Guided setup lists OPC UA as a third frontend and labels it plainly:
 `SecurityPolicy None; local interoperability only, not production ready`. The
 review screen repeats that the mode is None — no signing, no encryption,
