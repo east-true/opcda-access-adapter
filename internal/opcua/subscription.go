@@ -924,6 +924,13 @@ type uaSubscription struct {
 	retransmitOrder []uint32
 	// keepAliveTicks counts publishing intervals with nothing to send.
 	keepAliveTicks uint32
+	// messageSent is the state table's MessageSent, which InitializeSubscription
+	// sets FALSE. Clause 5.14.1.1: "when a Subscription is created, the first
+	// Message is sent at the end of the first publishing cycle to inform the
+	// Client that the Subscription is operational ... This is the only time a
+	// keep-alive Message is sent without waiting for the maximum keep-alive
+	// count to be reached."
+	messageSent bool
 	// lastKeptAlive is when the client last did something that counts as being
 	// present. Clause 5.14.1.1: the lifetime counter "counts the number of
 	// consecutive publishing cycles in which there have been no Publish
@@ -1874,10 +1881,15 @@ func dataValueForSubscription(value opcda.SubscriptionValue, timestamps Timestam
 func (s *SubscriptionService) buildMessage(subscription *uaSubscription, now time.Time) (NotificationMessage, bool) {
 	if !subscription.publishingEnabled || len(subscription.pending) == 0 {
 		subscription.keepAliveTicks++
-		if subscription.keepAliveTicks < subscription.keepAliveCount {
+		// The first cycle answers whatever the count says, because a client
+		// that has just created a subscription is waiting to hear it is
+		// operational -- and with a large keep-alive count it would otherwise
+		// wait that many publishing intervals to find out.
+		if subscription.messageSent && subscription.keepAliveTicks < subscription.keepAliveCount {
 			return NotificationMessage{}, false
 		}
 		subscription.keepAliveTicks = 0
+		subscription.messageSent = true
 		// A keep-alive does not consume a sequence number -- they count
 		// notifications rather than responses -- but it does not repeat the
 		// last one either. Clause 5.14.1.1: each keep-alive "contains the
@@ -1905,6 +1917,7 @@ func (s *SubscriptionService) buildMessage(subscription *uaSubscription, now tim
 	notifications := subscription.pending[:count]
 	subscription.pending = subscription.pending[count:]
 	subscription.keepAliveTicks = 0
+	subscription.messageSent = true
 	subscription.sequenceNumber++
 
 	message := NotificationMessage{

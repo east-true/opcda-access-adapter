@@ -1900,7 +1900,15 @@ With nothing to report for `maxKeepAliveCount` publishing cycles it answers a
 keep-alive, which carries no `NotificationData` at all and does not consume a
 sequence number.
 
-It does not repeat the last one either. Clause 5.14.1.1: each keep-alive
+The first cycle is an exception to the count. Clause 5.14.1.1: "when a
+Subscription is created, the first Message is sent at the end of the first
+publishing cycle to inform the Client that the Subscription is operational ...
+This is the only time a keep-alive Message is sent without waiting for the
+maximum keep-alive count to be reached." With a large keep-alive count and a slow
+publishing interval, that is the difference between a client learning its
+subscription works in one interval and in a hundred.
+
+A keep-alive does not repeat the last sequence number either. Clause 5.14.1.1: each keep-alive
 "contains the sequence number of the **next** NotificationMessage that is to be
 sent". That number is what tells a client holding a gap whether the message it
 is missing is still coming or was never produced — repeating the last one would

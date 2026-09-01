@@ -1084,6 +1084,11 @@ func TestPublishHoldsTheRequestUntilThereIsSomethingToSay(t *testing.T) {
 	service, _ := testSubscriptionService(t, runtime)
 	id := createSubscription(t, service)
 	monitorItem(t, service, id, ItemNodeID("Test/Int32"), 7)
+	// 5.14.1.1 has the first cycle answer a keep-alive whatever the count says,
+	// so the subscription tells its client it is operational. Everything below
+	// is about what happens after that, once the subscription is in its normal
+	// state of waiting.
+	consumeFirstKeepAlive(t, service)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	type result struct {
@@ -1132,6 +1137,7 @@ func TestPublishStopsWaitingWhenTheConnectionEnds(t *testing.T) {
 	service, _ := testSubscriptionService(t, runtime)
 	id := createSubscription(t, service)
 	monitorItem(t, service, id, ItemNodeID("Test/Int32"), 7)
+	consumeFirstKeepAlive(t, service)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
@@ -2501,5 +2507,84 @@ func TestDisabledPublishingHoldsOnlyTheNewestValue(t *testing.T) {
 			t.Fatalf("handle %d reported %#v, want the newest value",
 				notification.ClientHandle, got)
 		}
+	}
+}
+
+// consumeFirstKeepAlive takes the message 5.14.1.1 sends at the end of a new
+// subscription's first publishing cycle, so a test can go on to observe the
+// waiting that follows it.
+func consumeFirstKeepAlive(t *testing.T, service *SubscriptionService) {
+	t.Helper()
+	request := PublishRequest{Header: RequestHeader{AdditionalHeader: NullExtensionObject()}}
+	response, ready, err := service.tryPublish(context.Background(), testSession, request, nil, channelEpoch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ready {
+		t.Fatal("the first publishing cycle sent nothing")
+	}
+	if response.NotificationMessage.HasData {
+		t.Fatalf("the first message carried data: %+v", response.NotificationMessage)
+	}
+}
+
+// Clause 5.14.1.1: "when a Subscription is created, the first Message is sent at
+// the end of the first publishing cycle to inform the Client that the
+// Subscription is operational ... This is the only time a keep-alive Message is
+// sent without waiting for the maximum keep-alive count to be reached."
+//
+// With a large keep-alive count and a slow publishing interval, waiting for the
+// count is the difference between a client learning its subscription works in
+// one interval and in a hundred.
+func TestTheFirstCycleAnswersWhateverTheKeepAliveCountSays(t *testing.T) {
+	runtime := &subscribingRuntime{}
+	service, _ := testSubscriptionService(t, runtime)
+	response, err := service.CreateSubscription(testSession, CreateSubscriptionRequest{
+		Header:                      RequestHeader{AdditionalHeader: NullExtensionObject()},
+		RequestedPublishingInterval: 100,
+		RequestedMaxKeepAliveCount:  5,
+		RequestedLifetimeCount:      100,
+		PublishingEnabled:           true,
+	}, channelEpoch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if response.RevisedMaxKeepAliveCount != 5 {
+		t.Fatalf("revised keep-alive count = %d", response.RevisedMaxKeepAliveCount)
+	}
+	id := response.SubscriptionID
+	monitorItem(t, service, id, ItemNodeID("Test/Int32"), 1)
+
+	cycle := func(step int) (NotificationMessage, bool) {
+		t.Helper()
+		request := PublishRequest{Header: RequestHeader{AdditionalHeader: NullExtensionObject()}}
+		published, ready, err := service.tryPublish(context.Background(), testSession, request, nil,
+			channelEpoch.Add(time.Duration(step)*100*time.Millisecond))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return published.NotificationMessage, ready
+	}
+
+	// The first cycle answers, and answers a keep-alive.
+	message, ready := cycle(1)
+	if !ready {
+		t.Fatal("the first publishing cycle sent nothing")
+	}
+	if message.HasData {
+		t.Fatalf("the first message carried data: %+v", message)
+	}
+	if message.SequenceNumber != 1 {
+		t.Fatalf("the first keep-alive named %d, want 1", message.SequenceNumber)
+	}
+
+	// "This is the only time": the next keep-alive waits for the full count.
+	for step := 2; step <= 5; step++ {
+		if _, ready := cycle(step); ready {
+			t.Fatalf("cycle %d answered before the keep-alive count was reached", step)
+		}
+	}
+	if _, ready := cycle(6); !ready {
+		t.Fatal("the second keep-alive never came")
 	}
 }
