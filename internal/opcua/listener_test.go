@@ -4,6 +4,8 @@ import (
 	"errors"
 	"io"
 	"net"
+	"os"
+	"regexp"
 	"testing"
 	"time"
 
@@ -1637,5 +1639,59 @@ func TestAHeldPublishDoesNotBlockTheConnection(t *testing.T) {
 	if !published.NotificationMessage.HasData ||
 		len(published.NotificationMessage.Notifications) != 1 {
 		t.Fatalf("notification message = %+v", published.NotificationMessage)
+	}
+}
+
+// The service inventory in docs/opcua-mapping.md is a claim about this switch,
+// and a claim about code drifts unless something compares the two. A service
+// added or removed without the document changing fails here.
+func TestTheDispatchAnswersTheDocumentedServices(t *testing.T) {
+	documented := map[uint32]string{
+		GetEndpointsRequestEncodingID:         "GetEndpoints",
+		CreateSessionRequestEncodingID:        "CreateSession",
+		ActivateSessionRequestEncodingID:      "ActivateSession",
+		CloseSessionRequestEncodingID:         "CloseSession",
+		BrowseRequestEncodingID:               "Browse",
+		BrowseNextRequestEncodingID:           "BrowseNext",
+		ReadRequestEncodingID:                 "Read",
+		WriteRequestEncodingID:                "Write",
+		CreateSubscriptionRequestEncodingID:   "CreateSubscription",
+		SetPublishingModeRequestEncodingID:    "SetPublishingMode",
+		PublishRequestEncodingID:              "Publish",
+		RepublishRequestEncodingID:            "Republish",
+		DeleteSubscriptionsRequestEncodingID:  "DeleteSubscriptions",
+		CreateMonitoredItemsRequestEncodingID: "CreateMonitoredItems",
+		DeleteMonitoredItemsRequestEncodingID: "DeleteMonitoredItems",
+	}
+
+	source, err := os.ReadFile("listener.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := map[string]bool{}
+	for _, match := range regexp.MustCompile(
+		`case ([A-Za-z]+)RequestEncodingID:`).FindAllStringSubmatch(string(source), -1) {
+		found[match[1]] = true
+	}
+	// Publish is dispatched by the listener's own loop rather than this switch,
+	// because it is held rather than answered at once.
+	found["Publish"] = true
+
+	for _, name := range documented {
+		if !found[name] {
+			t.Errorf("%s is documented as answered but the dispatch does not answer it", name)
+		}
+	}
+	for name := range found {
+		documentedName := false
+		for _, want := range documented {
+			if want == name {
+				documentedName = true
+				break
+			}
+		}
+		if !documentedName {
+			t.Errorf("the dispatch answers %s, which the service inventory does not list", name)
+		}
 	}
 }

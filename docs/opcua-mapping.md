@@ -1258,6 +1258,37 @@ test of the framing passed, because the encoder and decoder agreed with each
 other. It only surfaced when a client parsed a real frame off a socket, which is
 why this slice came before more service logic.
 
+## Which services this server answers
+
+Everything else is answered with a `ServiceFault` carrying
+`Bad_ServiceUnsupported`, which leaves the channel open so a client can carry on.
+
+| OPC 10000-4 service set | Answered | Not implemented |
+| --- | --- | --- |
+| 5.5 SecureChannel | `OpenSecureChannel`, `CloseSecureChannel` | — |
+| 5.6 Discovery | `GetEndpoints` | `FindServers`, `FindServersOnNetwork`, `RegisterServer`, `RegisterServer2` |
+| 5.7 Session | `CreateSession`, `ActivateSession`, `CloseSession` | `Cancel` |
+| 5.8 NodeManagement | — | `AddNodes`, `AddReferences`, `DeleteNodes`, `DeleteReferences` |
+| 5.9 View | `Browse`, `BrowseNext` | `TranslateBrowsePathsToNodeIds`, `RegisterNodes`, `UnregisterNodes` |
+| 5.10 Query | — | `QueryFirst`, `QueryNext` |
+| 5.11 Attribute | `Read`, `Write` | `HistoryRead`, `HistoryUpdate` |
+| 5.12 Method | — | `Call` |
+| 5.13 MonitoredItem | `CreateMonitoredItems`, `DeleteMonitoredItems` | `ModifyMonitoredItems`, `SetMonitoringMode`, `SetTriggering` |
+| 5.14 Subscription | `CreateSubscription`, `SetPublishingMode`, `Publish`, `Republish`, `DeleteSubscriptions` | `ModifySubscription`, `TransferSubscriptions` |
+
+The right-hand column is not a to-do list. A DA source has no history, no
+methods, no query engine and no nodes a client may add, so 5.8, 5.10, 5.12 and
+the two History services have nothing to map onto. `TransferSubscriptions` is a
+recorded departure above. What the rest share is that a client can reach the same
+end by other means — delete a monitored item and create it again rather than
+modify it — at the cost of a round trip.
+
+That last part is the test worth applying. `Republish` was implemented because
+the server was already sending `availableSequenceNumbers`, which 5.14.1.1 says
+tells a client the retransmission queue exists; refusing to act on those numbers
+was the server disagreeing with itself. Nothing in the remaining column is
+advertised that way.
+
 ## GetEndpoints
 
 `internal/opcua/endpoints.go` implements `EndpointDescription`,
