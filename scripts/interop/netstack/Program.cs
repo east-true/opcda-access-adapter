@@ -197,10 +197,17 @@ internal static class Program
         Check("Quality.Uncertain carries an Uncertain severity",
             StatusCode.IsUncertain(uncertain), uncertain.ToString());
 
-        // LAST_KNOWN and OUT_OF_SERVICE share the Bad_OutOfService row.
+        // LAST_KNOWN is the one row this adapter does not take from Table A.3.
+        // Table 61 says the fieldbus code Bad_LastKnown "shall be mapped to
+        // Uncertain_NoCommunicationLastUsable", because a Bad severity must
+        // return a Null value, which would discard the last known value
+        // LAST_KNOWN exists to carry. scripts/spec-check/check.py records the
+        // deviation and docs/opcua-mapping.md explains it; asserting Table A.3
+        // here would ask a foreign client to confirm a mapping this server
+        // deliberately does not implement.
         var lastKnown = ReadItem(session, "Quality.LastKnown").StatusCode;
-        Check("Quality.LastKnown maps to Bad_OutOfService",
-            lastKnown.Code == StatusCodes.BadOutOfService, lastKnown.ToString());
+        Check("Quality.LastKnown keeps the value it exists to carry",
+            lastKnown.Code == 0x408F0000, lastKnown.ToString());
 
         var outOfService = ReadItem(session, "Quality.OutOfService").StatusCode;
         Check("Quality.OutOfService maps to Bad_OutOfService",
