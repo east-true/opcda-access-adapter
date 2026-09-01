@@ -403,7 +403,13 @@ type connectionState struct {
 	negotiated  bool
 	receiveSize uint32
 	sendSize    uint32
-	service     *ChannelService
+	// maxMessageSize is what the Acknowledge told the client its responses
+	// would be bounded by, which OPC 10000-6 Table 74 makes a promise rather
+	// than a note: the server "shall return an Error Message with a
+	// Bad_ResponseTooLarge error if a response Message exceeds this value".
+	// Zero is the client imposing no limit, which the same table defines.
+	maxMessageSize uint32
+	service        *ChannelService
 	// Each side of a channel assigns its own sequence numbers, so the received
 	// and sent series are tracked separately rather than sharing one counter.
 	receiveSequence *SequenceValidator
@@ -428,7 +434,10 @@ func (l *Listener) serveConnection(conn net.Conn) {
 		// Before negotiation the server's own receive buffer bounds a header.
 		receiveSize: l.config.ReceiveBufferSize,
 		sendSize:    l.config.SendBufferSize,
-		done:        make(chan struct{}),
+		// Until a Hello arrives nothing has been negotiated, so the server's
+		// own bound is all there is to answer within.
+		maxMessageSize: l.config.MaxMessageSize,
+		done:           make(chan struct{}),
 	}
 	defer close(state.done)
 	// 7.1.3: close a connection that never sends a Hello.
@@ -518,6 +527,7 @@ func (l *Listener) handleHello(conn net.Conn, state *connectionState, body []byt
 	state.negotiated = true
 	state.receiveSize = ack.ReceiveBufferSize
 	state.sendSize = ack.SendBufferSize
+	state.maxMessageSize = ack.MaxMessageSize
 	state.service = NewChannelService(l.registry, hello.ProtocolVersion)
 	// The sequence rule set is a property of the SecurityPolicy. Only the
 	// legacy rules are exercised here; see docs/opcua-mapping.md for why the
@@ -1115,6 +1125,17 @@ func (l *Listener) writeSecureMessage(conn net.Conn, state *connectionState, mes
 	body, err := encoder.Bytes()
 	if err != nil {
 		return err
+	}
+
+	// Table 74: a response larger than the negotiated MaxMessageSize is refused
+	// with Bad_ResponseTooLarge rather than sent. The message size "is
+	// calculated using the unencrypted Message body", and no chunk has been
+	// sent, so this is the case the table answers with an Error Message rather
+	// than the abort of 6.7.3.
+	if state.maxMessageSize > 0 && uint64(len(serviceBody)) > uint64(state.maxMessageSize) {
+		return uacpError(StatusBadResponseTooLarge,
+			"a response of %d bytes exceeds the %d the client accepted",
+			len(serviceBody), state.maxMessageSize)
 	}
 
 	header, err := EncodeSecureConversationHeader(SecureConversationHeader{

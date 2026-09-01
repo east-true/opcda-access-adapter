@@ -2,6 +2,7 @@ package opcua
 
 import (
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"os"
@@ -118,13 +119,17 @@ func (c *testClient) receive() (MessageHeader, []byte, error) {
 	return header, body, nil
 }
 
-func (c *testClient) hello() Acknowledge {
+func (c *testClient) hello() Acknowledge { return c.helloWithMaxMessage(1 << 20) }
+
+// helloWithMaxMessage names the largest response this client will accept, which
+// OPC 10000-6 Table 74 makes a limit the server has to answer within.
+func (c *testClient) helloWithMaxMessage(maxMessage uint32) Acknowledge {
 	c.t.Helper()
 	body, err := EncodeHello(Hello{
 		ProtocolVersion:   ProtocolVersion,
 		ReceiveBufferSize: 65536,
 		SendBufferSize:    65536,
-		MaxMessageSize:    1 << 20,
+		MaxMessageSize:    maxMessage,
 		MaxChunkCount:     8,
 		EndpointURL:       "opc.tcp://127.0.0.1:4840",
 	}, c.limits)
@@ -1741,5 +1746,164 @@ func TestTheListenerPublishesTheLimitsItEnforces(t *testing.T) {
 			t.Errorf("%s publishes %#v, the listener was configured with %#v",
 				testCase.name, got, testCase.want)
 		}
+	}
+}
+
+// OPC 10000-6 Table 74: MaxMessageSize is "the maximum size for any response
+// Message", and "if MessageChunks have not been sent, the Server shall return
+// an Error Message with a Bad_ResponseTooLarge error if a response Message
+// exceeds this value". The value the server acknowledges is a promise, not a
+// note -- a client sizes its own buffers on it.
+func TestAResponseLargerThanTheClientAcceptedIsRefused(t *testing.T) {
+	listener, address := startTestListener(t, testListenerConfig())
+	entries := []opcda.BrowseEntry{}
+	for index := 0; index < 200; index++ {
+		name := fmt.Sprintf("Item%03d", index)
+		entries = append(entries, opcda.BrowseEntry{
+			Kind: opcda.BrowseEntryItem, Name: name, ItemID: itemID(name),
+		})
+	}
+	if err := listener.AddressSpace().PopulateBranch(nil, entries); err != nil {
+		t.Fatal(err)
+	}
+
+	client := dialTestClient(t, address)
+	// Small enough that a browse of two hundred items cannot fit, and well
+	// above the 8192 byte floor a Hello's buffers have to clear.
+	const accepted = 2048
+	ack := client.helloWithMaxMessage(accepted)
+	if ack.MaxMessageSize != accepted {
+		t.Fatalf("the server acknowledged %d, want the client's %d",
+			ack.MaxMessageSize, accepted)
+	}
+
+	opened, err := client.openChannel(0, TokenRequestIssue, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	created, err := client.createSession(opened.SecurityToken, 2, testClientNonce())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = client.activateSession(opened.SecurityToken, 3,
+		created.AuthenticationToken, NullExtensionObject()); err != nil {
+		t.Fatal(err)
+	}
+
+	encoder, err := NewEncoder(client.limits)
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoder.WriteBrowseRequest(BrowseRequest{
+		Header:        requestHeaderFor(created.AuthenticationToken, 4),
+		NodesToBrowse: []BrowseDescription{browseAll(listener.AddressSpace().SourceFolderID())},
+	})
+	request, err := encoder.Bytes()
+	if err != nil {
+		t.Fatal(err)
+	}
+	client.sendService(opened.SecurityToken, 4, request)
+
+	// The answer is a protocol level Error Message, not a service fault: 7.1.5
+	// has the server send one and close the connection.
+	_, _, err = client.readServiceResponse()
+	if err == nil {
+		t.Fatal("a response larger than the client accepted was sent")
+	}
+	var codecErr *CodecError
+	if !errors.As(err, &codecErr) || codecErr.Status != StatusBadResponseTooLarge {
+		t.Fatalf("error = %v, want Bad_ResponseTooLarge", err)
+	}
+}
+
+// Table 74: "a value of zero indicates that the Client has no limit". The same
+// browse that was refused above is answered when the client asks for no bound,
+// because what remains is the server's own.
+func TestAClientWithNoLimitGetsTheWholeResponse(t *testing.T) {
+	for _, testCase := range []struct {
+		name             string
+		serverMaxMessage uint32
+		wantAcknowledged uint32
+	}{
+		// The server still bounds it, so that is what is acknowledged.
+		{"the server keeps its own bound", testListenerConfig().MaxMessageSize,
+			testListenerConfig().MaxMessageSize},
+		// Neither side bounds it, so the negotiated value is zero -- and zero
+		// has to keep meaning "no limit" rather than "nothing may be sent".
+		{"neither side bounds it", 0, 0},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			clientWithNoLimit(t, testCase.serverMaxMessage, testCase.wantAcknowledged)
+		})
+	}
+}
+
+func clientWithNoLimit(t *testing.T, serverMaxMessage, wantAcknowledged uint32) {
+	t.Helper()
+	config := testListenerConfig()
+	config.MaxMessageSize = serverMaxMessage
+	listener, address := startTestListener(t, config)
+	entries := []opcda.BrowseEntry{}
+	for index := 0; index < 200; index++ {
+		name := fmt.Sprintf("Item%03d", index)
+		entries = append(entries, opcda.BrowseEntry{
+			Kind: opcda.BrowseEntryItem, Name: name, ItemID: itemID(name),
+		})
+	}
+	if err := listener.AddressSpace().PopulateBranch(nil, entries); err != nil {
+		t.Fatal(err)
+	}
+
+	client := dialTestClient(t, address)
+	ack := client.helloWithMaxMessage(0)
+	// Zero is the client declining to bound it, so what is acknowledged is
+	// whichever bound remains rather than zero passed straight through.
+	if ack.MaxMessageSize != wantAcknowledged {
+		t.Fatalf("the server acknowledged %d, want %d",
+			ack.MaxMessageSize, wantAcknowledged)
+	}
+
+	opened, err := client.openChannel(0, TokenRequestIssue, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	created, err := client.createSession(opened.SecurityToken, 2, testClientNonce())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = client.activateSession(opened.SecurityToken, 3,
+		created.AuthenticationToken, NullExtensionObject()); err != nil {
+		t.Fatal(err)
+	}
+
+	encoder, err := NewEncoder(client.limits)
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoder.WriteBrowseRequest(BrowseRequest{
+		Header:        requestHeaderFor(created.AuthenticationToken, 4),
+		NodesToBrowse: []BrowseDescription{browseAll(listener.AddressSpace().SourceFolderID())},
+	})
+	request, err := encoder.Bytes()
+	if err != nil {
+		t.Fatal(err)
+	}
+	client.sendService(opened.SecurityToken, 4, request)
+
+	identifier, decoder, err := client.readServiceResponse()
+	if err != nil {
+		t.Fatalf("a client that named no limit was refused: %v", err)
+	}
+	if identifier != BrowseResponseEncodingID {
+		t.Fatalf("service = %d, want a browse response", identifier)
+	}
+	response, err := decoder.ReadBrowseResponse()
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The whole answer arrived: two hundred items and the folder's own
+	// HasTypeDefinition.
+	if len(response.Results[0].References) != 201 {
+		t.Fatalf("references = %d, want all of them", len(response.Results[0].References))
 	}
 }
