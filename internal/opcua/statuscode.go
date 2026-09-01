@@ -106,8 +106,13 @@ const (
 
 	StatusBadIndexRangeInvalid StatusCode = 0x80360000
 	StatusBadInvalidArgument   StatusCode = 0x80AB0000
-	StatusBadTimeout           StatusCode = 0x800A0000
-	StatusBadDataTypeIDUnknown StatusCode = 0x80110000
+	// Table 48 names both of these for Read specifically. Bad_InvalidArgument
+	// is true of either but says only that something in the request was wrong;
+	// these say which parameter, which is what a client needs to fix it.
+	StatusBadTimestampsToReturnInvalid StatusCode = 0x802B0000
+	StatusBadMaxAgeInvalid             StatusCode = 0x80700000
+	StatusBadTimeout                   StatusCode = 0x800A0000
+	StatusBadDataTypeIDUnknown         StatusCode = 0x80110000
 )
 
 func (code StatusCode) Severity() uint32 {

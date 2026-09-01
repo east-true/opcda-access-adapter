@@ -417,9 +417,8 @@ func (d *Decoder) ReadCreateMonitoredItemsRequest() (CreateMonitoredItemsRequest
 	if err != nil {
 		return CreateMonitoredItemsRequest{}, err
 	}
-	if timestamps < int32(TimestampsSource) || timestamps > int32(TimestampsInvalid) {
-		return CreateMonitoredItemsRequest{}, decodingError("TimestampsToReturn %d is not defined", timestamps)
-	}
+	// Carried through rather than refused here: a decoding failure drops the
+	// connection, and Table 64 has a service result for an out-of-range value.
 	request.TimestampsToReturn = TimestampsToReturn(timestamps)
 	// One item is at least a ReadValueId, a mode, and the parameters.
 	length, isNull, err := d.ReadArrayLength(30)
@@ -1032,8 +1031,10 @@ func (s *SubscriptionService) lookup(sessionToken string, id uint32, now time.Ti
 // full set. The DA core never resubscribes on its own, so doing it here is
 // explicit rather than hidden.
 func (s *SubscriptionService) CreateMonitoredItems(ctx context.Context, sessionToken string, request CreateMonitoredItemsRequest, now time.Time) (CreateMonitoredItemsResponse, error) {
-	if request.TimestampsToReturn == TimestampsInvalid {
-		return CreateMonitoredItemsResponse{}, uacpError(StatusBadInvalidArgument, "timestampsToReturn is invalid")
+	if !request.TimestampsToReturn.Valid() {
+		return CreateMonitoredItemsResponse{}, uacpError(StatusBadTimestampsToReturnInvalid,
+			"timestampsToReturn %d is not one of the four Table 180 values",
+			int32(request.TimestampsToReturn))
 	}
 	if len(request.ItemsToCreate) == 0 {
 		return CreateMonitoredItemsResponse{}, uacpError(StatusBadNothingToDo, "no monitored items were requested")

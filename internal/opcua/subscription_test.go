@@ -2,6 +2,7 @@ package opcua
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"testing"
 	"time"
@@ -1934,4 +1935,64 @@ func TestUsingASubscriptionResetsItsLifetime(t *testing.T) {
 			}
 		})
 	}
+}
+
+// Table 64 names Bad_TimestampsToReturnInvalid for CreateMonitoredItems too,
+// and an out-of-range value reaches the service rather than dropping the
+// connection at the decoder.
+func TestCreateMonitoredItemsNamesTheParameterItRefuses(t *testing.T) {
+	runtime := &subscribingRuntime{}
+	service, _ := testSubscriptionService(t, runtime)
+	id := createSubscription(t, service)
+
+	for _, timestamps := range []TimestampsToReturn{TimestampsInvalid, 6, -2} {
+		_, err := service.CreateMonitoredItems(context.Background(), testSession,
+			CreateMonitoredItemsRequest{
+				Header:             RequestHeader{AdditionalHeader: NullExtensionObject()},
+				SubscriptionID:     id,
+				TimestampsToReturn: timestamps,
+				ItemsToCreate: []MonitoredItemCreateRequest{{
+					ItemToMonitor:  ReadValueID{NodeID: ItemNodeID("Test/Int32"), AttributeID: AttributeValue},
+					MonitoringMode: MonitoringModeReporting,
+					RequestedParameters: MonitoringParameters{
+						ClientHandle: 1, QueueSize: 1, Filter: NullExtensionObject(),
+					},
+				}},
+			}, channelEpoch)
+		if err == nil {
+			t.Fatalf("timestampsToReturn %d was accepted", timestamps)
+		}
+		var codecErr *CodecError
+		if !errors.As(err, &codecErr) || codecErr.Status != StatusBadTimestampsToReturnInvalid {
+			t.Fatalf("timestampsToReturn %d = %v, want Bad_TimestampsToReturnInvalid", timestamps, err)
+		}
+	}
+
+	// NEITHER is a Table 180 value and is accepted: a monitored item that wants
+	// no timestamps is asking for something the table defines.
+	result := monitorWithTimestamps(t, service, id, TimestampsNeither)
+	if result.StatusCode != StatusGood {
+		t.Fatalf("NEITHER = %s", result.StatusCode.Hex())
+	}
+}
+
+func monitorWithTimestamps(t *testing.T, service *SubscriptionService, id uint32, timestamps TimestampsToReturn) MonitoredItemCreateResult {
+	t.Helper()
+	response, err := service.CreateMonitoredItems(context.Background(), testSession,
+		CreateMonitoredItemsRequest{
+			Header:             RequestHeader{AdditionalHeader: NullExtensionObject()},
+			SubscriptionID:     id,
+			TimestampsToReturn: timestamps,
+			ItemsToCreate: []MonitoredItemCreateRequest{{
+				ItemToMonitor:  ReadValueID{NodeID: ItemNodeID("Test/Int32"), AttributeID: AttributeValue},
+				MonitoringMode: MonitoringModeReporting,
+				RequestedParameters: MonitoringParameters{
+					ClientHandle: 3, QueueSize: 1, Filter: NullExtensionObject(),
+				},
+			}},
+		}, channelEpoch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return response.Results[0]
 }

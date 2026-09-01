@@ -751,6 +751,27 @@ drains "preserving first-seen order", which is the source's own account of what
 changed first, and pacing carries that order through rather than reordering
 around it.
 
+## A refusal names the parameter it refuses
+
+Table 48 gives Read two result codes of its own — `Bad_MaxAgeInvalid` and
+`Bad_TimestampsToReturnInvalid` — and Table 64 repeats the second for
+CreateMonitoredItems. `Bad_InvalidArgument` is true of either case but says only
+that something in the request was wrong. Naming the parameter is the difference
+between a client that can fix its request and one that can only guess, so each
+refusal carries the code the table names.
+
+`timestampsToReturn` is checked against Table 180, which defines four values
+that name timestamps plus `INVALID`, "no value specified". A request carrying
+`INVALID` has not asked for anything, so it is refused alongside the values the
+table does not define at all. `NEITHER` is a real answer and is accepted: Table
+180 forbids it only for HistoryRead.
+
+An out-of-range value reaches that check rather than being refused while
+decoding. A decoding failure drops the connection, and such a message decoded
+perfectly — one enumeration value is out of range. Table 48 has a service result
+for exactly that, and answering with it lets a client correct itself instead of
+losing every session on the channel.
+
 ## `maxAge` on a Read
 
 OPC 10000-4 Table 47 gives `maxAge` three rules, and the adapter meets two of
