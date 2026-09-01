@@ -1584,11 +1584,23 @@ func TestAHeldPublishDoesNotBlockTheConnection(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// The Publish has nothing to report, so it is held. The Read that follows
-	// must still be answered.
-	client.sendService(opened.SecurityToken, 6, encode(func(e *Encoder) {
+	// The first publishing cycle answers a keep-alive whatever the keep-alive
+	// count says, because 5.14.1.1 has a new subscription tell its client it is
+	// operational. That one is taken here so what follows is the held Publish
+	// this test is about.
+	if _, _, err = client.callService(opened.SecurityToken, 6, encode(func(e *Encoder) {
 		e.WritePublishRequest(PublishRequest{
 			Header: requestHeaderFor(created.AuthenticationToken, 6),
+		})
+	})); err != nil {
+		t.Fatal(err)
+	}
+
+	// This Publish has nothing to report, so it is held. The Read that follows
+	// must still be answered.
+	client.sendService(opened.SecurityToken, 8, encode(func(e *Encoder) {
+		e.WritePublishRequest(PublishRequest{
+			Header: requestHeaderFor(created.AuthenticationToken, 8),
 		})
 	}))
 	client.sendService(opened.SecurityToken, 7, encode(func(e *Encoder) {
