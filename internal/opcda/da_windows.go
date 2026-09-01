@@ -142,10 +142,14 @@ func addDAGroup(server *iopcServer) (uint32, *iopcItemMgt, error) {
 	const (
 		// The group is deliberately inactive. An active group makes the source
 		// push updates for every item ever read, which is load nobody asked
-		// for, and design §"금지" forbids the adapter serving cached values --
-		// so there is nothing an active group would be maintaining for it.
-		// Read goes to the device instead, which satisfies any maxAge a client
-		// can ask for.
+		// for, and nothing here consumes a cached value: design §16.2 makes
+		// device the v0 default "for correctness", so a Read goes to the
+		// device and an active group would be maintaining a cache for no one.
+		//
+		// §16.2 permits representing the DA cache source and says exposing it
+		// later "scope 위반이 아니다", so this is a v0 choice rather than a
+		// prohibition. What INV-6 forbids is a persistent value store, which
+		// is a different thing from the source's own cache.
 		bActive               = 0
 		dwRequestedUpdateRate = 1000
 		hClientGroup          = 1
