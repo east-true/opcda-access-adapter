@@ -264,7 +264,70 @@ def normalise(name):
     return (name.lower().replace("_", "")
             .replace("requestheader", "header").replace("responseheader", "header")
             .replace("subscriptionacknowledgements", "acknowledgements")
+            .replace("diagnosticinfos", "diagnostics")
             .replace("id", "").replace("uri", "").replace("url", ""))
+
+
+# A response field this server writes from a constant rather than from its own
+# structure. The encoder cannot be read for such a field, so it is recorded here
+# with the reason -- the alternative is a check that silently stops noticing an
+# omitted field.
+#
+# The cost is that this one field could be dropped without this check noticing,
+# since it compares what the encoder names and this field is named nowhere. That
+# gap is covered from the other side: internal/opcua's round-trip tests decode
+# what the encoder wrote, and removing the constant misaligns everything after
+# it. Verified by deleting the line and watching those tests fail.
+CONSTANT_RESPONSE_FIELDS = {
+    "CreateSessionResponse": {
+        "ServerSoftwareCertificates":
+            "Table 15: this array shall be empty, so it is written as one",
+    },
+}
+
+
+def check_response_encoders(files, src):
+    """Field order for every response this server writes, against the schema.
+
+    Until now only request decoders were compared. An encoder and a decoder that
+    agree with each other pass every round-trip test in this repository while
+    disagreeing with the specification, and then no client can read a word --
+    which is how DiagnosticInfo shipped writing its fields in mask-bit order
+    rather than stream order, one of the three defects that motivated this
+    script. Requests were checked in response to it; responses were not.
+
+    A response is the side a foreign client has to parse, so a wrong order here
+    is worse than in a request: this server would be sending malformed messages
+    rather than failing to read one.
+    """
+    spec = schema_structures(files["Opc.Ua.Types.bsd"])
+    checked = 0
+    for name in sorted(set(re.findall(r'func \(e \*Encoder\) Write([A-Za-z0-9]+Response)\(', src))):
+        want = spec.get(name)
+        for field, reason in CONSTANT_RESPONSE_FIELDS.get(name, {}).items():
+            if want is None or field not in want:
+                fail(f"{name}.{field} is recorded as written from a constant "
+                     f"but is not a field of that structure")
+                continue
+            want = [f for f in want if f != field]
+            print(f"    written from a constant: {name}.{field} ({reason})")
+        if want is None:
+            fail(f"{name} is not in the binary schema")
+            continue
+        body = re.search(r'func \(e \*Encoder\) Write' + name + r'\([^)]*\) \{(.*?)\n\}', src, re.S)
+        if body is None:
+            fail(f"{name} encoder body could not be read")
+            continue
+        got = []
+        for field in re.finditer(r'(?:value|response|message)\.([A-Za-z0-9_]+)', body.group(1)):
+            if not got or got[-1] != field.group(1):
+                got.append(field.group(1))
+        if not got:
+            continue  # writes from locals; covered by the round-trip tests
+        checked += 1
+        if [normalise(f) for f in want] != [normalise(f) for f in got]:
+            fail(f"{name} field order: code {got}, spec {want}")
+    print(f"  {checked} response encoders")
 
 
 def check_request_decoders(files, src):
@@ -826,6 +889,7 @@ def main():
     check_node_ids(files, src)
     check_attribute_ids(files, src)
     check_request_decoders(files, src)
+    check_response_encoders(files, src)
     check_da(files)
     check_status_code_bits(files, src)
     check_built_in_type_ids(files, src)

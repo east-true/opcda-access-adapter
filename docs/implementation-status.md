@@ -149,7 +149,8 @@ question without rotting.
   | service encoding ids | `NodeIds.csv` | 32 |
   | standard node ids | `NodeIds.csv` | 67 |
   | attribute ids | `AttributeIds.csv` | 13 |
-  | request decoder field order | `Opc.Ua.Types.bsd` | 14 |
+  | request decoder field order | `Opc.Ua.Types.bsd` | 15 |
+  | response encoder field order | `Opc.Ua.Types.bsd` | 17 |
   | DA quality values | `opcda.idl` | 16 |
   | DA EU types | `opcda.idl` | 3 |
   | DA item property identifiers | `opcda.idl` | 16 |
