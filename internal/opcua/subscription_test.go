@@ -150,6 +150,12 @@ const testSession = "session-token"
 
 func testSubscriptionService(t *testing.T, runtime opcda.Runtime) (*SubscriptionService, *AddressSpace) {
 	t.Helper()
+	return testSubscriptionServiceWithLimits(t, runtime, DefaultSubscriptionLimits())
+}
+
+// testSubscriptionServiceWithLimits names the limits, for tests about a bound.
+func testSubscriptionServiceWithLimits(t *testing.T, runtime opcda.Runtime, limits SubscriptionLimits) (*SubscriptionService, *AddressSpace) {
+	t.Helper()
 	space := testAddressSpace(t)
 	rights := &opcda.DAAccessRights{Raw: 3, Read: true, Write: true}
 	if err := space.PopulateBranch(nil, []opcda.BrowseEntry{
@@ -166,7 +172,7 @@ func testSubscriptionService(t *testing.T, runtime opcda.Runtime) (*Subscription
 	}); err != nil {
 		t.Fatal(err)
 	}
-	service, err := NewSubscriptionService(space, runtime, DefaultSubscriptionLimits(), 100)
+	service, err := NewSubscriptionService(space, runtime, limits, 100)
 	if err != nil {
 		t.Fatalf("NewSubscriptionService: %v", err)
 	}
@@ -996,6 +1002,12 @@ func TestSubscriptionLimitsValidation(t *testing.T) {
 		"inverted intervals":  func(l *SubscriptionLimits) { l.MinPublishingInterval = l.MaxPublishingInterval + 1 },
 		"zero keep-alive":     func(l *SubscriptionLimits) { l.MinKeepAliveCount = 0 },
 		"inverted keep-alive": func(l *SubscriptionLimits) { l.MinKeepAliveCount = l.MaxKeepAliveCount + 1 },
+		// 5.14.1.1 wants a retransmission queue "of at least two times the
+		// number of Publish requests per Session the Server supports", and
+		// this server answers one at a time. A queue below that floor is a
+		// configuration that cannot hold what the clause requires.
+		"a queue below the floor": func(l *SubscriptionLimits) { l.MaxRetransmissionQueue = 1 },
+		"no queue at all":         func(l *SubscriptionLimits) { l.MaxRetransmissionQueue = 0 },
 	} {
 		t.Run(name, func(t *testing.T) {
 			limits := DefaultSubscriptionLimits()
@@ -2073,5 +2085,98 @@ func TestAnUndefinedMonitoringModeFailsItsOwnItem(t *testing.T) {
 	}
 	if decoded.ItemsToCreate[0].MonitoringMode.Valid() {
 		t.Fatal("42 passed as a Table 148 value")
+	}
+}
+
+// Clause 5.14.1.1 bounds the retransmission queue and says what happens when it
+// fills: "in the case of a retransmission queue overflow, the oldest sent
+// NotificationMessage gets deleted". Unbounded, a client that publishes and
+// never acknowledges holds every DataValue the server ever sent it.
+func TestTheRetransmissionQueueIsBoundedAndDropsTheOldest(t *testing.T) {
+	runtime := &subscribingRuntime{}
+	limits := DefaultSubscriptionLimits()
+	limits.MaxRetransmissionQueue = 4
+	service, _ := testSubscriptionServiceWithLimits(t, runtime, limits)
+	id := createSubscription(t, service)
+	monitorItem(t, service, id, ItemNodeID("Test/Int32"), 1)
+
+	// Ten messages sent, none acknowledged.
+	var sequences []uint32
+	for step := 1; step <= 10; step++ {
+		runtime.latest().push(daNotification("Test/Int32", int32(step), QualityGood))
+		request := PublishRequest{Header: RequestHeader{AdditionalHeader: NullExtensionObject()}}
+		response, ready, err := service.tryPublish(context.Background(), testSession, request, nil,
+			channelEpoch.Add(time.Duration(step)*time.Second))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !ready {
+			t.Fatalf("step %d had nothing to send", step)
+		}
+		sequences = append(sequences, response.NotificationMessage.SequenceNumber)
+	}
+
+	service.mu.Lock()
+	held := len(service.subscriptions[id].retransmit)
+	order := append([]uint32(nil), service.subscriptions[id].retransmitOrder...)
+	service.mu.Unlock()
+	if held != limits.MaxRetransmissionQueue {
+		t.Fatalf("the queue holds %d messages, want its bound of %d",
+			held, limits.MaxRetransmissionQueue)
+	}
+	if len(order) != held {
+		t.Fatalf("the order list holds %d entries for %d messages", len(order), held)
+	}
+	// What survives is the newest, and the oldest went first.
+	want := sequences[len(sequences)-limits.MaxRetransmissionQueue:]
+	for index, sequence := range want {
+		if order[index] != sequence {
+			t.Fatalf("queue = %v, want the last %d sent: %v",
+				order, limits.MaxRetransmissionQueue, want)
+		}
+	}
+
+	// Acknowledging a message that survived removes it from both structures,
+	// so the order list cannot drift from the queue it describes.
+	acknowledged := PublishRequest{
+		Header: RequestHeader{AdditionalHeader: NullExtensionObject()},
+		Acknowledgements: []SubscriptionAcknowledgement{
+			{SubscriptionID: id, SequenceNumber: want[0]},
+		},
+	}
+	statuses, err := service.acknowledge(testSession, acknowledged, channelEpoch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if statuses[0] != StatusGood {
+		t.Fatalf("acknowledging a held message = %s", statuses[0].Hex())
+	}
+	service.mu.Lock()
+	held = len(service.subscriptions[id].retransmit)
+	order = append([]uint32(nil), service.subscriptions[id].retransmitOrder...)
+	service.mu.Unlock()
+	if len(order) != held || held != limits.MaxRetransmissionQueue-1 {
+		t.Fatalf("after acknowledging: %d queued, %d ordered", held, len(order))
+	}
+	for _, sequence := range order {
+		if sequence == want[0] {
+			t.Fatal("an acknowledged message stayed in the order list")
+		}
+	}
+
+	// A dropped message can no longer be acknowledged, which is what
+	// Bad_SequenceNumberUnknown is for.
+	stale := PublishRequest{
+		Header: RequestHeader{AdditionalHeader: NullExtensionObject()},
+		Acknowledgements: []SubscriptionAcknowledgement{
+			{SubscriptionID: id, SequenceNumber: sequences[0]},
+		},
+	}
+	statuses, err = service.acknowledge(testSession, stale, channelEpoch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if statuses[0] != StatusBadSequenceNumberUnknown {
+		t.Fatalf("acknowledging a dropped message = %s", statuses[0].Hex())
 	}
 }

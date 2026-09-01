@@ -643,6 +643,26 @@ One UA subscription is backed by one DA group, and a group has exactly one
 cannot be honoured, so it is refused; applying somebody else's deadband to it
 would report changes the client did not ask to hear about, or hide ones it did.
 
+### The retransmission queue is bounded, and drops its oldest
+
+Clause 5.14.1.1 gives a session a retransmission queue "of at least two times
+the number of Publish requests per Session the Server supports", and says what
+happens when it fills: "in the case of a retransmission queue overflow, the
+oldest sent NotificationMessage gets deleted".
+
+This server answers one Publish per session at a time, so two is the floor, and
+the queue holds far more than that. It has to be bounded either way: the queue
+only shrinks when a client acknowledges, and a client that publishes without
+ever acknowledging would otherwise hold every DataValue the server ever sent it.
+
+Order is tracked rather than inferred from the sequence number, because that
+number does not reset — 5.14.1.1 has it run past four billion before it repeats,
+so comparing two of them says nothing about which was sent first once it wraps.
+
+A client that acknowledges a message the queue has already dropped is told
+`Bad_SequenceNumberUnknown`, which is the answer for a sequence number the
+server is not holding.
+
 ### A subscription's lifetime is enforced, not merely reported
 
 Table 82: "when the publishing timer has expired this number of times without a
