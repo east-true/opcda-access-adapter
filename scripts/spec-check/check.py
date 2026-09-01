@@ -47,6 +47,11 @@ PART8_MARKDOWN = ("https://reference.opcfoundation.org/specs/OPC-10000-8/"
 # other: the bit a flag occupies is a number somebody read once.
 PART4_MARKDOWN = ("https://reference.opcfoundation.org/specs/OPC-10000-4/"
                   "v1.05.07/t63916693122/download/markdown")
+# Part 6 carries the built-in type identifiers the Variant encoding is built on.
+# There is no schema for them either -- Opc.Ua.Types.bsd names the types but not
+# the numbers the wire uses -- so the table is the only authority.
+PART6_MARKDOWN = ("https://reference.opcfoundation.org/specs/OPC-10000-6/"
+                  "v1.05.07/t63916693136/download/markdown")
 
 # Every source is a whole URL: most are named after their file, Part 8 is not.
 SOURCES = {
@@ -58,6 +63,7 @@ SOURCES = {
     "opcerror.h": DA_BASE + "opcerror.h",
     "OPC-10000-8.md": PART8_MARKDOWN,
     "OPC-10000-4.md": PART4_MARKDOWN,
+    "OPC-10000-6.md": PART6_MARKDOWN,
 }
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 UA = os.path.join(ROOT, "internal", "opcua")
@@ -629,6 +635,47 @@ def check_status_code_bits(files, src):
     print(f"  {checked} status code bit ranges")
 
 
+def check_built_in_type_ids(files, src):
+    """The built-in type identifiers, from Part 6 Table 1.
+
+    Every Variant on the wire names its type with one of these numbers, and the
+    numbers exist nowhere but this table -- Opc.Ua.Types.bsd names the types and
+    not their identifiers. They were transcribed by hand, which is the condition
+    every other check here exists for.
+    """
+    spec = {}
+    for row in csv_rows(files["OPC-10000-6.md"]):
+        if len(row) >= 2 and row[0].strip().isdigit():
+            spec[row[1].strip().lower()] = int(row[0].strip())
+    # The Go names spell three initialisms differently from the table.
+    aliases = {"xmlelement": "xmlelement", "nodeid": "nodeid",
+               "expandednodeid": "expandednodeid"}
+
+    checked = 0
+    for match in re.finditer(r'\bBuiltIn([A-Za-z0-9]+)\s+BuiltInTypeID\s*=\s*(\d+)', src):
+        name, value = match.group(1), int(match.group(2))
+        lowered = aliases.get(name.lower(), name.lower())
+        if lowered == "null":
+            # Table 26 defines 0 as "a NULL", which Table 1 does not list
+            # because it is not a data type.
+            if value != 0:
+                fail(f"BuiltInNull is {value}, and Table 26 gives NULL the id 0")
+            continue
+        if lowered not in spec:
+            fail(f"BuiltIn{name} names no row in Part 6 Table 1")
+            continue
+        checked += 1
+        if spec[lowered] != value:
+            fail(f"BuiltIn{name} is {value}, Table 1 says {spec[lowered]}")
+    # Table 1 runs from 1 to 25 and every one of them has to be here: a Variant
+    # naming a type the adapter never declared would decode as something else.
+    missing = sorted(set(spec) - {
+        m.group(1).lower() for m in re.finditer(r'\bBuiltIn([A-Za-z0-9]+)\s+BuiltInTypeID', src)})
+    if missing:
+        fail(f"Part 6 Table 1 types with no constant: {', '.join(missing)}")
+    print(f"  {checked} built-in type ids")
+
+
 def check_da_type_mapping(files, src):
     """Table A.2, VARTYPE to UA DataType."""
     rows = spec_table(files["OPC-10000-8.md"], "Table A.2 - DataTypes and mapping")
@@ -727,6 +774,7 @@ def main():
     check_request_decoders(files, src)
     check_da(files)
     check_status_code_bits(files, src)
+    check_built_in_type_ids(files, src)
     check_da_error_mapping(files, src + da_sources())
     check_da_type_mapping(files, src + da_sources())
     check_da_quality_mapping(files, src + da_sources())

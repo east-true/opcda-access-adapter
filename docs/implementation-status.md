@@ -145,18 +145,25 @@ question without rotting.
 
   | | Source | Checked |
   | --- | --- | --- |
-  | status code values | `StatusCode.csv` | 78 |
+  | status code values | `StatusCode.csv` | 83 |
   | service encoding ids | `NodeIds.csv` | 32 |
-  | standard node ids | `NodeIds.csv` | 59 |
-  | attribute ids | `AttributeIds.csv` | 12 |
+  | standard node ids | `NodeIds.csv` | 67 |
+  | attribute ids | `AttributeIds.csv` | 13 |
   | request decoder field order | `Opc.Ua.Types.bsd` | 14 |
   | DA quality values | `opcda.idl` | 16 |
+  | DA EU types | `opcda.idl` | 3 |
   | DA item property identifiers | `opcda.idl` | 16 |
-  | DA masks, access rights, data source | `opcda.idl` | 4 |
+  | DA masks, access rights, data source | `opcda.idl` | 6 |
   | **DA COM vtable slot order** | `opcda.idl` | 6 |
+  | StatusCode bit ranges | Part 4 Table 176 | 4 |
+  | built-in type ids | Part 6 Table 1 | 25 |
   | DA error mappings | Part 8 Tables A.4/A.5 | 19 |
   | DA data type mappings | Part 8 Table A.2 | 14 |
   | DA quality mappings | Part 8 Table A.3 | 16 |
+
+  The counts are what the script reports, not a remembered figure: every row
+  above was stale by the time it was read, because the check kept growing and
+  the table did not.
 
   Interface and category GUIDs, struct field order and type widths, and the
   browse and namespace enumerations are checked by Go tests instead, which can
