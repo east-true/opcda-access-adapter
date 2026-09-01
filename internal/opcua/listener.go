@@ -73,8 +73,9 @@ func DefaultListenerConfig() ListenerConfig {
 		DataAccess:        DefaultDataAccessLimits(),
 		Population:        DefaultPopulationLimits(),
 		Subscriptions:     DefaultSubscriptionLimits(),
-		// The endpoint has no default: its URLs identify a deployment and its
-		// security policy URI is defined by OPC 10000-7, so both are supplied
+		// The endpoint has no default: its URLs identify a deployment, and its
+		// security policy URI comes from the OPC Foundation profile database
+		// rather than from any pinned specification, so both are supplied
 		// rather than assumed.
 	}
 }

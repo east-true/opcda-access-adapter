@@ -1490,12 +1490,27 @@ endpoint.
 
 ### The security policy URI is configuration, not a constant
 
-`EndpointConfig.SecurityPolicyURI` is **required and never defaulted**. The set
-of known URIs is defined by **OPC 10000-7**, which this project has not been
-able to obtain in a transcribable form. A server that published a wrong policy
-URI would be unusable by a real client, which is precisely why the value is
-supplied by configuration rather than written from recollection. The same
-applies to the transport profile URI.
+`EndpointConfig.SecurityPolicyURI` is **required and never defaulted**, and the
+same applies to the transport profile URI.
+
+Neither can be transcribed the way every other constant here is. OPC 10000-7 is
+the specification that governs profiles, and it does not list them: its clause 1
+says "the actual Profiles are maintained in an online database and accessible
+via https://profiles.opcfoundation.org/". Nothing in Parts 3, 4, 5 or 6 carries
+either URI either, so there is no pinned document to check a transcription
+against — which is exactly the condition under which this project does not write
+a constant from recollection.
+
+A server that published a wrong policy URI would be unusable by a real client,
+so the value is supplied by configuration and an operator takes it from the
+profile database rather than from a specification PDF.
+
+What the server does **not** do is verify it. The security mode is fixed to
+`None` in code and cannot be misconfigured, but the policy URI is advertised
+verbatim: an operator who typed the URI of a signing policy would publish an
+endpoint naming it, alongside the `None` mode that contradicts it. Checking that
+would mean hard-coding the one URI this adapter implements, from a source that
+cannot be pinned, and the endpoint's mode is the field a client acts on.
 
 ## Concurrency
 
@@ -2046,7 +2061,7 @@ The endpoint settings have **no defaults**:
 
 | Setting | Why it is not defaulted |
 |---|---|
-| `securityPolicyUri` | Defined by OPC 10000-7. A wrong URI makes the server unusable by a real client. |
+| `securityPolicyUri` | From the OPC Foundation profile database, which OPC 10000-7 clause 1 points to rather than listing. A wrong URI makes the server unusable by a real client, and the server does not verify it. |
 | `transportProfileUri` | Same. |
 | `endpointUrl`, `applicationUri`, `namespaceUri` | These identify a deployment, and the namespace URI must stay stable across restarts because design §35.2 forbids treating a namespace index as identity. |
 
