@@ -1074,6 +1074,23 @@ reading a byte of body. `HEL`, `ACK`, `ERR`, and `RHE` are owned by this layer;
 layout is deliberately identical to the first eight bytes of the secure
 conversation header.
 
+### The response bound a client asked for
+
+OPC 10000-6 Table 74 makes `MaxMessageSize` "the maximum size for any response
+Message", and the server "shall return an Error Message with a
+`Bad_ResponseTooLarge` error if a response Message exceeds this value" when no
+chunk has been sent yet. The Acknowledge reports the tighter of the client's
+bound and the server's, and that reported value is what responses are held to —
+a client sizes its own buffers on it.
+
+Zero on either side means that side imposes no bound, which Table 74 states for
+the client. If neither side imposes one the negotiated value is zero and nothing
+is refused, so zero has to keep meaning "no limit" rather than "nothing may be
+sent".
+
+`MaxChunkCount` needs no enforcement here: this server sends every response as
+one final chunk, and one chunk is within any non-zero limit.
+
 ### Negotiation
 
 `NegotiateAcknowledge` implements Table 75: the server's receive buffer may not
