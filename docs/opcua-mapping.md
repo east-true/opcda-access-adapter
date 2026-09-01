@@ -887,6 +887,21 @@ another implementation, never from this encoder, and decodes to the bound.
 Booleans are written as `1` for true and any non-zero byte decodes as true, and
 NaN is normalised to an IEEE quiet NaN, both as the clause requires.
 
+### An array shape the decoder was told to reject
+
+Nothing here consumes an array Variant — the adapter carries no arrays — but the
+decoder still has to walk one to find the end of it, and OPC 10000-6 Table 26
+gives it two rules while it does: "all dimensions shall be specified and shall be
+greater than zero", and "if ArrayDimensions are inconsistent with the ArrayLength
+then the decoder shall stop and raise a `Bad_DecodingError`". Both are applied. A
+decoder that accepts a shape it was told to reject is one that answers a message
+it should have refused.
+
+The `ArrayDimensions` flag on a scalar Variant is refused outright. Table 26
+gives the field to arrays alone, and reading the flag without reading the field
+would leave its bytes in the stream for the next field to take as its own —
+turning one malformed Variant into a whole message decoded as something else.
+
 ### Null is not empty
 
 `-1` and `0` are **different values**, and a field that is simply not present is

@@ -165,6 +165,56 @@ func writeVariantValue[T any](e *Encoder, value Variant, write func(T)) {
 	write(typed)
 }
 
+// readArrayDimensions consumes a Variant's ArrayDimensions field and applies the
+// two rules OPC 10000-6 Table 26 gives the decoder: "all dimensions shall be
+// specified and shall be greater than zero", and "if ArrayDimensions are
+// inconsistent with the ArrayLength then the decoder shall stop and raise a
+// Bad_DecodingError".
+//
+// Nothing here consumes the dimensions -- the adapter carries no arrays -- but
+// a decoder that accepts a shape it was told to reject is one that answers a
+// message it should have refused.
+func (d *Decoder) readArrayDimensions(arrayLength int) error {
+	count, countIsNull, err := d.ReadArrayLength(4)
+	if err != nil {
+		return err
+	}
+	if countIsNull || count == 0 {
+		// Dimensions are present only when there are dimensions to give.
+		return decodingError("a Variant's ArrayDimensions field names no dimensions")
+	}
+	// A null array arrives here as a length of zero, which no product of
+	// positive dimensions can equal, so it is refused by the same arithmetic
+	// rather than by a case of its own.
+	elements := int64(arrayLength)
+	product := int64(1)
+	for index := 0; index < count; index++ {
+		dimension, readErr := d.ReadInt32()
+		if readErr != nil {
+			return readErr
+		}
+		if dimension <= 0 {
+			return decodingError("Variant ArrayDimensions[%d] is %d, which is not greater than zero",
+				index, dimension)
+		}
+		product *= int64(dimension)
+		// Bailing the moment the product passes the element count is what
+		// keeps it inside an Int64. Left to run, four dimensions of 65536
+		// multiply to exactly 2^64, which wraps to zero and would agree with
+		// an array that declared no elements at all.
+		if product > elements {
+			return decodingError(
+				"Variant ArrayDimensions describe more than the %d elements the array declares",
+				elements)
+		}
+	}
+	if product != elements {
+		return decodingError("Variant ArrayDimensions describe %d elements but the array declares %d",
+			product, elements)
+	}
+	return nil
+}
+
 // ReadVariant decodes a Variant. An array is reported but its elements are
 // skipped, because nothing in this adapter consumes them; the decoder still
 // validates the declared length so a hostile count cannot drive an allocation.
@@ -195,17 +245,20 @@ func (d *Decoder) ReadVariant() (Variant, error) {
 			}
 		}
 		if mask&variantArrayDimensions != 0 {
-			dimensions, dimensionsNull, dimensionsErr := d.ReadArrayLength(4)
-			if dimensionsErr != nil {
-				return Variant{}, dimensionsErr
-			}
-			for index := 0; index < dimensions && !dimensionsNull; index++ {
-				if _, readErr := d.ReadInt32(); readErr != nil {
-					return Variant{}, readErr
-				}
+			if err := d.readArrayDimensions(length); err != nil {
+				return Variant{}, err
 			}
 		}
 		return Variant{Type: typeID, IsArray: true}, nil
+	}
+	if mask&variantArrayDimensions != 0 {
+		// Table 26 gives the ArrayDimensions field only to arrays: it "shall
+		// only be present if the number of dimensions is 2 or greater". Reading
+		// the flag and not the field would leave its bytes in the stream for
+		// the next field to consume as its own, so a mask that cannot occur is
+		// refused rather than silently desynchronising everything after it.
+		return Variant{}, decodingError(
+			"a scalar Variant carries the ArrayDimensions flag")
 	}
 
 	value, err := d.skipBuiltIn(typeID)
