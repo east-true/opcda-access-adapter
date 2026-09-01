@@ -64,6 +64,7 @@ SOURCES = {
     "NodeIds.csv": UA_BASE + "NodeIds.csv",
     "AttributeIds.csv": UA_BASE + "AttributeIds.csv",
     "Opc.Ua.Types.bsd": UA_BASE + "Opc.Ua.Types.bsd",
+    "Opc.Ua.NodeSet2.xml": UA_BASE + "Opc.Ua.NodeSet2.xml",
     "opcda.idl": DA_BASE + "opcda.idl",
     "opcerror.h": DA_BASE + "opcerror.h",
     "OPC-10000-8.md": PART8_MARKDOWN,
@@ -900,6 +901,93 @@ def check_mandatory_attributes(files, src):
     print(f"  {checked} mandatory attributes")
 
 
+def check_reference_supertypes(files, src):
+    """The supertype chain of every reference type this address space emits.
+
+    Table 34's includeSubtypes turns a browse for HierarchicalReferences into a
+    browse for Organizes and HasProperty as well, and this map is what makes
+    that work. A wrong chain does not fail: it returns an empty result to a
+    client that asked correctly, which is the quietest way a browse can be
+    broken. The chain is transcribed from the OPC Foundation's hierarchy, so it
+    is compared with it.
+
+    A type the address space emits and the map does not cover is checked too. Its
+    absence has the same effect -- includeSubtypes stops matching it -- and this
+    is how the missing HasTypeDefinition reference was found: the map carried an
+    entry nothing emitted, which meant either the entry or the reference was
+    wrong.
+    """
+    nodeset = files["Opc.Ua.NodeSet2.xml"]
+    supertype, name_of = {}, {}
+    for match in re.finditer(r'<UAReferenceType\b([^>]*)>(.*?)</UAReferenceType>', nodeset, re.S):
+        attributes, body = match.group(1), match.group(2)
+        identifier = re.search(r'NodeId="i=(\d+)"', attributes)
+        browse_name = re.search(r'BrowseName="([\w]+)"', attributes)
+        if identifier is None:
+            continue
+        numeric = int(identifier.group(1))
+        name_of[numeric] = browse_name.group(1) if browse_name else str(numeric)
+        parent = re.search(
+            r'<Reference ReferenceType="HasSubtype" IsForward="false">i=(\d+)</Reference>', body)
+        if parent:
+            supertype[numeric] = int(parent.group(1))
+
+    def chain(numeric):
+        walked = []
+        while numeric in supertype:
+            numeric = supertype[numeric]
+            walked.append(numeric)
+        return walked
+
+    values = {match.group(1): int(match.group(2)) for match in
+              re.finditer(r'\b(NodeID\w+)\s+uint32\s*=\s*(\d+)', src)}
+    table = re.search(r'var referenceSupertypes = map\[uint32\]\[\]uint32\{(.*?)\n\}', src, re.S)
+    if table is None:
+        fail("the referenceSupertypes table could not be read")
+        return
+
+    covered, checked = set(), 0
+    for entry in re.finditer(r'(NodeID\w+):\s*\{([^}]*)\}', table.group(1)):
+        constant, listed = entry.group(1), entry.group(2)
+        covered.add(constant)
+        if constant not in values:
+            fail(f"{constant} has no value")
+            continue
+        got = [values[name.strip()] for name in listed.split(",")
+               if name.strip() and name.strip() in values]
+        want = chain(values[constant])
+        checked += 1
+        if got != want:
+            fail(f"{constant} inherits {[name_of.get(n, n) for n in got]}, "
+                 f"the hierarchy says {[name_of.get(n, n) for n in want]}")
+
+    for constant in sorted(emitted_reference_types(src) - covered):
+        fail(f"{constant} is put on a reference and referenceSupertypes does not "
+             f"cover it, so includeSubtypes will not match it")
+    print(f"  {checked} reference type hierarchies")
+
+
+def emitted_reference_types(src):
+    """The reference types this address space can put on a Reference.
+
+    One level of local binding is resolved, because the reference type is often
+    named once and used twice.
+    """
+    bindings = {match.group(1): match.group(2) for match in
+                re.finditer(r'\b(\w+)\s*:?=\s*NumericNodeID\(0,\s*(NodeID\w+)\)', src)}
+    emitted = set()
+    for match in re.finditer(r'add(?:Forward|Inverse)\([^,]+,\s*([^,]+),', src):
+        argument = match.group(1).strip()
+        direct = re.fullmatch(r'NumericNodeID\(0,\s*(NodeID\w+)\)', argument)
+        if direct:
+            emitted.add(direct.group(1))
+        elif argument in bindings:
+            emitted.add(bindings[argument])
+    for match in re.finditer(r'ReferenceTypeID:\s*NumericNodeID\(0,\s*(NodeID\w+)\)', src):
+        emitted.add(match.group(1))
+    return emitted
+
+
 def check_type_definition_nodes(files, src):
     """The standard type nodes this address space points its instances at.
 
@@ -1138,6 +1226,7 @@ def main():
     check_built_in_type_ids(files, src)
     check_enumerations(files, src)
     check_type_definition_nodes(files, src)
+    check_reference_supertypes(files, src)
     check_mandatory_attributes(files, src)
     check_da_error_mapping(files, src + da_sources())
     check_da_type_mapping(files, src + da_sources())
