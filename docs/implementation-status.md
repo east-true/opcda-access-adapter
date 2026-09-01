@@ -152,6 +152,7 @@ question without rotting.
   | request decoder field order | `Opc.Ua.Types.bsd` | 15 |
   | response encoder field order | `Opc.Ua.Types.bsd` | 17 |
   | structure encoder field order | `Opc.Ua.Types.bsd` | 18 |
+  | inline structure field types | `Opc.Ua.Types.bsd` | 2 |
   | DA quality values | `opcda.idl` | 16 |
   | DA EU types | `opcda.idl` | 3 |
   | DA item property identifiers | `opcda.idl` | 16 |
