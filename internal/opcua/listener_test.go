@@ -2141,13 +2141,7 @@ func TestAnUnboundedServerStillRefusesAnEndlessRequest(t *testing.T) {
 	// it is what an unbounded server would do, so it fails here.
 	_ = client.conn.SetReadDeadline(time.Now().Add(5 * time.Second))
 	_, _, err = client.readServiceResponse()
-	var codecErr *CodecError
-	if !errors.As(err, &codecErr) {
-		t.Fatalf("the server neither refused nor closed the connection: %v", err)
-	}
-	if codecErr.Status != StatusBadRequestTooLarge {
-		t.Fatalf("error = %s, want Bad_RequestTooLarge", codecErr.Status.Hex())
-	}
+	assertRefusedNotBuffered(t, err)
 }
 
 // A server may announce a request bound larger than it could ever decode. The
@@ -2200,11 +2194,33 @@ func TestAnAnnouncedBoundIsHeldToWhatCanBeDecoded(t *testing.T) {
 
 	_ = client.conn.SetReadDeadline(time.Now().Add(5 * time.Second))
 	_, _, err = client.readServiceResponse()
+	assertRefusedNotBuffered(t, err)
+}
+
+// assertRefusedNotBuffered requires that the server stopped the message rather
+// than kept accumulating it. OPC 10000-6 7.1.5 has a server "send an Error
+// Message to the Client and close the TransportConnection", and either half may
+// be what a client observes: the Error arrives, or the close does first and the
+// read fails. Both are refusals.
+//
+// A timeout is not. That is what an unbounded server produces -- it never
+// answers, because the message never ends -- so it fails here.
+func assertRefusedNotBuffered(t *testing.T, err error) {
+	t.Helper()
+	if err == nil {
+		t.Fatal("an endless request was accepted")
+	}
 	var codecErr *CodecError
-	if !errors.As(err, &codecErr) {
-		t.Fatalf("a request past the decodable size was buffered: %v", err)
+	if errors.As(err, &codecErr) {
+		if codecErr.Status != StatusBadRequestTooLarge {
+			t.Fatalf("error = %s, want Bad_RequestTooLarge", codecErr.Status.Hex())
+		}
+		return
 	}
-	if codecErr.Status != StatusBadRequestTooLarge {
-		t.Fatalf("error = %s, want Bad_RequestTooLarge", codecErr.Status.Hex())
+	var netErr net.Error
+	if errors.As(err, &netErr) && netErr.Timeout() {
+		t.Fatalf("the server neither refused nor closed the connection: %v", err)
 	}
+	// The connection went away, which is the close half of 7.1.5 arriving
+	// before the Error could be read.
 }
