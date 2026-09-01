@@ -66,10 +66,18 @@ const (
 func DefaultConfig() Config {
 	limits := opcda.DefaultLimits()
 	return Config{
-		Frontend:               FrontendHTTP,
-		HTTPListenAddress:      "127.0.0.1:8080",
-		GRPCListenAddress:      "127.0.0.1:50051",
-		OPCUAListenAddress:     "127.0.0.1:4840",
+		Frontend:           FrontendHTTP,
+		HTTPListenAddress:  "127.0.0.1:8080",
+		GRPCListenAddress:  "127.0.0.1:50051",
+		OPCUAListenAddress: "127.0.0.1:4840",
+		// The source folder name is the one OPC UA setting that is safe to
+		// default: it is a local display choice, and A.3.1.2 asks only that
+		// the root branch "should" be named for the ProgId. The five settings
+		// that stay empty are identities and profile URIs, where a guess makes
+		// the server unusable rather than merely differently named. The setup
+		// flag has always defaulted it to Source; the environment path did not,
+		// which made a documented default untrue on one of the two routes.
+		OPCUA:                  OPCUAFrontendConfig{SourceFolderName: "Source"},
 		MaxHTTPBodyBytes:       1 << 20,
 		MaxHTTPConnections:     64,
 		MaxConcurrentRequests:  32,
