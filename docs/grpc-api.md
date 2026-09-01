@@ -163,10 +163,15 @@ text, VARTYPEs and HRESULTs are reported and mapped onto nothing. OPC 10000-8
 Table A.1 is applied by the OPC UA frontend, not here.
 
 A per-property HRESULT is a result rather than a failure: the request succeeds
-and a refused property carries its exact HRESULT with no substituted value. The
-item's value, quality and timestamp are properties 2, 3 and 4 and are refused,
-because Read and Subscribe deliver a value with its timestamp and raw quality
-together.
+and a refused property carries its exact HRESULT with no substituted value.
+
+The item's value, quality and timestamp are properties 2, 3 and 4, and naming
+any of them is **not** a refusal of that kind. It fails the whole call with
+`InvalidArgument` and `INVALID_REQUEST`, even alongside valid identifiers and
+wherever in the list it appears: a source declining a property is a result, but
+asking this method for a value is a mistake in the request. Read and Subscribe
+deliver a value with its timestamp and raw quality together, and answering the
+same question a second way without them could produce a different answer.
 
 A source that does not implement `IOPCItemProperties` reports
 `capabilities.properties` as `unsupported` and answers `Unimplemented` with

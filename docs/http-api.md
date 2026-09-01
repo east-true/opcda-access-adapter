@@ -255,10 +255,16 @@ property for one item and refuse it for another, so the request succeeds and the
 refusal is reported against that property, carrying the exact HRESULT and no
 substituted value.
 
-The item's value, quality and timestamp are properties 2, 3 and 4, and are
-refused: Read and Subscribe deliver a value together with its timestamp and its
-raw quality, and answering the same question a second way without them could
-produce a different answer.
+The item's value, quality and timestamp are properties 2, 3 and 4, and naming
+any of them is **not** a per-property refusal of that kind. It fails the whole
+request with HTTP 400 `INVALID_REQUEST`, even alongside valid identifiers and
+wherever in the list it appears: a source declining a property is a result, but
+asking this endpoint for a value is a mistake in the request, and a request
+built on that mistake should not half-succeed.
+
+Read and Subscribe deliver a value together with its timestamp and its raw
+quality, and answering the same question a second way without them could produce
+a different answer.
 
 `IOPCItemProperties` is optional. A source that does not implement it reports
 `capabilities.properties` as `unsupported` and answers these endpoints with HTTP
