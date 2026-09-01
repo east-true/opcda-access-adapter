@@ -52,6 +52,11 @@ PART4_MARKDOWN = ("https://reference.opcfoundation.org/specs/OPC-10000-4/"
 # the numbers the wire uses -- so the table is the only authority.
 PART6_MARKDOWN = ("https://reference.opcfoundation.org/specs/OPC-10000-6/"
                   "v1.05.07/t63916693136/download/markdown")
+# Part 3 carries the address space model, and with it the one table that says
+# which attributes a node of each class shall have. Its latest version is
+# 1.05.06 rather than 1.05.07.
+PART3_MARKDOWN = ("https://reference.opcfoundation.org/specs/OPC-10000-3/"
+                  "v1.05.06/t63916693117/download/markdown")
 
 # Every source is a whole URL: most are named after their file, Part 8 is not.
 SOURCES = {
@@ -64,6 +69,7 @@ SOURCES = {
     "OPC-10000-8.md": PART8_MARKDOWN,
     "OPC-10000-4.md": PART4_MARKDOWN,
     "OPC-10000-6.md": PART6_MARKDOWN,
+    "OPC-10000-3.md": PART3_MARKDOWN,
 }
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 UA = os.path.join(ROOT, "internal", "opcua")
@@ -789,6 +795,52 @@ def check_status_code_bits(files, src):
     print(f"  {checked} status code bit ranges")
 
 
+# An attribute this server answers somewhere other than the attribute switch.
+ATTRIBUTES_ANSWERED_ELSEWHERE = {
+    "Value": "read from the source in a batch, not from the address space",
+}
+
+
+def check_mandatory_attributes(files, src):
+    """Every attribute OPC 10000-3 Table 18 makes mandatory for a node class
+    this adapter exposes.
+
+    The table says which attributes each NodeClass uses, as mandatory (M) or
+    optional (O). This adapter publishes Variables and Objects, so those two
+    columns are the whole of its obligation -- and a mandatory attribute that
+    answers Bad_AttributeIdInvalid is a node that is not the class it claims to
+    be. EventNotifier was missing for every Object until this check was written,
+    with the constant never even declared.
+    """
+    spec = files["OPC-10000-3.md"]
+    header = re.search(r'\nAttribute,Variable,Variable Type,Object,(.*?)\n', spec)
+    if header is None:
+        fail("Table 18's columns could not be read")
+        return
+    columns = {"Variable": 1, "Object": 3}
+
+    answered = set(re.findall(r'case Attribute([A-Za-z0-9]+)[,:]', src))
+    answered |= set(re.findall(r'case [A-Za-z]+, Attribute([A-Za-z0-9]+):', src))
+    answered |= set(ATTRIBUTES_ANSWERED_ELSEWHERE)
+
+    checked = 0
+    for row in csv_rows(spec):
+        if len(row) != 9 or row[0].strip() in ("Attribute", ""):
+            continue
+        attribute = row[0].strip().replace(" ", "")
+        for node_class, column in sorted(columns.items()):
+            if row[column].strip() != "M":
+                continue
+            checked += 1
+            # NodeId is spelled NodeID in Go, which normalise already knows.
+            if not any(normalise(attribute) == normalise(name) for name in answered):
+                fail(f"Table 18 makes {attribute} mandatory for a {node_class} "
+                     f"and no attribute case answers it")
+    for name, reason in sorted(ATTRIBUTES_ANSWERED_ELSEWHERE.items()):
+        print(f"    answered elsewhere: {name} ({reason})")
+    print(f"  {checked} mandatory attributes")
+
+
 def check_type_definition_nodes(files, src):
     """The standard type nodes this address space points its instances at.
 
@@ -1026,6 +1078,7 @@ def main():
     check_built_in_type_ids(files, src)
     check_enumerations(files, src)
     check_type_definition_nodes(files, src)
+    check_mandatory_attributes(files, src)
     check_da_error_mapping(files, src + da_sources())
     check_da_type_mapping(files, src + da_sources())
     check_da_quality_mapping(files, src + da_sources())
