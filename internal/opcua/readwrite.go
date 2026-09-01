@@ -652,6 +652,20 @@ func (s *DataAccessService) readAttribute(ctx context.Context, node *Node, attri
 		variant = Variant{Type: BuiltInQualifiedName, Value: node.BrowseName}
 	case AttributeDisplayName:
 		variant = Variant{Type: BuiltInLocalizedText, Value: node.DisplayName}
+	case AttributeEventNotifier:
+		// OPC 10000-3 Table 11 makes this mandatory for an Object, and its
+		// attribute matrix gives it to no other node class this adapter
+		// exposes.
+		if node.Class != NodeClassObject {
+			return failedDataValue(StatusBadAttributeIDInvalid)
+		}
+		// Table 43: bit 0 clear means the node "cannot be used to subscribe to
+		// Events", and bits 2 and 3 clear mean its event history is neither
+		// readable nor writeable. All three are true here -- this adapter
+		// serves no events and keeps no history, and design forbids a
+		// historian -- so the honest value is zero rather than an absent
+		// attribute a client reads as a defect.
+		variant = Variant{Type: BuiltInByte, Value: byte(0)}
 	case AttributeDataType:
 		if node.Class != NodeClassVariable {
 			return failedDataValue(StatusBadAttributeIDInvalid)

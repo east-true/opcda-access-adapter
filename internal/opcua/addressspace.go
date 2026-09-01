@@ -32,11 +32,14 @@ const (
 
 // Attribute identifiers from the OPC Foundation AttributeIds table.
 const (
-	AttributeNodeID          uint32 = 1
-	AttributeNodeClass       uint32 = 2
-	AttributeBrowseName      uint32 = 3
-	AttributeDisplayName     uint32 = 4
-	AttributeDescription     uint32 = 5
+	AttributeNodeID      uint32 = 1
+	AttributeNodeClass   uint32 = 2
+	AttributeBrowseName  uint32 = 3
+	AttributeDisplayName uint32 = 4
+	AttributeDescription uint32 = 5
+	// EventNotifier is mandatory for every Object, which Table 11 of
+	// OPC 10000-3 requires and its attribute matrix repeats.
+	AttributeEventNotifier   uint32 = 12
 	AttributeValue           uint32 = 13
 	AttributeDataType        uint32 = 14
 	AttributeValueRank       uint32 = 15
