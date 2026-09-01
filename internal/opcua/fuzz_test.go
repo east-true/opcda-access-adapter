@@ -387,6 +387,9 @@ func FuzzDecodeDateTime(f *testing.F) {
 	f.Add(DateTimeMax)
 	f.Add(int64(1))
 	f.Add(int64(-9223372036854775808))
+	// Between the clause's upper bound and the maximum: a range the encoder
+	// cannot produce, so only the wire can, and only rule 12 covers it.
+	f.Add(EncodeDateTime(dateTimeUpperBound.Add(-time.Second)) + int64(2*dateTimeTicksPerSecond))
 
 	f.Fuzz(func(t *testing.T, ticks int64) {
 		decoded := DecodeDateTime(ticks)
