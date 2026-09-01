@@ -415,6 +415,7 @@ func (s *AddressSpace) addStandardNodes() {
 	standard := []*Node{root, objects, types, views, source, server, serverArray, namespaceArray}
 	standard = append(standard, s.addServerStatusNodes(server)...)
 	standard = append(standard, s.addServerCapabilitiesNodes(server)...)
+	standard = append(standard, s.addServerRedundancyNodes(server)...)
 	for _, node := range standard {
 		s.nodes[nodeKey(node.ID)] = node
 	}

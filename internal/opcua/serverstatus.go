@@ -43,6 +43,12 @@ const (
 	NodeIDOperationLimitsMaxNodesPerWrite      uint32 = 11707
 	NodeIDOperationLimitsMaxNodesPerBrowse     uint32 = 11710
 
+	// The two remaining mandatory components of ServerType that this server
+	// can answer without collecting anything it does not already have.
+	NodeIDServerVendorServerInfo  uint32 = 2295
+	NodeIDServerRedundancy        uint32 = 2296
+	NodeIDServerRedundancySupport uint32 = 3709
+
 	// Type definitions and DataTypes these nodes refer to.
 	NodeIDServerStatusType       uint32 = 2138
 	NodeIDBuildInfoType          uint32 = 3051
@@ -58,6 +64,15 @@ const (
 	NodeIDSignedSoftwareCert     uint32 = 344
 	NodeIDUInt16DataType         uint32 = 5
 	NodeIDUInt32DataType         uint32 = 7
+	NodeIDVendorServerInfoType   uint32 = 2033
+	NodeIDServerRedundancyType   uint32 = 2034
+	NodeIDRedundancySupportType  uint32 = 851
+
+	// RedundancySupport None, from the enumeration Opc.Ua.Types.bsd defines.
+	// This server is one process in front of one DA source: there is no second
+	// one to fail over to, so anything else would describe a deployment that
+	// does not exist.
+	redundancySupportNone        int32  = 0
 	NodeIDServerStatusEncodingID uint32 = 864
 	NodeIDBuildInfoEncodingID    uint32 = 340
 )
@@ -318,6 +333,49 @@ func (s *AddressSpace) addServerCapabilitiesNodes(server *Node) []*Node {
 	return []*Node{capabilities, profiles, locales, sampleRate, browsePoints,
 		queryPoints, historyPoints, certificates, modellingRules, aggregates,
 		limits, maxRead, maxWrite, maxBrowse}
+}
+
+// addServerRedundancyNodes builds the last two mandatory components of
+// ServerType that this server can answer.
+//
+// OPC 10000-5 Table 9 makes VendorServerInfo and ServerRedundancy mandatory.
+// Neither asks this server to collect anything: VendorServerInfoType defines no
+// children at all, and ServerRedundancyType defines one property whose honest
+// value here is None. Declaring ServerType and omitting them was a node
+// claiming a type without the parts that type requires.
+func (s *AddressSpace) addServerRedundancyNodes(server *Node) []*Node {
+	// The children of a VendorServerInfoType are vendor specific, and this
+	// adapter defines none, so the Object is empty rather than absent.
+	vendorInfo := &Node{
+		ID:             NumericNodeID(0, NodeIDServerVendorServerInfo),
+		Class:          NodeClassObject,
+		BrowseName:     QualifiedName{Namespace: 0, Name: "VendorServerInfo"},
+		DisplayName:    LocalizedText{Text: "VendorServerInfo"},
+		TypeDefinition: NumericNodeID(0, NodeIDVendorServerInfoType),
+	}
+	redundancy := &Node{
+		ID:             NumericNodeID(0, NodeIDServerRedundancy),
+		Class:          NodeClassObject,
+		BrowseName:     QualifiedName{Namespace: 0, Name: "ServerRedundancy"},
+		DisplayName:    LocalizedText{Text: "ServerRedundancy"},
+		TypeDefinition: NumericNodeID(0, NodeIDServerRedundancyType),
+	}
+	support := s.localVariable(NodeIDServerRedundancySupport, "RedundancySupport",
+		NodeIDPropertyType, NodeIDRedundancySupportType,
+		func(time.Time) Variant {
+			return Variant{Type: BuiltInInt32, Value: redundancySupportNone}
+		})
+
+	hasComponent := NumericNodeID(0, NodeIDHasComponent)
+	hasProperty := NumericNodeID(0, NodeIDHasProperty)
+	for _, child := range []*Node{vendorInfo, redundancy} {
+		addForward(server, hasComponent, child)
+		addInverse(child, hasComponent, server)
+	}
+	addForward(redundancy, hasProperty, support)
+	addInverse(support, hasProperty, redundancy)
+
+	return []*Node{vendorInfo, redundancy, support}
 }
 
 func (s *AddressSpace) localVariable(identifier uint32, name string, typeDefinition, dataType uint32, value func(time.Time) Variant) *Node {

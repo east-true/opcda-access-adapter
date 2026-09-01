@@ -310,3 +310,97 @@ func TestServerCapabilitiesPublishesTheLimitsInForce(t *testing.T) {
 		}
 	}
 }
+
+// OPC 10000-5 Table 9 lists nine mandatory components of ServerType, and the
+// Server Object here declares itself to be one. Eight are published; the ninth
+// is a recorded departure. Checking the list rather than the two just added,
+// because the next component to go missing will not be one of these.
+func TestTheServerObjectCarriesItsMandatoryComponents(t *testing.T) {
+	space := testAddressSpace(t)
+	server, ok := space.Node(NumericNodeID(0, NodeIDServer))
+	if !ok {
+		t.Fatal("there is no Server object")
+	}
+	if server.TypeDefinition.Numeric != NodeIDServerType {
+		t.Fatalf("the Server object is not a ServerType: %v", server.TypeDefinition)
+	}
+
+	present := map[string]NodeID{}
+	for _, reference := range server.References {
+		if !reference.IsForward {
+			continue
+		}
+		if reference.ReferenceTypeID.Numeric != NodeIDHasProperty &&
+			reference.ReferenceTypeID.Numeric != NodeIDHasComponent {
+			continue
+		}
+		present[reference.BrowseName.Name] = reference.TargetID.NodeID
+	}
+
+	for _, name := range []string{
+		"ServerArray", "NamespaceArray", "ServerStatus", "ServiceLevel",
+		"Auditing", "ServerCapabilities", "VendorServerInfo", "ServerRedundancy",
+	} {
+		if _, found := present[name]; !found {
+			t.Errorf("Table 9 makes %s mandatory and the Server object does not carry it", name)
+		}
+	}
+	// The one departure, recorded in docs/opcua-mapping.md. Asserting its
+	// absence keeps the document honest: adding it without saying so fails.
+	if _, found := present["ServerDiagnostics"]; found {
+		t.Error("ServerDiagnostics is published but recorded as a departure")
+	}
+
+	// Each component is of the type Table 9 names for it. A component of the
+	// right name and the wrong type is the same defect one level down.
+	for _, testCase := range []struct {
+		name string
+		want uint32
+	}{
+		{"ServerCapabilities", NodeIDServerCapabilitiesType},
+		{"VendorServerInfo", NodeIDVendorServerInfoType},
+		{"ServerRedundancy", NodeIDServerRedundancyType},
+	} {
+		node, found := space.Node(present[testCase.name])
+		if !found {
+			t.Fatalf("%s is referenced but not in the address space", testCase.name)
+		}
+		if node.TypeDefinition.Numeric != testCase.want {
+			t.Errorf("%s has type definition %v, Table 9 says %d",
+				testCase.name, node.TypeDefinition, testCase.want)
+		}
+	}
+
+	// ServerRedundancyType makes RedundancySupport a mandatory property of
+	// ServerRedundancy, so it has to hang from it rather than merely exist.
+	redundancy, _ := space.Node(NumericNodeID(0, NodeIDServerRedundancy))
+	carried := false
+	for _, reference := range redundancy.References {
+		if reference.IsForward && reference.ReferenceTypeID.Numeric == NodeIDHasProperty &&
+			reference.BrowseName.Name == "RedundancySupport" {
+			carried = true
+		}
+	}
+	if !carried {
+		t.Fatal("ServerRedundancy does not carry RedundancySupport")
+	}
+
+	// VendorServerInfoType defines no children, so the Object is empty.
+	vendorInfo, _ := space.Node(NumericNodeID(0, NodeIDServerVendorServerInfo))
+	for _, reference := range vendorInfo.References {
+		if reference.IsForward {
+			t.Fatalf("VendorServerInfo carries %v, and this adapter defines no vendor extension",
+				reference.BrowseName)
+		}
+	}
+
+	// RedundancySupport None: one process in front of one DA source has no
+	// second one to fail over to.
+	support, ok := space.Node(NumericNodeID(0, NodeIDServerRedundancySupport))
+	if !ok {
+		t.Fatal("RedundancySupport is missing")
+	}
+	if got := support.LocalValue(time.Now().UTC()).Value; got != int32(0) {
+		t.Fatalf("RedundancySupport = %#v, want None", got)
+	}
+}
