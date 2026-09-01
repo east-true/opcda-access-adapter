@@ -57,6 +57,14 @@ PART6_MARKDOWN = ("https://reference.opcfoundation.org/specs/OPC-10000-6/"
 # 1.05.06 rather than 1.05.07.
 PART3_MARKDOWN = ("https://reference.opcfoundation.org/specs/OPC-10000-3/"
                   "v1.05.06/t63916693117/download/markdown")
+# Parts 5 and 7 carry no table this project transcribes. They are fetched
+# because the code and the documents cite them by clause number, and a citation
+# is a transcription too: the checker below reads every part the repository
+# cites and asks whether the clause it names is really there.
+PART5_MARKDOWN = ("https://reference.opcfoundation.org/specs/OPC-10000-5/"
+                  "v1.05.06/t63916693130/download/markdown")
+PART7_MARKDOWN = ("https://reference.opcfoundation.org/specs/OPC-10000-7/"
+                  "v1.05.02/t63916693140/download/markdown")
 
 # Every source is a whole URL: most are named after their file, Part 8 is not.
 SOURCES = {
@@ -71,6 +79,8 @@ SOURCES = {
     "OPC-10000-4.md": PART4_MARKDOWN,
     "OPC-10000-6.md": PART6_MARKDOWN,
     "OPC-10000-3.md": PART3_MARKDOWN,
+    "OPC-10000-5.md": PART5_MARKDOWN,
+    "OPC-10000-7.md": PART7_MARKDOWN,
 }
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 UA = os.path.join(ROOT, "internal", "opcua")
@@ -1275,6 +1285,64 @@ def check_da_quality_mapping(files, src):
         print(f"    deliberate deviation: {deviation}")
 
 
+def check_citations(files):
+    """Every clause and table a citation names has to exist in the part it names.
+
+    The repository cites the specification by number in about four hundred
+    places, and a number is the easiest thing in a citation to get wrong: the
+    prose around it stays convincing while the pointer goes nowhere. Six of
+    these were wrong when this check was first written -- a Part 7 clause that
+    had been renumbered, four tables, and a clause attributed to Part 4 whose
+    text is in Part 6 -- and none of them was findable by reading the sentence.
+    """
+    clauses, tables = {}, {}
+    for part in ("3", "4", "5", "6", "7", "8"):
+        text = files[f"OPC-10000-{part}.md"]
+        clauses[part] = {m.group(1) for m in
+                         re.finditer(r"^\s*((?:[A-Z]\.)?\d+(?:\.\d+)*)\s+\S", text, re.M)}
+        tables[part] = {m.group(1) for m in
+                        re.finditer(r"^\s*Table\s+((?:[A-Z]\.)?\d+)\s*[-–—]", text, re.M)}
+    # A citation names its part, then the clause or table, close enough behind
+    # it that the two belong to the same sentence. The gap may not cross another
+    # part number: in "the Duration of OPC 10000-4: OPC 10000-6 6.7.4 calls it"
+    # the clause belongs to Part 6, and binding it to the first part named on
+    # the line would report a sound citation as broken. Bare numbers are left
+    # alone -- without a part there is nothing to check them against.
+    clause_re = re.compile(r"10000-([345678])(?:(?!10000-)[^.\n]){0,40}?"
+                           r"\b((?:[A-Z]\.)?\d+(?:\.\d+){1,4})\b")
+    table_re = re.compile(r"10000-([345678])(?:(?!10000-)[^\n]){0,30}?"
+                          r"\bTables?\s+((?:[A-Z]\.)?\d+)")
+    checked = 0
+    for path in sorted(cited_files()):
+        with open(path, encoding="utf-8") as handle:
+            for number, line in enumerate(handle, 1):
+                for match in table_re.finditer(line):
+                    part, table = match.group(1), match.group(2)
+                    checked += 1
+                    if table not in tables[part]:
+                        fail(f"{os.path.relpath(path, ROOT)}:{number} cites "
+                             f"OPC 10000-{part} Table {table}, which that part does not have")
+                for match in clause_re.finditer(line):
+                    part, clause = match.group(1), match.group(2)
+                    if re.fullmatch(r"\d\.\d\d", clause):
+                        continue  # a version number, not a clause
+                    checked += 1
+                    if clause not in clauses[part]:
+                        fail(f"{os.path.relpath(path, ROOT)}:{number} cites "
+                             f"OPC 10000-{part} {clause}, which that part does not have")
+    print(f"  {checked} specification citations")
+
+
+def cited_files():
+    """Every file that cites the specification: code, tests, and documents."""
+    for directory in ("internal", "docs", "scripts", "cmd"):
+        base = os.path.join(ROOT, directory)
+        for root, _, names in os.walk(base):
+            for name in names:
+                if name.endswith((".go", ".md", ".py", ".c", ".cs")):
+                    yield os.path.join(root, name)
+
+
 def main():
     print("verifying the schema against the reviewed digests")
     files = fetch()
@@ -1297,6 +1365,7 @@ def main():
     check_da_error_mapping(files, src + da_sources())
     check_da_type_mapping(files, src + da_sources())
     check_da_quality_mapping(files, src + da_sources())
+    check_citations(files)
     if failures:
         print(f"\n{len(failures)} transcription(s) do not match the specification")
         return 1
