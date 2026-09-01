@@ -17,9 +17,10 @@ type Config struct {
 	GRPCListenAddress  string
 	OPCUAListenAddress string
 	// OPCUA carries the endpoint description this adapter publishes. Its
-	// security policy and transport profile URIs have no defaults: the known
-	// URIs are defined by OPC 10000-7, and a server publishing a wrong one
-	// would be unusable by a real client.
+	// security policy and transport profile URIs have no defaults: they come
+	// from the OPC Foundation profile database rather than from any pinned
+	// specification, and a server publishing a wrong one would be unusable by
+	// a real client.
 	OPCUA                  OPCUAFrontendConfig
 	WriteEnabled           bool
 	MaxHTTPBodyBytes       int64
@@ -380,10 +381,14 @@ func durationEnv(key string, fallback time.Duration) (time.Duration, error) {
 // OPCUAFrontendConfig describes the single endpoint the OPC UA frontend
 // publishes.
 //
-// SecurityPolicyURI and TransportProfileURI have no defaults. The known URIs
-// are defined by OPC 10000-7, which this project has not transcribed, and a
-// server that published a wrong one would be unusable by a real client. They
-// are supplied by the operator rather than guessed.
+// SecurityPolicyURI and TransportProfileURI have no defaults, and cannot be
+// transcribed the way every other constant here is. OPC 10000-7 governs
+// profiles and does not list them: its clause 1 says "the actual Profiles are
+// maintained in an online database and accessible via
+// https://profiles.opcfoundation.org/", and no other part carries either URI.
+// With no pinned document to check a transcription against, a server that
+// published a wrong one would be unusable by a real client, so they are
+// supplied by the operator rather than guessed.
 type OPCUAFrontendConfig struct {
 	EndpointURL         string
 	ApplicationURI      string
@@ -413,11 +418,15 @@ func (config OPCUAFrontendConfig) validate() error {
 	}
 	if config.SecurityPolicyURI == "" {
 		return fmt.Errorf(
-			"the OPC UA frontend requires a security policy URI; the known URIs are defined by OPC 10000-7")
+			"the OPC UA frontend requires a security policy URI; the known URIs are " +
+				"published at https://profiles.opcfoundation.org/, which OPC 10000-7 " +
+				"clause 1 points to rather than listing")
 	}
 	if config.TransportProfileURI == "" {
 		return fmt.Errorf(
-			"the OPC UA frontend requires a transport profile URI; the known URIs are defined by OPC 10000-7")
+			"the OPC UA frontend requires a transport profile URI; the known URIs are " +
+				"published at https://profiles.opcfoundation.org/, which OPC 10000-7 " +
+				"clause 1 points to rather than listing")
 	}
 	if config.NamespaceURI == "" {
 		return fmt.Errorf("the OPC UA frontend requires a stable namespace URI")
