@@ -751,7 +751,13 @@ type SubscriptionLimits struct {
 	MinKeepAliveCount          uint32
 	MaxKeepAliveCount          uint32
 	MaxNotificationsPerPublish int
-	RequestTimeout             time.Duration
+	// MaxRetransmissionQueue bounds the sent-but-unacknowledged messages one
+	// subscription holds. Clause 5.14.1.1 requires a queue "of at least two
+	// times the number of Publish requests per Session the Server supports",
+	// and this server answers one Publish per session at a time, so two is the
+	// floor and this is far above it.
+	MaxRetransmissionQueue int
+	RequestTimeout         time.Duration
 	// MaxNodes bounds the address space, including nodes created by monitoring
 	// a DA item that was never browsed.
 	MaxNodes int
@@ -766,6 +772,7 @@ func DefaultSubscriptionLimits() SubscriptionLimits {
 		MinKeepAliveCount:          1,
 		MaxKeepAliveCount:          100,
 		MaxNotificationsPerPublish: 500,
+		MaxRetransmissionQueue:     64,
 		RequestTimeout:             30 * time.Second,
 		MaxNodes:                   DefaultPopulationLimits().MaxNodes,
 	}
@@ -776,6 +783,7 @@ func (limits SubscriptionLimits) validate() error {
 		limits.MinPublishingInterval <= 0 || limits.MaxPublishingInterval <= 0 ||
 		limits.MinKeepAliveCount == 0 || limits.MaxKeepAliveCount == 0 ||
 		limits.MaxNotificationsPerPublish <= 0 || limits.RequestTimeout <= 0 ||
+		limits.MaxRetransmissionQueue < 2 ||
 		limits.MaxNodes <= 0 {
 		return fmt.Errorf("all subscription limits must be positive")
 	}
@@ -900,8 +908,15 @@ type uaSubscription struct {
 	// pending holds notifications drained from the DA core but not yet
 	// published, so a Publish that arrives after a change still carries it.
 	pending []MonitoredItemNotification
-	// retransmit holds sent messages a client has not acknowledged.
-	retransmit map[uint32]NotificationMessage
+	// retransmit holds sent messages a client has not acknowledged, and
+	// retransmitOrder is the order they were sent in. Clause 5.14.1.1 bounds
+	// the queue and says what happens when it fills: "in the case of a
+	// retransmission queue overflow, the oldest sent NotificationMessage gets
+	// deleted". Order is tracked rather than inferred from the sequence number
+	// because that number wraps -- the clause has it run to four billion and
+	// never reset.
+	retransmit      map[uint32]NotificationMessage
+	retransmitOrder []uint32
 	// keepAliveTicks counts publishing intervals with nothing to send.
 	keepAliveTicks uint32
 	// lastKeptAlive is when the client last did something that counts as being
@@ -1482,6 +1497,14 @@ func (s *SubscriptionService) acknowledge(sessionToken string, request PublishRe
 			continue
 		}
 		delete(subscription.retransmit, acknowledgement.SequenceNumber)
+		for position, sequence := range subscription.retransmitOrder {
+			if sequence == acknowledgement.SequenceNumber {
+				subscription.retransmitOrder = append(
+					subscription.retransmitOrder[:position],
+					subscription.retransmitOrder[position+1:]...)
+				break
+			}
+		}
 		acknowledgements[index] = StatusGood
 	}
 	return acknowledgements, nil
@@ -1775,8 +1798,22 @@ func (s *SubscriptionService) buildMessage(subscription *uaSubscription, now tim
 		Notifications:  notifications,
 		HasData:        true,
 	}
-	subscription.retransmit[message.SequenceNumber] = message
+	s.queueForRetransmission(subscription, message)
 	return message, true
+}
+
+// queueForRetransmission holds a sent message until its client acknowledges it,
+// dropping the oldest when the queue is full. A client that publishes without
+// ever acknowledging would otherwise grow this without bound, and it is holding
+// every DataValue it ever sent.
+func (s *SubscriptionService) queueForRetransmission(subscription *uaSubscription, message NotificationMessage) {
+	for len(subscription.retransmitOrder) >= s.limits.MaxRetransmissionQueue {
+		oldest := subscription.retransmitOrder[0]
+		subscription.retransmitOrder = subscription.retransmitOrder[1:]
+		delete(subscription.retransmit, oldest)
+	}
+	subscription.retransmit[message.SequenceNumber] = message
+	subscription.retransmitOrder = append(subscription.retransmitOrder, message.SequenceNumber)
 }
 
 // ExpireStale deletes subscriptions whose clients have gone quiet for the
