@@ -935,8 +935,8 @@ func TestListenerServesBrowse(t *testing.T) {
 	if response.Header.ServiceResult != StatusGood || len(response.Results) != 1 {
 		t.Fatalf("response = %+v", response.Header)
 	}
-	if len(response.Results[0].References) != 2 {
-		t.Fatalf("references = %d, want 2", len(response.Results[0].References))
+	if len(response.Results[0].References) != 3 {
+		t.Fatalf("references = %d, want two children and a type definition", len(response.Results[0].References))
 	}
 	// The exact DA ItemID survives all the way to the client.
 	found := false
@@ -1209,7 +1209,8 @@ func TestListenerPopulatesFromTheSourceOnDemand(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(response.Results[0].References) != 1 {
+	// The branch, and the folder's own HasTypeDefinition after it.
+	if len(response.Results[0].References) != 2 {
 		t.Fatalf("root references = %d", len(response.Results[0].References))
 	}
 	branch := response.Results[0].References[0]
@@ -1227,7 +1228,8 @@ func TestListenerPopulatesFromTheSourceOnDemand(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(response.Results[0].References) != 1 {
+	// The item, and the branch's own HasTypeDefinition after it.
+	if len(response.Results[0].References) != 2 {
 		t.Fatalf("branch references = %d", len(response.Results[0].References))
 	}
 	item := response.Results[0].References[0]

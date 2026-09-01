@@ -423,6 +423,60 @@ func referenceTo(referenceType NodeID, target *Node, forward bool) Reference {
 	}
 }
 
+// typeDefinitionNodes names the standard type definition nodes this address
+// space points its instances at. OPC 10000-3 4.6 lets a server "use well-known
+// NodeIds without representing the corresponding TypeDefinitionNodes in their
+// AddressSpace", which is what this does -- the nodes themselves are not
+// materialised, so their names and classes are carried here instead. Both come
+// from the OPC Foundation's NodeIds.csv and scripts/spec-check/check.py
+// compares them with it.
+var typeDefinitionNodes = map[uint32]struct {
+	Name  string
+	Class NodeClass
+}{
+	NodeIDBaseObjectType:         {"BaseObjectType", NodeClassObjectType},
+	NodeIDFolderType:             {"FolderType", NodeClassObjectType},
+	NodeIDServerType:             {"ServerType", NodeClassObjectType},
+	NodeIDBaseDataVariableType:   {"BaseDataVariableType", NodeClassVariableType},
+	NodeIDPropertyType:           {"PropertyType", NodeClassVariableType},
+	NodeIDDataItemType:           {"DataItemType", NodeClassVariableType},
+	NodeIDAnalogItemType:         {"AnalogItemType", NodeClassVariableType},
+	NodeIDTwoStateDiscreteType:   {"TwoStateDiscreteType", NodeClassVariableType},
+	NodeIDMultiStateDiscreteType: {"MultiStateDiscreteType", NodeClassVariableType},
+}
+
+// TypeDefinitionReference is the HasTypeDefinition reference a node is the
+// source of. OPC 10000-3 5.6.2 and 5.5.2: each Variable and each Object "shall
+// have exactly one type definition and therefore be the SourceNode of exactly
+// one HasTypeDefinition Reference".
+//
+// It is built here rather than stored on the node because a node's type
+// definition can change after the node exists: A.3.1.3 promotes an item from
+// DataItemType once its properties say it is an AnalogItemType, and a stored
+// reference would still name the type the item had when it was created.
+func (node *Node) TypeDefinitionReference() (Reference, bool) {
+	if node.Class != NodeClassObject && node.Class != NodeClassVariable {
+		return Reference{}, false
+	}
+	if node.TypeDefinition.IsNull() {
+		return Reference{}, false
+	}
+	target, known := typeDefinitionNodes[node.TypeDefinition.Numeric]
+	if !known || node.TypeDefinition.Namespace != 0 {
+		return Reference{}, false
+	}
+	return Reference{
+		ReferenceTypeID: NumericNodeID(0, NodeIDHasTypeDefinition),
+		IsForward:       true,
+		TargetID:        ExpandedNodeID{NodeID: node.TypeDefinition},
+		BrowseName:      QualifiedName{Namespace: 0, Name: target.Name},
+		DisplayName:     LocalizedText{Text: target.Name},
+		NodeClass:       target.Class,
+		// Table 168 gives a type definition only to an Object or a Variable,
+		// and a TypeDefinitionNode is neither.
+	}, true
+}
+
 func addForward(from *Node, referenceType NodeID, to *Node) {
 	from.References = append(from.References, referenceTo(referenceType, to, true))
 }

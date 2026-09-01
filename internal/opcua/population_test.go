@@ -294,7 +294,8 @@ func TestBrowseServicePopulatesOnDemand(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(response.Results[0].References) != 1 {
+	// The populated item, and the folder's own HasTypeDefinition after it.
+	if len(response.Results[0].References) != 2 {
 		t.Fatalf("references = %d, want the populated item", len(response.Results[0].References))
 	}
 	if response.Results[0].References[0].BrowseName.Name != "Live" {

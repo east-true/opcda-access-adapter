@@ -545,3 +545,46 @@ func TestOnlyTheServersOwnNodesAreArrays(t *testing.T) {
 		}
 	}
 }
+
+// OPC 10000-3 scopes the rule to instances: 5.5.2 and 5.6.2 give each Object
+// and each Variable exactly one HasTypeDefinition reference, and say nothing
+// about any other node class. No node of another class exists in this address
+// space, so the method is asked directly.
+func TestOnlyInstancesAreTheSourceOfATypeDefinition(t *testing.T) {
+	for _, testCase := range []struct {
+		name  string
+		class NodeClass
+		want  bool
+	}{
+		{"an Object", NodeClassObject, true},
+		{"a Variable", NodeClassVariable, true},
+		{"a Method", NodeClassMethod, false},
+		{"an ObjectType", NodeClassObjectType, false},
+		{"a VariableType", NodeClassVariableType, false},
+		{"a ReferenceType", NodeClassReferenceType, false},
+		{"a View", NodeClassView, false},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			node := &Node{
+				Class:          testCase.class,
+				TypeDefinition: NumericNodeID(0, NodeIDFolderType),
+			}
+			if _, got := node.TypeDefinitionReference(); got != testCase.want {
+				t.Fatalf("a %s node reports %v", testCase.name, got)
+			}
+		})
+	}
+
+	// A node whose type definition is not one of the well-known nodes carries
+	// no name to answer with, so it reports none rather than an empty one.
+	unknown := &Node{Class: NodeClassVariable, TypeDefinition: NumericNodeID(0, 999999)}
+	if _, got := unknown.TypeDefinitionReference(); got {
+		t.Fatal("an unknown type definition was reported as a reference")
+	}
+	// So does one in another namespace: the well-known ids are namespace zero.
+	foreign := &Node{Class: NodeClassVariable,
+		TypeDefinition: NumericNodeID(7, NodeIDDataItemType)}
+	if _, got := foreign.TypeDefinitionReference(); got {
+		t.Fatal("a type definition outside namespace zero was reported")
+	}
+}
