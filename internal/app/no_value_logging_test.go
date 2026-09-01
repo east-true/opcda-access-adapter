@@ -1,6 +1,7 @@
 package app
 
 import (
+	"go/ast"
 	"go/parser"
 	"go/token"
 	"io/fs"
@@ -20,6 +21,12 @@ import (
 // frontend name, a CLI argument, and errors. So the only way a value could
 // reach a log is inside an error message, and no error message carries one --
 // they carry the VARTYPE instead, which is the thing worth reporting.
+//
+// Not logging is only half of it. A package that never imports log can still
+// write to stdout with fmt.Print or os.Stdout, and the guarantee would be just
+// as broken -- so both halves are checked. fmt.Errorf and fmt.Sprintf are
+// untouched: they build a string for a caller to decide about, and no error
+// message here carries a value.
 //
 // The real-DA validation greps the adapter's log files for a leak, but a grep
 // can only find the shapes it was told to look for, and it runs on one server
@@ -46,23 +53,45 @@ func TestValueHandlingPackagesDoNotLog(t *testing.T) {
 		if !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
 			return nil
 		}
-		parsed, err := parser.ParseFile(fileSet, path, nil, parser.ImportsOnly)
+		parsed, err := parser.ParseFile(fileSet, path, nil, 0)
 		if err != nil {
 			return err
 		}
+		relativePath, _ := filepath.Rel(root, path)
+		ast.Inspect(parsed, func(node ast.Node) bool {
+			selector, ok := node.(*ast.SelectorExpr)
+			if !ok {
+				return true
+			}
+			pkg, ok := selector.X.(*ast.Ident)
+			if !ok {
+				return true
+			}
+			written := pkg.Name == "fmt" && (strings.HasPrefix(selector.Sel.Name, "Print") ||
+				strings.HasPrefix(selector.Sel.Name, "Fprint"))
+			written = written || (pkg.Name == "os" &&
+				(selector.Sel.Name == "Stdout" || selector.Sel.Name == "Stderr"))
+			if written {
+				t.Errorf("%s uses %s.%s.\n"+
+					"This package handles process values, and the adapter's guarantee that it "+
+					"never reports one rests on these packages writing nothing out. Building a "+
+					"string with fmt.Errorf or fmt.Sprintf is fine; writing one is not.",
+					relativePath, pkg.Name, selector.Sel.Name)
+			}
+			return true
+		})
 		for _, imported := range parsed.Imports {
 			importPath, err := strconv.Unquote(imported.Path.Value)
 			if err != nil {
 				return err
 			}
 			if importPath == "log" || strings.HasPrefix(importPath, "log/") {
-				relative, _ := filepath.Rel(root, path)
 				t.Errorf("%s imports %q.\n"+
 					"This package handles process values, and the adapter's guarantee that it "+
 					"never logs one rests on these packages not logging at all. If this file "+
 					"genuinely needs to log, the guarantee has to be re-established some other "+
 					"way first -- and the real-DA log grep is not it, since it only matches the "+
-					"shapes it was told to look for.", relative, importPath)
+					"shapes it was told to look for.", relativePath, importPath)
 			}
 			found++
 		}
