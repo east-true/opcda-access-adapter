@@ -162,6 +162,7 @@ question without rotting.
   | built-in type ids | Part 6 Table 1 | 25 |
   | enumeration values | `Opc.Ua.Types.bsd` | 36 |
   | type definition nodes | `NodeIds.csv` | 9 |
+  | reference type hierarchies | `Opc.Ua.NodeSet2.xml` | 4 |
   | mandatory attributes | Part 3 Table 18 | 15 |
   | DA error mappings | Part 8 Tables A.4/A.5 | 19 |
   | DA data type mappings | Part 8 Table A.2 | 14 |
