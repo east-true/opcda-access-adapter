@@ -1191,16 +1191,18 @@ one** per chunk, and a wrap is accepted only where the selected rule set allows
 it — above `UInt32.MaxValue - 1024` and back below 1024 for the legacy rules, or
 at `UInt32.MaxValue` and back to 0 for the zero-based rules.
 
-Which rule set applies is a property of the SecurityPolicy, assigned by OPC
-10000-7. That specification is **not** transcribed here, so the rule set is a
-parameter the caller supplies rather than a value assumed for any policy.
+Which rule set applies is a property of the SecurityPolicy. OPC 10000-7 governs
+profiles and does not list the per-policy assignment: its clause 1 puts the
+profiles in an online database. So the rule set is a parameter the caller
+supplies rather than a value assumed for any policy.
 
 ### What is deliberately not bound yet
 
 For the same reason, the `SecurityPolicy` URI strings are not hardcoded. The
 framing layer treats `SecurityPolicyUri` as a length-validated opaque string,
 which is all Table 58 requires of it. Binding the URI belongs with endpoint
-description and `GetEndpoints`, where it can be checked against OPC 10000-7.
+description and `GetEndpoints`, where an operator supplies it from the profile
+database — there is no pinned document to check it against.
 
 Only `SecurityMode` `None` is implemented, and `RequireSupportedSecurityMode`
 refuses `Sign` and `SignAndEncrypt` with `Bad_SecurityModeRejected` rather than

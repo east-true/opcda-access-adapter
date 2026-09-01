@@ -5,8 +5,10 @@ import "fmt"
 // OPC UA Secure Conversation (UASC) framing follows OPC 10000-6 clause 6.7.
 // This slice implements the framing and its length rules. It deliberately does
 // not bind the SecurityPolicy URI string or the per-policy
-// LegacySequenceNumbers flag: both are assigned by OPC 10000-7, which is not
-// transcribed here, so they are supplied by the caller rather than guessed.
+// LegacySequenceNumbers flag: both belong to a profile, and OPC 10000-7 governs
+// profiles without listing them -- its clause 1 puts them in an online
+// database. With no pinned document to check against, they are supplied by the
+// caller rather than guessed.
 // See ADR-0016 for why an unverified constant is not added from recollection.
 
 // SecureConversationHeaderSize is the 12 bytes of OPC 10000-6 Table 57: a three
@@ -278,8 +280,9 @@ func DecodeSequenceHeader(body []byte, limits BinaryLimits) (SequenceHeader, err
 }
 
 // SequenceNumbering selects which rule set of OPC 10000-6 6.7.2.4 applies. The
-// value is a property of the SecurityPolicy, assigned by OPC 10000-7, so it is
-// supplied by the caller rather than assumed here.
+// value is a property of the SecurityPolicy, which OPC 10000-7 leaves to the
+// profile database rather than listing, so it is supplied by the caller rather
+// than assumed here.
 type SequenceNumbering int
 
 const (

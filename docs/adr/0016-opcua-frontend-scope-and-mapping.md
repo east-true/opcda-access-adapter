@@ -123,14 +123,22 @@ Two things this ADR left unbound have since been closed from primary sources:
 `MessageSecurityMode`'s wire values from OPC 10000-4 Table 139, and
 `SecurityTokenRequestType`'s from the OPC Foundation UA NodeSet's `DataType`
 definition. The SecurityPolicy URI strings and the per-policy
-`LegacySequenceNumbers` flag remain unbound; both belong to OPC 10000-7, which
-has not been obtainable in a transcribable form, and the URI binds with endpoint
-description.
+`LegacySequenceNumbers` flag remain unbound, and the reason is sharper than it
+was recorded: OPC 10000-7 governs profiles and does not list them. Its clause 1
+says "the actual Profiles are maintained in an online database and accessible
+via https://profiles.opcfoundation.org/", and Parts 3, 4, 5 and 6 carry neither.
+There is no pinned document to check a transcription against, which is the
+condition this ADR set for not writing one. The URI binds with the endpoint
+description and is supplied by configuration.
 
 ## Consequences
 
+These are the consequences of this slice, which is the mapping. The listener and
+the wire encoding this ADR deliberately excluded were added by later slices, and
+`docs/opcua-mapping.md` is where what exists today is described.
+
 - `internal/opcua` exists with the mapping and its tests. No listener, no wire
-  encoding, and no UA dependency are added.
+  encoding, and no UA dependency are added **by this decision**.
 - `docs/opcua-mapping.md` is the specification the later slices implement.
 - The vendor quality byte and the unbound DA error codes are recorded as known,
   bounded gaps with a defined way to close them.

@@ -76,10 +76,11 @@ and down to a variable, and a Read of that variable.
 It asserts that the published endpoint matches the configured endpoint URL and
 security policy URI exactly, that the security mode is None, and that an
 unsecured endpoint carries **no certificate** and security level 0. The run
-supplies placeholder policy and transport profile URIs: the known URIs are
-defined by OPC 10000-7, which this project has not transcribed, so the probe
-checks only that the server publishes exactly what it was configured with and
-makes **no claim that those are the standard URIs**.
+supplies placeholder policy and transport profile URIs: the known URIs live in
+the OPC Foundation profile database, which OPC 10000-7 clause 1 points to rather
+than listing, so nothing pinned here could check them. The probe checks only
+that the server publishes exactly what it was configured with and makes **no
+claim that those are the standard URIs**.
 
 A browsed node reports the abstract base type and no access rights, because OPC
 DA carries both in the `AddItems` result rather than in Browse, so the probe
