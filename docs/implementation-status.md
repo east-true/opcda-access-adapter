@@ -27,9 +27,9 @@ against the source-built OPC Foundation fixture on both architectures. Only
 `SecurityMode` `None` is implemented and it is not production ready.
 
 **Three third-party UA clients now run against the frontend** — asyncua,
-open62541 and the OPC Foundation .NET stack, 417 checks in total, recorded in
-docs/compatibility.md. Two of the three run in CI; open62541 needs a toolchain
-the runner has not got, so its 128 run only when somebody runs them. Three clients are not conformance and no conformance or
+open62541 and the OPC Foundation .NET stack, 425 checks in total, recorded in
+docs/compatibility.md. All three are gated in CI. Two of them were not, until
+gating open62541 found a stale assertion in it on the first run. Three clients are not conformance and no conformance or
 interoperability claim is made; ADR-0016 forbids describing this as certified or
 compliant. What they establish is narrower and worth having: two of the six
 defects they found came from the second and third client against a server the

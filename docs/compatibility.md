@@ -324,22 +324,23 @@ in the adapter linking against any of them:
 | Client | Version | Checks | Runs in CI |
 | --- | --- | --- | --- |
 | [asyncua](https://github.com/FreeOpcUa/opcua-asyncio) (Python) | 1.1.x | 148 | yes |
-| [OPC Foundation .NET stack](https://github.com/OPCFoundation/UA-.NETStandard) | 1.5.378.156 | 141 | yes |
-| [open62541](https://github.com/open62541/open62541) (C) | 1.5.7 | 128 | **no — local only** |
+| [open62541](https://github.com/open62541/open62541) (C) | 1.5.7 | 137 | yes |
+| [OPC Foundation .NET stack](https://github.com/OPCFoundation/UA-.NETStandard) | 1.5.378.156 | 140 | yes |
 
 See [docs/validation/ua-client-interop.md](validation/ua-client-interop.md) for
-what they check and `scripts/interop/run.sh` to run them.
+what they check and `scripts/interop/run.sh` to run them. Each client reports
+its own count, so these are read off a run rather than counted by hand — which
+is why they had drifted: this table said 142/128/131, and none of the three was
+still true.
 
-The last column is the part worth stating plainly. `scripts/interop/run.sh`
-skips a client whose toolchain is absent rather than failing, which is right for
-a developer running one of them, but it means the CI job runs two of the three:
-the runner has Python and dotnet, and no open62541 build. open62541's 128
-assertions therefore run only when somebody runs them, which is the same
-position the whole suite was in before it was added to CI — and that suite had
-gone nineteen pull requests failing on a stale assertion by then. The counts
-above are what each client reported on the last run; they move when the scripts
-gain checks, and asyncua and the .NET stack had each gained some before anybody
-re-read this table.
+All three are gated now. Until they were, only two were: `run.sh` skips a client
+whose toolchain is absent rather than failing, which is right for a developer
+running one of them, and the runner had Python and dotnet but no open62541
+build. Gating it found a stale assertion on its first run — a two entry
+`NamespaceArray`, from before index 1 was reserved for the local server. The
+other two clients were corrected when that reservation landed, because they ran.
+That is the same failure the interop job was added to CI to prevent, recurring
+for the one client the job did not reach.
 
 Together they found six defects the Go suite could not see. Four came from
 asyncua: an `OpenSecureChannel` reply naming no security policy, so **no
