@@ -655,8 +655,12 @@ question without rotting.
    Treat vendor callback behavior as untested: a server may refuse connection
    points, revise update rates differently, or report Quality and timestamps
    differently. Record any such observation before changing source semantics.
-8. Three third-party UA clients are not conformance. Run
-   `scripts/interop/run.sh` before any change to the UA wire format, and keep
+8. Three third-party UA clients are not conformance. CI runs
+   `scripts/interop/run.sh` on every pull request now, because asking for it to
+   be run by hand did not work: the suite failed for nineteen pull requests on
+   an assertion left behind by #105 before anyone ran it. Run it locally too
+   before any change to the UA wire format, since CI can only reach asyncua —
+   and keep
    all three enabled where their toolchains exist — two of the six defects
    found so far came from the second and third clients against a server the
    first already passed. UA Expert stays untested until someone with an account

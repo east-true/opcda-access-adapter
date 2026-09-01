@@ -137,10 +137,18 @@ static void checkQuality(UA_Client *client) {
     check("Quality.Uncertain carries an Uncertain severity",
           (status & 0xC0000000u) == 0x40000000u, detail);
 
+    /* LAST_KNOWN is the one row this adapter does not take from Table A.3.
+     * Table 61 says the fieldbus code Bad_LastKnown "shall be mapped to
+     * Uncertain_NoCommunicationLastUsable", because a Bad severity must return
+     * a Null value, which would discard the last known value LAST_KNOWN exists
+     * to carry. scripts/spec-check/check.py records the deviation and
+     * docs/opcua-mapping.md explains it; asserting Table A.3 here would ask a
+     * foreign client to confirm a mapping this server deliberately does not
+     * implement. */
     status = readValue(client, "Quality.LastKnown", NULL);
     snprintf(detail, sizeof(detail), "0x%08X", status);
-    check("Quality.LastKnown maps to Bad_OutOfService",
-          status == UA_STATUSCODE_BADOUTOFSERVICE, detail);
+    check("Quality.LastKnown keeps the value it exists to carry",
+          status == 0x408F0000u, detail);
 
     status = readValue(client, "Quality.OutOfService", NULL);
     snprintf(detail, sizeof(detail), "0x%08X", status);
