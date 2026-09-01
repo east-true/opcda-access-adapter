@@ -369,8 +369,17 @@ func NegotiateAcknowledge(hello Hello, serverReceive, serverSend, serverMaxMessa
 		ProtocolVersion:   ProtocolVersion,
 		ReceiveBufferSize: minUint32(serverReceive, hello.SendBufferSize),
 		SendBufferSize:    minUint32(serverSend, hello.ReceiveBufferSize),
-		MaxMessageSize:    tighterLimit(serverMaxMessage, hello.MaxMessageSize),
-		MaxChunkCount:     tighterLimit(serverMaxChunks, hello.MaxChunkCount),
+		// Table 75 gives these a different meaning from their namesakes in the
+		// Hello. The Acknowledge's MaxMessageSize is "the maximum size for any
+		// request Message" and its MaxChunkCount "the maximum number of chunks
+		// in any request Message" -- both are what this server will accept, so
+		// they are its own bounds and not a blend with the client's.
+		//
+		// The Hello's are the mirror image: the largest response the client
+		// will accept. Tightening one by the other would tell a client that
+		// asking for small responses had shrunk what it may send.
+		MaxMessageSize: serverMaxMessage,
+		MaxChunkCount:  serverMaxChunks,
 	}
 	if ack.ReceiveBufferSize < MinimumBufferSize || ack.SendBufferSize < MinimumBufferSize {
 		return Acknowledge{}, uacpError(StatusBadTcpMessageTooLarge,
@@ -384,18 +393,6 @@ func minUint32(a, b uint32) uint32 {
 		return a
 	}
 	return b
-}
-
-// tighterLimit combines two limits where zero means "no limit".
-func tighterLimit(a, b uint32) uint32 {
-	switch {
-	case a == 0:
-		return b
-	case b == 0:
-		return a
-	default:
-		return minUint32(a, b)
-	}
 }
 
 // ChunkAccumulator enforces the negotiated chunk and message bounds while a

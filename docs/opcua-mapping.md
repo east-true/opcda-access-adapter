@@ -1074,22 +1074,30 @@ reading a byte of body. `HEL`, `ACK`, `ERR`, and `RHE` are owned by this layer;
 layout is deliberately identical to the first eight bytes of the secure
 conversation header.
 
-### The response bound a client asked for
+### `MaxMessageSize` and `MaxChunkCount` mean opposite things in each direction
 
-OPC 10000-6 Table 74 makes `MaxMessageSize` "the maximum size for any response
-Message", and the server "shall return an Error Message with a
-`Bad_ResponseTooLarge` error if a response Message exceeds this value" when no
-chunk has been sent yet. The Acknowledge reports the tighter of the client's
-bound and the server's, and that reported value is what responses are held to —
-a client sizes its own buffers on it.
+They appear in both the Hello and the Acknowledge with the same names and
+different subjects, which is the trap.
 
-Zero on either side means that side imposes no bound, which Table 74 states for
-the client. If neither side imposes one the negotiated value is zero and nothing
-is refused, so zero has to keep meaning "no limit" rather than "nothing may be
-sent".
+**Table 74**, in the Hello, makes them the client's bound on **responses**:
+`MaxMessageSize` is "the maximum size for any response Message", and the server
+"shall return an Error Message with a `Bad_ResponseTooLarge` error if a response
+Message exceeds this value" when no chunk has been sent. Responses are held to
+that number.
 
-`MaxChunkCount` needs no enforcement here: this server sends every response as
-one final chunk, and one chunk is within any non-zero limit.
+**Table 75**, in the Acknowledge, makes them this server's bound on
+**requests**: "the maximum size for any request Message" and "the maximum number
+of chunks in any request Message". They are the server's own limits, announced,
+and incoming requests are held to them.
+
+Neither is a negotiation between the two. Tightening the Acknowledge by the
+Hello would tell a client that asking for small responses had shrunk what it is
+allowed to send. The buffer sizes *are* negotiated, and Table 75 says how: each
+"shall not be larger than" its counterpart in the Hello.
+
+Zero means the side that sent it imposes no bound, which both tables state. A
+client that names no response limit gets whole responses, so zero has to keep
+meaning "no limit" rather than "nothing may be sent".
 
 ### Negotiation
 
@@ -1113,9 +1121,18 @@ to do.
 
 ### Chunk accounting
 
-`ChunkAccumulator` enforces the negotiated chunk count and message size while a
-multi-chunk message arrives, refusing a breach **before** copying anything, as
-OPC 10000-6 6.7.3 requires. An abort chunk discards the message.
+A request may arrive in several chunks, which OPC 10000-6 6.7.3 sends
+"sequentially" — so one accumulator per connection is enough, and chunks of two
+messages never interleave. Each chunk carries its own security and sequence
+header and is checked as it arrives, because the sequence number increments per
+chunk and 6.7.3 has the receiver "check the security on the abort MessageChunk
+before processing it".
+
+`ChunkAccumulator` enforces the chunk count and message size the Acknowledge
+announced while a multi-chunk message arrives, refusing a breach **before**
+copying anything. An abort chunk discards the partial message and leaves the
+channel open, which 6.7.3 requires in as many words: the receiver "shall ignore
+the Message but shall not close the SecureChannel".
 
 `FuzzDecodeUACP` drives the framing with arbitrary bytes in CI.
 
