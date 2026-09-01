@@ -2180,3 +2180,153 @@ func TestTheRetransmissionQueueIsBoundedAndDropsTheOldest(t *testing.T) {
 		t.Fatalf("acknowledging a dropped message = %s", statuses[0].Hex())
 	}
 }
+
+// 5.14.6.1: "this Service requests the Subscription to republish a
+// NotificationMessage from its retransmission queue. If the Server does not
+// have the requested Message in its retransmission queue, it returns an error
+// response."
+func TestRepublishReturnsAMessageFromTheQueue(t *testing.T) {
+	runtime := &subscribingRuntime{}
+	service, _ := testSubscriptionService(t, runtime)
+	id := createSubscription(t, service)
+	monitorItem(t, service, id, ItemNodeID("Test/Int32"), 1)
+
+	runtime.latest().push(daNotification("Test/Int32", 7, QualityGood))
+	request := PublishRequest{Header: RequestHeader{AdditionalHeader: NullExtensionObject()}}
+	published, ready, err := service.tryPublish(context.Background(), testSession, request, nil, channelEpoch)
+	if err != nil || !ready {
+		t.Fatalf("publish: %v ready=%v", err, ready)
+	}
+	sequence := published.NotificationMessage.SequenceNumber
+
+	republish := func(session string, subscription, number uint32) (RepublishResponse, error) {
+		return service.Republish(session, RepublishRequest{
+			Header:                   RequestHeader{RequestHandle: 9, AdditionalHeader: NullExtensionObject()},
+			SubscriptionID:           subscription,
+			RetransmitSequenceNumber: number,
+		}, channelEpoch.Add(time.Second))
+	}
+
+	response, err := republish(testSession, id, sequence)
+	if err != nil {
+		t.Fatalf("republish: %v", err)
+	}
+	if response.NotificationMessage.SequenceNumber != sequence {
+		t.Fatalf("republished sequence %d, want %d",
+			response.NotificationMessage.SequenceNumber, sequence)
+	}
+	// The same notifications come back, not an empty shell.
+	if len(response.NotificationMessage.Notifications) != len(published.NotificationMessage.Notifications) {
+		t.Fatalf("republished %d notifications, want %d",
+			len(response.NotificationMessage.Notifications),
+			len(published.NotificationMessage.Notifications))
+	}
+	if got := response.NotificationMessage.Notifications[0].Value.Value.Value; got != int32(7) {
+		t.Fatalf("republished value %#v", got)
+	}
+	if response.Header.RequestHandle != 9 {
+		t.Fatalf("request handle = %d", response.Header.RequestHandle)
+	}
+
+	// Republishing does not consume: only an acknowledgement removes a
+	// message, and a client asking again has not acknowledged it.
+	if _, err := republish(testSession, id, sequence); err != nil {
+		t.Fatalf("a second republish: %v", err)
+	}
+
+	// Table 93's two errors.
+	_, err = republish(testSession, id, sequence+1000)
+	if status := statusOfError(t, err); status != StatusBadMessageNotAvailable {
+		t.Fatalf("an unknown sequence number = %s", status.Hex())
+	}
+	_, err = republish(testSession, id+1000, sequence)
+	if status := statusOfError(t, err); status != StatusBadSubscriptionIDInvalid {
+		t.Fatalf("an unknown subscription = %s", status.Hex())
+	}
+	// A subscription belongs to its session.
+	_, err = republish("another-session", id, sequence)
+	if status := statusOfError(t, err); status != StatusBadSubscriptionIDInvalid {
+		t.Fatalf("another session = %s", status.Hex())
+	}
+
+	// After acknowledgement the message is gone, which is the same answer.
+	acknowledged := PublishRequest{
+		Header: RequestHeader{AdditionalHeader: NullExtensionObject()},
+		Acknowledgements: []SubscriptionAcknowledgement{
+			{SubscriptionID: id, SequenceNumber: sequence},
+		},
+	}
+	if _, err := service.acknowledge(testSession, acknowledged, channelEpoch); err != nil {
+		t.Fatal(err)
+	}
+	_, err = republish(testSession, id, sequence)
+	if status := statusOfError(t, err); status != StatusBadMessageNotAvailable {
+		t.Fatalf("an acknowledged message = %s", status.Hex())
+	}
+}
+
+// 5.14.1.1 counts "any Service call that uses the SubscriptionId" as a sign the
+// client is still there, and Republish is one.
+func TestRepublishResetsTheSubscriptionLifetime(t *testing.T) {
+	runtime := &subscribingRuntime{}
+	service, _ := testSubscriptionService(t, runtime)
+	response, err := service.CreateSubscription(testSession, CreateSubscriptionRequest{
+		Header:                      RequestHeader{AdditionalHeader: NullExtensionObject()},
+		RequestedPublishingInterval: 100,
+		RequestedMaxKeepAliveCount:  3,
+		RequestedLifetimeCount:      9,
+		PublishingEnabled:           true,
+	}, channelEpoch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := response.SubscriptionID
+	lifetime := time.Duration(response.RevisedLifetimeCount) * 100 * time.Millisecond
+	monitorItem(t, service, id, ItemNodeID("Test/Int32"), 1)
+
+	// Even a Republish that finds nothing is the client speaking.
+	_, _ = service.Republish(testSession, RepublishRequest{
+		Header:                   RequestHeader{AdditionalHeader: NullExtensionObject()},
+		SubscriptionID:           id,
+		RetransmitSequenceNumber: 1,
+	}, channelEpoch.Add(lifetime-time.Millisecond))
+
+	if expired := service.ExpireStale(context.Background(), channelEpoch.Add(lifetime)); expired != 0 {
+		t.Fatal("Republish did not reset the lifetime")
+	}
+}
+
+// The request and response survive a round trip on the wire.
+func TestRepublishRoundTrip(t *testing.T) {
+	encoder, err := NewEncoder(DefaultBinaryLimits())
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoder.WriteRepublishRequest(RepublishRequest{
+		Header:                   RequestHeader{RequestHandle: 4, AdditionalHeader: NullExtensionObject()},
+		SubscriptionID:           11,
+		RetransmitSequenceNumber: 22,
+	})
+	encoded, err := encoder.Bytes()
+	if err != nil {
+		t.Fatal(err)
+	}
+	decoder, err := NewDecoder(encoded, DefaultBinaryLimits())
+	if err != nil {
+		t.Fatal(err)
+	}
+	id, err := decoder.ReadServiceTypeID()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if id != RepublishRequestEncodingID {
+		t.Fatalf("encoding id = %d, want %d", id, RepublishRequestEncodingID)
+	}
+	decoded, err := decoder.ReadRepublishRequest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if decoded.SubscriptionID != 11 || decoded.RetransmitSequenceNumber != 22 {
+		t.Fatalf("decoded %+v", decoded)
+	}
+}

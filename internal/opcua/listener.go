@@ -1012,6 +1012,24 @@ func (l *Listener) dispatchService(channelID uint32, identifier uint32, decoder 
 		}
 		encoder.WriteDeleteSubscriptionsResponse(response)
 
+	case RepublishRequestEncodingID:
+		request, requestErr := decoder.ReadRepublishRequest()
+		if requestErr != nil {
+			return nil, 0, nil, requestErr
+		}
+		session, sessionErr := l.activatedSession(request.Header, channelID, now)
+		if sessionErr != nil {
+			return nil, request.Header.RequestHandle, sessionErr, nil
+		}
+		if l.subs == nil {
+			return nil, request.Header.RequestHandle, errNoDataSource, nil
+		}
+		response, republishErr := l.subs.Republish(session, request, now)
+		if republishErr != nil {
+			return nil, request.Header.RequestHandle, republishErr, nil
+		}
+		encoder.WriteRepublishResponse(response)
+
 	case SetPublishingModeRequestEncodingID:
 		request, requestErr := decoder.ReadSetPublishingModeRequest()
 		if requestErr != nil {
