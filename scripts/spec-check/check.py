@@ -265,6 +265,7 @@ def normalise(name):
             .replace("requestheader", "header").replace("responseheader", "header")
             .replace("subscriptionacknowledgements", "acknowledgements")
             .replace("diagnosticinfos", "diagnostics")
+            .replace("statuscode", "status").replace("namespaceindex", "namespace")
             .replace("id", "").replace("uri", "").replace("url", ""))
 
 
@@ -283,7 +284,97 @@ CONSTANT_RESPONSE_FIELDS = {
         "ServerSoftwareCertificates":
             "Table 15: this array shall be empty, so it is written as one",
     },
+    "NotificationMessage": {
+        "NotificationData":
+            "an extensible parameter: the DataChangeNotification is built into "
+            "an ExtensionObject rather than copied from a field",
+    },
 }
+
+# Structures whose binary form is not the flat field list the schema gives them.
+# The schema describes a Variant as a union with one field per built-in type and
+# an ExtensionObject as a body that may be either encoding; neither is a
+# sequence of fields an encoder writes in order, so comparing one against a
+# field list would assert nothing while looking as though it did. Both are
+# covered instead by their own decoder tests and by the fuzz targets.
+NOT_FLAT_STRUCTURES = {
+    "Variant": "a union with one field per built-in type, not a field sequence",
+    "ExtensionObject": "a body whose shape depends on the Encoding byte",
+}
+
+
+def check_structure_encoders(files, src):
+    """Field order for every structure this server writes, against the schema.
+
+    The response check above covers the outermost layer. These are the
+    structures inside it, and they are where the field-order defect this script
+    was written for actually landed: DiagnosticInfo shipped writing its fields
+    in mask-bit order rather than stream order. Its mask block still lists
+    LocalizedText before Locale while its writing block has Locale first, which
+    is the whole distinction, and until now nothing compared either with the
+    schema.
+    """
+    spec = schema_structures(files["Opc.Ua.Types.bsd"])
+    checked = 0
+    for name in sorted(spec):
+        if name in NOT_FLAT_STRUCTURES or name.endswith("Response") or name.endswith("Request"):
+            continue
+        body = encoder_body(src, name)
+        if body is None:
+            continue
+        want = [f for f in spec[name]
+                if not f.endswith("Specified") and not f.startswith("Reserved")]
+        for field, reason in CONSTANT_RESPONSE_FIELDS.get(name, {}).items():
+            if field not in want:
+                fail(f"{name}.{field} is recorded as built rather than copied "
+                     f"but is not a field of that structure")
+                continue
+            want = [f for f in want if f != field]
+            print(f"    built rather than copied: {name}.{field} ({reason})")
+        got = written_fields(*body)
+        if not got:
+            continue
+        checked += 1
+        if [normalise(f) for f in want] != [normalise(f) for f in got]:
+            fail(f"{name} field order: code {got}, spec {want}")
+    print(f"  {checked} structure encoders")
+
+
+def encoder_body(src, name):
+    """The body of the encoder for a structure, and the name it calls its value.
+
+    An exported encoder that only delegates is followed to the function doing
+    the work, which is how DiagnosticInfo is written: the depth limit lives in
+    an unexported helper.
+    """
+    match = re.search(r'func \(e \*Encoder\) Write' + name + r'\((\w+) [^)]*\) \{(.*?)\n\}',
+                      src, re.S)
+    if match is None:
+        return None
+    ident, body = match.group(1), match.group(2)
+    delegate = re.fullmatch(r'\s*e\.(write' + name + r')\(' + ident + r'[^)]*\)\s*', body)
+    if delegate:
+        inner = re.search(r'func \(e \*Encoder\) ' + delegate.group(1) +
+                          r'\((\w+) [^)]*\) \{(.*?)\n\}', src, re.S)
+        if inner is None:
+            return None
+        return inner.group(1), inner.group(2)
+    return ident, body
+
+
+def written_fields(ident, body):
+    """The fields a body writes, in the order it writes them.
+
+    Only what appears inside a write call counts. A mask-building block names
+    the same fields in whatever order suits the mask bits, and that order is
+    exactly what must not be mistaken for the stream's.
+    """
+    fields = []
+    for call in re.finditer(r'e\.[Ww]rite\w*\(([^\n]*)', body):
+        for field in re.finditer(r'\b' + ident + r'\.([A-Za-z0-9_]+)', call.group(1)):
+            if not fields or fields[-1] != field.group(1):
+                fields.append(field.group(1))
+    return fields
 
 
 def check_response_encoders(files, src):
@@ -890,6 +981,7 @@ def main():
     check_attribute_ids(files, src)
     check_request_decoders(files, src)
     check_response_encoders(files, src)
+    check_structure_encoders(files, src)
     check_da(files)
     check_status_code_bits(files, src)
     check_built_in_type_ids(files, src)
