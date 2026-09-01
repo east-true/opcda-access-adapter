@@ -403,11 +403,18 @@ type connectionState struct {
 	negotiated  bool
 	receiveSize uint32
 	sendSize    uint32
-	// maxMessageSize is what the Acknowledge told the client its responses
-	// would be bounded by, which OPC 10000-6 Table 74 makes a promise rather
-	// than a note: the server "shall return an Error Message with a
-	// Bad_ResponseTooLarge error if a response Message exceeds this value".
-	// Zero is the client imposing no limit, which the same table defines.
+	// incoming reassembles a request that arrived in more than one chunk, and
+	// refuses one that breaches what the Acknowledge negotiated.
+	incoming *ChunkAccumulator
+	// maxMessageSize is the largest response this client said it would accept,
+	// from the Hello. Table 74 makes it a promise rather than a note: the
+	// server "shall return an Error Message with a Bad_ResponseTooLarge error
+	// if a response Message exceeds this value". Zero is the client imposing
+	// no limit, which the same table defines.
+	//
+	// It is the Hello's value and not the Acknowledge's. Table 75 gives the
+	// Acknowledge's MaxMessageSize the opposite meaning -- the largest request
+	// this server will accept -- and that one bounds the accumulator above.
 	maxMessageSize uint32
 	service        *ChannelService
 	// Each side of a channel assigns its own sequence numbers, so the received
@@ -437,7 +444,10 @@ func (l *Listener) serveConnection(conn net.Conn) {
 		// Until a Hello arrives nothing has been negotiated, so the server's
 		// own bound is all there is to answer within.
 		maxMessageSize: l.config.MaxMessageSize,
-		done:           make(chan struct{}),
+		// Until the Hello names the client's bounds, the server's own apply.
+		incoming: NewChunkAccumulator(l.config.MaxChunkCount, l.config.MaxMessageSize,
+			StatusBadRequestTooLarge),
+		done: make(chan struct{}),
 	}
 	defer close(state.done)
 	// 7.1.3: close a connection that never sends a Hello.
@@ -495,7 +505,7 @@ func (l *Listener) handleMessage(conn net.Conn, state *connectionState, header M
 	case MessageTypeCloseChannel:
 		return l.handleCloseChannel(conn, state, body)
 	case MessageTypeSecure:
-		return l.handleSecureMessage(conn, state, body)
+		return l.handleSecureMessage(conn, state, header.Chunk, body)
 	default:
 		return uacpError(StatusBadTcpMessageTypeInvalid, "message type %s is not accepted here", header.Type)
 	}
@@ -527,7 +537,11 @@ func (l *Listener) handleHello(conn net.Conn, state *connectionState, body []byt
 	state.negotiated = true
 	state.receiveSize = ack.ReceiveBufferSize
 	state.sendSize = ack.SendBufferSize
-	state.maxMessageSize = ack.MaxMessageSize
+	state.maxMessageSize = hello.MaxMessageSize
+	// The Acknowledge announced what this server accepts, so that is what
+	// incoming requests are held to.
+	state.incoming = NewChunkAccumulator(ack.MaxChunkCount, ack.MaxMessageSize,
+		StatusBadRequestTooLarge)
 	state.service = NewChannelService(l.registry, hello.ProtocolVersion)
 	// The sequence rule set is a property of the SecurityPolicy. Only the
 	// legacy rules are exercised here; see docs/opcua-mapping.md for why the
@@ -704,15 +718,42 @@ func (l *Listener) splitSecureMessage(state *connectionState, body []byte, asymm
 // OPC 10000-4 Table 5 states explicitly, so it can be answered here; every
 // other service is reported as unsupported through a ServiceFault rather than
 // closing the connection, because the channel itself is still healthy.
-func (l *Listener) handleSecureMessage(conn net.Conn, state *connectionState, body []byte) error {
+func (l *Listener) handleSecureMessage(conn net.Conn, state *connectionState, chunk byte, body []byte) error {
 	if !state.negotiated {
 		return uacpError(StatusBadTcpMessageTypeInvalid, "a secure message arrived before the Hello")
 	}
+	// Every chunk carries its own security and sequence header, so each is
+	// checked as it arrives -- OPC 10000-6 6.7.3 has the receiver "check the
+	// security on the abort MessageChunk before processing it", and the
+	// sequence number is incremented per chunk rather than per message.
 	parts, err := l.splitSecureMessage(state, body, false)
 	if err != nil {
 		return err
 	}
-	decoder, err := NewDecoder(parts.Payload, l.config.Binary)
+
+	switch chunk {
+	case ChunkAbort:
+		// 6.7.3: the receiver "shall ignore the Message but shall not close
+		// the SecureChannel". So the partial message goes and the connection
+		// stays.
+		state.incoming.Reset()
+		return nil
+	case ChunkIntermediate:
+		// 6.7.3: "MessageChunks belonging to the same Message shall be sent
+		// sequentially", so one accumulator per connection is enough.
+		return state.incoming.Append(parts.Payload)
+	}
+
+	// A final chunk completes whatever came before it. A message that arrived
+	// whole leaves the accumulator empty, and this is then its only chunk.
+	if err := state.incoming.Append(parts.Payload); err != nil {
+		state.incoming.Reset()
+		return err
+	}
+	payload := append([]byte(nil), state.incoming.Body()...)
+	state.incoming.Reset()
+
+	decoder, err := NewDecoder(payload, l.config.Binary)
 	if err != nil {
 		return err
 	}

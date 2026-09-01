@@ -349,9 +349,10 @@ func TestListenerCompletesTheConnectionSequence(t *testing.T) {
 	if ack.ReceiveBufferSize < MinimumBufferSize || ack.SendBufferSize < MinimumBufferSize {
 		t.Fatalf("negotiated buffers = %+v", ack)
 	}
-	// The client asked for 8 chunks, which is tighter than the server's 32.
-	if ack.MaxChunkCount != 8 {
-		t.Fatalf("max chunks = %d, want the client's limit", ack.MaxChunkCount)
+	// Table 75: the Acknowledge announces what this server accepts in a
+	// request, which is its own bound and not the client's response bound.
+	if ack.MaxChunkCount != testListenerConfig().MaxChunkCount {
+		t.Fatalf("max chunks = %d, want the server's request limit", ack.MaxChunkCount)
 	}
 
 	response, err := client.openChannel(0, TokenRequestIssue, 1)
@@ -1771,11 +1772,11 @@ func TestAResponseLargerThanTheClientAcceptedIsRefused(t *testing.T) {
 	// Small enough that a browse of two hundred items cannot fit, and well
 	// above the 8192 byte floor a Hello's buffers have to clear.
 	const accepted = 2048
-	ack := client.helloWithMaxMessage(accepted)
-	if ack.MaxMessageSize != accepted {
-		t.Fatalf("the server acknowledged %d, want the client's %d",
-			ack.MaxMessageSize, accepted)
-	}
+	// The Acknowledge does not echo this back -- Table 75 gives its
+	// MaxMessageSize the opposite meaning, the largest request the server
+	// accepts. What matters is that the server holds its responses to what the
+	// Hello asked for.
+	client.helloWithMaxMessage(accepted)
 
 	opened, err := client.openChannel(0, TokenRequestIssue, 1)
 	if err != nil {
@@ -1820,29 +1821,12 @@ func TestAResponseLargerThanTheClientAcceptedIsRefused(t *testing.T) {
 // browse that was refused above is answered when the client asks for no bound,
 // because what remains is the server's own.
 func TestAClientWithNoLimitGetsTheWholeResponse(t *testing.T) {
-	for _, testCase := range []struct {
-		name             string
-		serverMaxMessage uint32
-		wantAcknowledged uint32
-	}{
-		// The server still bounds it, so that is what is acknowledged.
-		{"the server keeps its own bound", testListenerConfig().MaxMessageSize,
-			testListenerConfig().MaxMessageSize},
-		// Neither side bounds it, so the negotiated value is zero -- and zero
-		// has to keep meaning "no limit" rather than "nothing may be sent".
-		{"neither side bounds it", 0, 0},
-	} {
-		t.Run(testCase.name, func(t *testing.T) {
-			clientWithNoLimit(t, testCase.serverMaxMessage, testCase.wantAcknowledged)
-		})
-	}
+	clientWithNoLimit(t)
 }
 
-func clientWithNoLimit(t *testing.T, serverMaxMessage, wantAcknowledged uint32) {
+func clientWithNoLimit(t *testing.T) {
 	t.Helper()
-	config := testListenerConfig()
-	config.MaxMessageSize = serverMaxMessage
-	listener, address := startTestListener(t, config)
+	listener, address := startTestListener(t, testListenerConfig())
 	entries := []opcda.BrowseEntry{}
 	for index := 0; index < 200; index++ {
 		name := fmt.Sprintf("Item%03d", index)
@@ -1855,13 +1839,8 @@ func clientWithNoLimit(t *testing.T, serverMaxMessage, wantAcknowledged uint32) 
 	}
 
 	client := dialTestClient(t, address)
-	ack := client.helloWithMaxMessage(0)
-	// Zero is the client declining to bound it, so what is acknowledged is
-	// whichever bound remains rather than zero passed straight through.
-	if ack.MaxMessageSize != wantAcknowledged {
-		t.Fatalf("the server acknowledged %d, want %d",
-			ack.MaxMessageSize, wantAcknowledged)
-	}
+	// Zero is the client declining to bound its responses at all.
+	client.helloWithMaxMessage(0)
 
 	opened, err := client.openChannel(0, TokenRequestIssue, 1)
 	if err != nil {
@@ -1905,5 +1884,196 @@ func clientWithNoLimit(t *testing.T, serverMaxMessage, wantAcknowledged uint32) 
 	// HasTypeDefinition.
 	if len(response.Results[0].References) != 201 {
 		t.Fatalf("references = %d, want all of them", len(response.Results[0].References))
+	}
+}
+
+// sendServiceChunked splits one service body across chunks, the way a client
+// with a small negotiated buffer has to. Each chunk carries its own security
+// and sequence header, which OPC 10000-6 6.7.2.4 increments per chunk.
+func (c *testClient) sendServiceChunked(token ChannelSecurityToken, requestID uint32,
+	serviceBody []byte, pieces int) {
+	c.t.Helper()
+	size := (len(serviceBody) + pieces - 1) / pieces
+	for offset := 0; offset < len(serviceBody); offset += size {
+		end := offset + size
+		if end > len(serviceBody) {
+			end = len(serviceBody)
+		}
+		chunk := ChunkIntermediate
+		if end == len(serviceBody) {
+			chunk = ChunkFinal
+		}
+		body, err := NewEncoder(c.limits)
+		if err != nil {
+			c.t.Fatal(err)
+		}
+		body.WriteUInt32(token.SecureChannelID)
+		body.WriteUInt32(token.TokenID)
+		c.sequence++
+		body.WriteUInt32(c.sequence)
+		body.WriteUInt32(requestID)
+		body.write(serviceBody[offset:end])
+		encoded, encodeErr := body.Bytes()
+		if encodeErr != nil {
+			c.t.Fatal(encodeErr)
+		}
+		c.send(MessageTypeSecure, chunk, encoded)
+	}
+}
+
+// OPC 10000-6 6.7.3: a message may arrive in several chunks, sent sequentially,
+// and the receiver reassembles them. A client that negotiated the 8192 byte
+// minimum has to chunk a request this server would otherwise never see whole --
+// the ChunkAccumulator that does the reassembly existed and was tested, and
+// nothing called it.
+func TestARequestArrivingInChunksIsReassembled(t *testing.T) {
+	listener, address := startTestListener(t, testListenerConfig())
+	if err := listener.AddressSpace().PopulateBranch(nil, []opcda.BrowseEntry{
+		{Kind: opcda.BrowseEntryItem, Name: "Top", ItemID: itemID("Top")},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	client := dialTestClient(t, address)
+	client.hello()
+	opened, err := client.openChannel(0, TokenRequestIssue, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	created, err := client.createSession(opened.SecurityToken, 2, testClientNonce())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = client.activateSession(opened.SecurityToken, 3,
+		created.AuthenticationToken, NullExtensionObject()); err != nil {
+		t.Fatal(err)
+	}
+
+	encoder, err := NewEncoder(client.limits)
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoder.WriteBrowseRequest(BrowseRequest{
+		Header:        requestHeaderFor(created.AuthenticationToken, 4),
+		NodesToBrowse: []BrowseDescription{browseAll(listener.AddressSpace().SourceFolderID())},
+	})
+	request, err := encoder.Bytes()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Twelve chunks: more than the eight this client's Hello declared, and
+	// fewer than the thirty-two the server's Acknowledge did. Table 74's
+	// MaxChunkCount bounds responses and Table 75's bounds requests, so a
+	// server that bounded this request by the client's number would refuse a
+	// request the client was entitled to send.
+	if testListenerConfig().MaxChunkCount <= 8 {
+		t.Fatalf("this test needs a server chunk limit above the client's 8, got %d",
+			testListenerConfig().MaxChunkCount)
+	}
+	client.sendServiceChunked(opened.SecurityToken, 4, request, 12)
+
+	identifier, decoder, err := client.readServiceResponse()
+	if err != nil {
+		t.Fatalf("a chunked request was refused: %v", err)
+	}
+	if identifier != BrowseResponseEncodingID {
+		t.Fatalf("service = %d, want a browse response", identifier)
+	}
+	response, err := decoder.ReadBrowseResponse()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if response.Results[0].StatusCode != StatusGood {
+		t.Fatalf("browse = %s", response.Results[0].StatusCode.Hex())
+	}
+	// The item and the folder's own HasTypeDefinition.
+	if len(response.Results[0].References) != 2 {
+		t.Fatalf("references = %d", len(response.Results[0].References))
+	}
+}
+
+// OPC 10000-6 6.7.3: on an abort chunk the receiver "shall ignore the Message
+// but shall not close the SecureChannel". Dropping the connection instead would
+// turn a sender's recoverable encoding failure into a reconnect.
+func TestAnAbortedMessageIsDiscardedAndTheChannelSurvives(t *testing.T) {
+	listener, address := startTestListener(t, testListenerConfig())
+	if err := listener.AddressSpace().PopulateBranch(nil, []opcda.BrowseEntry{
+		{Kind: opcda.BrowseEntryItem, Name: "Top", ItemID: itemID("Top")},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	client := dialTestClient(t, address)
+	client.hello()
+	opened, err := client.openChannel(0, TokenRequestIssue, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	created, err := client.createSession(opened.SecurityToken, 2, testClientNonce())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = client.activateSession(opened.SecurityToken, 3,
+		created.AuthenticationToken, NullExtensionObject()); err != nil {
+		t.Fatal(err)
+	}
+
+	browse := func(requestID uint32) []byte {
+		t.Helper()
+		encoder, encodeErr := NewEncoder(client.limits)
+		if encodeErr != nil {
+			t.Fatal(encodeErr)
+		}
+		encoder.WriteBrowseRequest(BrowseRequest{
+			Header:        requestHeaderFor(created.AuthenticationToken, requestID),
+			NodesToBrowse: []BrowseDescription{browseAll(listener.AddressSpace().SourceFolderID())},
+		})
+		body, bodyErr := encoder.Bytes()
+		if bodyErr != nil {
+			t.Fatal(bodyErr)
+		}
+		return body
+	}
+
+	// Half a request, then an abort. Nothing is answered and nothing is kept.
+	abandoned := browse(4)
+	sendChunk := func(chunk byte, payload []byte) {
+		t.Helper()
+		body, encodeErr := NewEncoder(client.limits)
+		if encodeErr != nil {
+			t.Fatal(encodeErr)
+		}
+		body.WriteUInt32(opened.SecurityToken.SecureChannelID)
+		body.WriteUInt32(opened.SecurityToken.TokenID)
+		client.sequence++
+		body.WriteUInt32(client.sequence)
+		body.WriteUInt32(4)
+		body.write(payload)
+		encoded, bytesErr := body.Bytes()
+		if bytesErr != nil {
+			t.Fatal(bytesErr)
+		}
+		client.send(MessageTypeSecure, chunk, encoded)
+	}
+	sendChunk(ChunkIntermediate, abandoned[:len(abandoned)/2])
+	sendChunk(ChunkAbort, nil)
+
+	// The channel is still usable, and the abandoned half did not become part
+	// of the next request.
+	client.sendService(opened.SecurityToken, 5, browse(5))
+	identifier, decoder, err := client.readServiceResponse()
+	if err != nil {
+		t.Fatalf("the channel did not survive the abort: %v", err)
+	}
+	if identifier != BrowseResponseEncodingID {
+		t.Fatalf("service = %d, want the browse that followed the abort", identifier)
+	}
+	response, err := decoder.ReadBrowseResponse()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if response.Results[0].StatusCode != StatusGood {
+		t.Fatalf("browse after abort = %s", response.Results[0].StatusCode.Hex())
 	}
 }

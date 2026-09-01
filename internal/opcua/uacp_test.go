@@ -237,39 +237,53 @@ func TestNegotiationClampsBuffersToThePeer(t *testing.T) {
 
 // A zero MaxMessageSize or MaxChunkCount means "no limit", so the other side's
 // limit is the one that applies.
-func TestNegotiationTakesTheTighterLimit(t *testing.T) {
+// OPC 10000-6 Tables 74 and 75 give MaxMessageSize and MaxChunkCount opposite
+// meanings in each direction. The Hello's are the largest response the client
+// will accept; the Acknowledge's are "the maximum size for any request Message"
+// and "the maximum number of chunks in any request Message" -- what this server
+// will accept. So neither is a negotiation between the two, and tightening one
+// by the other would tell a client that asking for small responses had shrunk
+// what it may send.
+//
+// The buffer sizes are the negotiated pair, and Table 75 says how: each "shall
+// not be larger than" its counterpart in the Hello.
+func TestTheAcknowledgeAnnouncesWhatTheServerAccepts(t *testing.T) {
 	hello := helloFixture()
-	hello.MaxMessageSize = 0
+	hello.MaxMessageSize = 4096
 	hello.MaxChunkCount = 8
 
-	ack, err := NegotiateAcknowledge(hello, 65536, 65536, 1<<20, 0)
+	ack, err := NegotiateAcknowledge(hello, 65536, 65536, 1<<20, 32)
 	if err != nil {
 		t.Fatal(err)
 	}
+	// The server's own request bounds, untouched by the client's response
+	// bounds even though the client's are tighter.
 	if ack.MaxMessageSize != 1<<20 {
-		t.Fatalf("max message = %d, want the server's limit", ack.MaxMessageSize)
+		t.Fatalf("max message = %d, want the server's request limit", ack.MaxMessageSize)
 	}
-	if ack.MaxChunkCount != 8 {
-		t.Fatalf("max chunks = %d, want the client's limit", ack.MaxChunkCount)
+	if ack.MaxChunkCount != 32 {
+		t.Fatalf("max chunks = %d, want the server's request limit", ack.MaxChunkCount)
+	}
+	// The buffers are negotiated: neither exceeds what the other side asked
+	// for.
+	if ack.ReceiveBufferSize > hello.SendBufferSize {
+		t.Fatalf("receive buffer %d exceeds the client's send buffer %d",
+			ack.ReceiveBufferSize, hello.SendBufferSize)
+	}
+	if ack.SendBufferSize > hello.ReceiveBufferSize {
+		t.Fatalf("send buffer %d exceeds the client's receive buffer %d",
+			ack.SendBufferSize, hello.ReceiveBufferSize)
 	}
 
-	hello.MaxMessageSize = 4096
-	ack, err = NegotiateAcknowledge(hello, 65536, 65536, 1<<20, 4)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if ack.MaxMessageSize != 4096 || ack.MaxChunkCount != 4 {
-		t.Fatalf("max message = %d, max chunks = %d", ack.MaxMessageSize, ack.MaxChunkCount)
-	}
-
-	// Both sides unlimited stays unlimited.
-	hello.MaxMessageSize, hello.MaxChunkCount = 0, 0
+	// A server that imposes no request bound announces none, whatever the
+	// client said about responses.
 	ack, err = NegotiateAcknowledge(hello, 65536, 65536, 0, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if ack.MaxMessageSize != 0 || ack.MaxChunkCount != 0 {
-		t.Fatalf("max message = %d, max chunks = %d, want unlimited", ack.MaxMessageSize, ack.MaxChunkCount)
+		t.Fatalf("max message = %d, max chunks = %d, want no request limit",
+			ack.MaxMessageSize, ack.MaxChunkCount)
 	}
 }
 
