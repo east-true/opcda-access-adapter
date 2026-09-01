@@ -321,14 +321,25 @@ independent third-party clients now run against the UA frontend over a scripted
 DA source — all as interop clients only, as design §5.2 permits, with nothing
 in the adapter linking against any of them:
 
-| Client | Version | Checks |
-| --- | --- | --- |
-| [asyncua](https://github.com/FreeOpcUa/opcua-asyncio) (Python) | 1.1.x | 142 |
-| [open62541](https://github.com/open62541/open62541) (C) | 1.5.7 | 128 |
-| [OPC Foundation .NET stack](https://github.com/OPCFoundation/UA-.NETStandard) | 1.5.378.156 | 131 |
+| Client | Version | Checks | Runs in CI |
+| --- | --- | --- | --- |
+| [asyncua](https://github.com/FreeOpcUa/opcua-asyncio) (Python) | 1.1.x | 148 | yes |
+| [OPC Foundation .NET stack](https://github.com/OPCFoundation/UA-.NETStandard) | 1.5.378.156 | 141 | yes |
+| [open62541](https://github.com/open62541/open62541) (C) | 1.5.7 | 128 | **no — local only** |
 
 See [docs/validation/ua-client-interop.md](validation/ua-client-interop.md) for
 what they check and `scripts/interop/run.sh` to run them.
+
+The last column is the part worth stating plainly. `scripts/interop/run.sh`
+skips a client whose toolchain is absent rather than failing, which is right for
+a developer running one of them, but it means the CI job runs two of the three:
+the runner has Python and dotnet, and no open62541 build. open62541's 128
+assertions therefore run only when somebody runs them, which is the same
+position the whole suite was in before it was added to CI — and that suite had
+gone nineteen pull requests failing on a stale assertion by then. The counts
+above are what each client reported on the last run; they move when the scripts
+gain checks, and asyncua and the .NET stack had each gained some before anybody
+re-read this table.
 
 Together they found six defects the Go suite could not see. Four came from
 asyncua: an `OpenSecureChannel` reply naming no security policy, so **no

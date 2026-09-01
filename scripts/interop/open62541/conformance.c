@@ -19,9 +19,11 @@
 #include <string.h>
 
 static int failures = 0;
+static int passes = 0;
 
 static void check(const char *name, int condition, const char *detail) {
     if(condition) {
+        passes++;
         printf("  PASS %s\n", name);
         return;
     }
@@ -449,6 +451,6 @@ int main(int argc, char *argv[]) {
         printf("FAILED %d\n", failures);
         return 1;
     }
-    printf("ALL CHECKS PASSED\n");
+    printf("ALL CHECKS PASSED  open62541 checks=%d\n", passes);
     return 0;
 }
