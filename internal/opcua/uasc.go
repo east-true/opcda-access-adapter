@@ -251,15 +251,6 @@ func MaxSenderCertificateSize(chunkSize int, securityPolicyURIBytes, paddingByte
 	return available
 }
 
-func EncodeSymmetricSecurityHeader(header SymmetricSecurityHeader, limits BinaryLimits) ([]byte, error) {
-	encoder, err := NewEncoder(limits)
-	if err != nil {
-		return nil, err
-	}
-	encoder.WriteUInt32(header.TokenID)
-	return encoder.Bytes()
-}
-
 func EncodeSequenceHeader(header SequenceHeader, limits BinaryLimits) ([]byte, error) {
 	encoder, err := NewEncoder(limits)
 	if err != nil {
