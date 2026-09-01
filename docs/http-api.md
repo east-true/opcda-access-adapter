@@ -104,9 +104,15 @@ Every logging call in the adapter is in `cmd/adapter`, and none carries a value:
 they log an address, a frontend name, a CLI argument, and errors. So the only
 route a value could take into a log is inside an error message, and no error
 message carries one -- they carry the VARTYPE, which is the part worth
-reporting. `TestValueHandlingPackagesDoNotLog` fails the build if a
-value-handling package acquires a logging import, which is what keeps that
-reasoning true rather than merely currently accurate.
+reporting.
+
+`TestValueHandlingPackagesDoNotLog` fails the build if a value-handling package
+acquires a logging import **or writes anything out directly** — a `fmt.Print`
+or a use of `os.Stdout` would break the guarantee just as completely as a `log`
+call, and the reasoning above depends on neither existing. Building a string
+with `fmt.Errorf` or `fmt.Sprintf` stays allowed: that hands it to a caller to
+decide about rather than emitting it. This is what keeps the reasoning true
+rather than merely currently accurate.
 
 Individually valid settings must also fit the aggregate memory ceilings in
 [ADR-0008](adr/0008-http-origin-and-aggregate-bounds.md). This prevents, for
