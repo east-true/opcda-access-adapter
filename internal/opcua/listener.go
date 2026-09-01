@@ -121,13 +121,32 @@ func (config ListenerConfig) validate() error {
 	if err := config.Subscriptions.validate(); err != nil {
 		return err
 	}
-	if err := config.AddressSpace.validate(); err != nil {
+	// The address space takes its ApplicationUri from the endpoint, because
+	// 10000-5 8.3.2 makes it index 1 of the namespace table and index 0 of the
+	// server table -- one identity, configured once. So the endpoint is
+	// validated first and the resolved config is what gets checked.
+	if err := config.Endpoint.validate(); err != nil {
 		return err
 	}
-	return config.Endpoint.validate()
+	return config.addressSpace().validate()
 }
 
 func (config ListenerConfig) ValidateForConfiguration() error { return config.validate() }
+
+// addressSpace resolves what the address space is built from. The endpoint owns
+// the identity of this server, so the ApplicationUri, product URI and name come
+// from it rather than being configured twice and allowed to disagree.
+func (config ListenerConfig) addressSpace() AddressSpaceConfig {
+	resolved := config.AddressSpace
+	resolved.ApplicationURI = config.Endpoint.ApplicationURI
+	if resolved.ProductURI == "" {
+		resolved.ProductURI = config.Endpoint.ProductURI
+	}
+	if resolved.ProductName == "" {
+		resolved.ProductName = config.Endpoint.ApplicationName
+	}
+	return resolved
+}
 
 // Listener serves UA-TCP connections. It owns one channel registry, so the
 // SecureChannels it issues are scoped to this listener.
@@ -211,16 +230,7 @@ func NewListenerWithRuntime(config ListenerConfig, runtime opcda.Runtime, channe
 	if err != nil {
 		return nil, err
 	}
-	// The address space's ServerArray names this server, and the endpoint is
-	// where that URI is configured.
-	addressSpaceConfig := config.AddressSpace
-	addressSpaceConfig.ApplicationURI = config.Endpoint.ApplicationURI
-	if addressSpaceConfig.ProductURI == "" {
-		addressSpaceConfig.ProductURI = config.Endpoint.ProductURI
-	}
-	if addressSpaceConfig.ProductName == "" {
-		addressSpaceConfig.ProductName = config.Endpoint.ApplicationName
-	}
+	addressSpaceConfig := config.addressSpace()
 	// ServerCapabilities publishes what the services enforce, taken from the
 	// same configuration they are built from, so the two cannot drift.
 	addressSpaceConfig.Limits = ServerLimits{

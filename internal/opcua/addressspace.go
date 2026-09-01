@@ -281,6 +281,13 @@ func (config AddressSpaceConfig) validate() error {
 	if config.NamespaceURI == "" {
 		return fmt.Errorf("a namespace URI is required and must be stable across restarts")
 	}
+	if config.ApplicationURI == "" {
+		// 10000-5 8.3.2 puts it at index 1 of the namespace table and index 0
+		// of the server table, so an absent one is a hole in both rather than
+		// a missing label.
+		return fmt.Errorf("an application URI is required: it is this server's identity " +
+			"at index 1 of the namespace table")
+	}
 	if config.SourceFolderName == "" {
 		return fmt.Errorf("a source folder name is required")
 	}
@@ -291,7 +298,9 @@ func (config AddressSpaceConfig) ValidateForConfiguration() error { return confi
 
 // AdapterNamespaceIndex is the index this adapter's namespace occupies. Index 0
 // is the OPC UA namespace, so the adapter's own nodes start at 1.
-const AdapterNamespaceIndex uint16 = 1
+// AdapterNamespaceIndex is where this adapter's own nodes live: after the OPC
+// UA namespace at 0 and the local server at 1, which 10000-5 8.3.2 reserves.
+const AdapterNamespaceIndex uint16 = 2
 
 // AddressSpace holds the standard nodes plus the nodes discovered from the DA
 // source. It is safe for concurrent readers because a Browse can arrive on any
@@ -340,8 +349,25 @@ func NewAddressSpace(config AddressSpaceConfig) (*AddressSpace, error) {
 
 // NamespaceURIs is the server's namespace table: index 0 is the OPC UA
 // namespace and index 1 is this adapter's.
+// NamespaceURIs is the namespace table, in the order OPC 10000-5 8.3.2 fixes.
+//
+// "Index 0 is reserved for the OPC UA namespace, and index 1 is reserved for
+// the local Server", and "the ApplicationUri of an OPC UA Server shall be
+// identical to the URI set in index 0 of the ServerArray and index 1 of the
+// NamespaceArray". So index 1 is the ApplicationUri and nothing else.
+//
+// This adapter's own nodes therefore start at index 2. The two URIs are
+// separate on purpose: an ApplicationUri commonly names a host, while design
+// §35.2 requires a namespace URI that stays stable across restarts because the
+// index is not identity. Putting the stable one at index 1 would have made it
+// the server's identity as well, and the two do differ -- this project's own
+// interop harness sets them to different values.
 func (s *AddressSpace) NamespaceURIs() []string {
-	return []string{"http://opcfoundation.org/UA/", s.config.NamespaceURI}
+	return []string{
+		"http://opcfoundation.org/UA/",
+		s.config.ApplicationURI,
+		s.config.NamespaceURI,
+	}
 }
 
 func (s *AddressSpace) SourceFolderID() NodeID { return s.sourceFolder }

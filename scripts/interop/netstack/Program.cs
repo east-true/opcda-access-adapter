@@ -30,7 +30,15 @@ internal static class Program
 
     // ItemNode builds the identifier for a DA item. It carries the exact
     // ItemID verbatim, which is the adapter's central promise about identity.
-    private static NodeId ItemNode(string itemId) => new NodeId("item:" + itemId, 1);
+    // The namespace index is resolved from the server's table rather than
+    // assumed. Design §35.2 forbids treating an index as identity, and this
+    // client used to assume 1 -- which was right until OPC 10000-5 8.3.2 put
+    // the ApplicationUri there and moved the adapter's namespace after it.
+    private const string ApplicationUri = "urn:opcda-access-adapter:uainterop";
+    private const string SourceNamespaceUri = "urn:opcda-access-adapter:uainterop:source";
+    private static ushort adapterNamespace;
+
+    private static NodeId ItemNode(string itemId) => new NodeId("item:" + itemId, adapterNamespace);
 
     private static async Task<int> Main(string[] args)
     {
@@ -101,8 +109,24 @@ internal static class Program
         Check("the endpoint publishes SecurityPolicy None",
             endpointDescription.SecurityPolicyUri.EndsWith("#None"),
             endpointDescription.SecurityPolicyUri);
-        Check("the namespace table carries the adapter namespace",
-            session.NamespaceUris.Count >= 2, $"{session.NamespaceUris.Count} namespaces");
+        // 10000-5 8.3.2: index 0 is the OPC UA namespace and index 1 is the
+        // local server, which is the ApplicationUri.
+        var namespaces = session.NamespaceUris.ToArray();
+        Check("namespace 0 is the OPC UA namespace",
+            namespaces.Length > 0 && namespaces[0] == "http://opcfoundation.org/UA/",
+            string.Join(", ", namespaces));
+        Check("namespace 1 is the local server",
+            namespaces.Length > 1 && namespaces[1] == ApplicationUri,
+            string.Join(", ", namespaces));
+        int resolved = Array.IndexOf(namespaces, SourceNamespaceUri);
+        Check("the adapter's namespace follows the reserved two", resolved >= 2,
+            $"index {resolved}");
+        if (resolved < 0)
+        {
+            Console.WriteLine("  the adapter namespace is absent; nothing else can be addressed");
+            return 1;
+        }
+        adapterNamespace = (ushort)resolved;
 
         Console.WriteLine("\n[server object]");
         CheckServerObject(session);
@@ -301,11 +325,19 @@ internal static class Program
                 body.CurrentTime != DateTime.MinValue, body.CurrentTime.ToString("O"));
         }
 
-        var namespaces = ReadNode(session, VariableIds.Server_NamespaceArray);
-        Check("the NamespaceArray is a two entry String array",
-            StatusCode.IsGood(namespaces.StatusCode) &&
-            namespaces.Value is string[] uris && uris.Length == 2,
-            namespaces.StatusCode.ToString());
+        // OPC 10000-5 8.3.2 fixes the first two entries and lets a server add
+        // its own after them, so the shape is checked rather than a count.
+        var namespaceArray = ReadNode(session, VariableIds.Server_NamespaceArray);
+        var published = namespaceArray.Value as string[];
+        Check("the NamespaceArray reserves its first two entries",
+            StatusCode.IsGood(namespaceArray.StatusCode) && published != null &&
+            published.Length >= 3 && published[0] == "http://opcfoundation.org/UA/" &&
+            published[1] == ApplicationUri,
+            published == null ? namespaceArray.StatusCode.ToString() : string.Join(", ", published));
+        Check("the ServerArray names this server",
+            ReadNode(session, VariableIds.Server_ServerArray).Value is string[] servers &&
+            servers.Length > 0 && servers[0] == ApplicationUri,
+            ApplicationUri);
     }
 
     private static void CheckBrowse(Session session)

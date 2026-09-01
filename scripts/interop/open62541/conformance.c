@@ -32,10 +32,18 @@ static void check(const char *name, int condition, const char *detail) {
 /* itemNode builds the node identifier for a DA item. The identifier carries the
  * exact ItemID verbatim, which is the adapter's central promise about identity;
  * this client is a foreign witness to it surviving the round trip. */
+#define APPLICATION_URI "urn:opcda-access-adapter:uainterop"
+#define SOURCE_NAMESPACE_URI "urn:opcda-access-adapter:uainterop:source"
+
+static UA_UInt16 adapterNamespace = 0;
+
 static UA_NodeId itemNode(const char *itemID) {
     char buffer[512];
     snprintf(buffer, sizeof(buffer), "item:%s", itemID);
-    return UA_NODEID_STRING_ALLOC(1, buffer);
+    /* Resolved from the server's namespace table rather than assumed. Design
+     * §35.2 forbids treating an index as identity, and this client used to
+     * assume 1 -- right until OPC 10000-5 8.3.2 put the ApplicationUri there. */
+    return UA_NODEID_STRING_ALLOC(adapterNamespace, buffer);
 }
 
 static UA_StatusCode readValue(UA_Client *client, const char *itemID, UA_Variant *out) {
@@ -394,6 +402,23 @@ int main(int argc, char *argv[]) {
         return 1;
     }
     check("connect, open a secure channel, and activate a session", 1, NULL);
+
+    /* OPC 10000-5 8.3.2 reserves index 0 for the OPC UA namespace and index 1
+     * for the local server, which is the ApplicationUri. The adapter's own
+     * namespace follows them, and is found by URI. */
+    {
+        UA_UInt16 found = 0;
+        UA_String wanted = UA_STRING(SOURCE_NAMESPACE_URI);
+        UA_StatusCode resolved = UA_Client_NamespaceGetIndex(client, &wanted, &found);
+        check("the adapter's namespace is in the table and follows the reserved two",
+              resolved == UA_STATUSCODE_GOOD && found >= 2, NULL);
+        if(resolved != UA_STATUSCODE_GOOD) {
+            printf("  the adapter namespace is absent; nothing else can be addressed\n");
+            UA_Client_delete(client);
+            return 1;
+        }
+        adapterNamespace = found;
+    }
 
     printf("\n[server object]\n");
     checkServerObject(client);
