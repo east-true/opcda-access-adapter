@@ -411,49 +411,68 @@ def written_fields(ident, body):
     return fields
 
 
+NESTED_STRUCTURE = "<nested structure>"
+
 # The Go writer each schema field type is written with. Only the types this
 # adapter builds inline are listed; an unlisted type fails rather than passing
 # unchecked.
 FIELD_WRITERS = {
     "opc:String": "WriteString",
     "opc:Int32": "WriteInt32",
+    "opc:UInt32": "WriteUInt32",
     "opc:Double": "WriteDouble",
+    "opc:DateTime": "WriteDateTime",
     "ua:LocalizedText": "WriteLocalizedText",
+    # An enumeration is a 32 bit signed integer on the wire, whatever the
+    # schema calls it.
+    "tns:ServerState": "WriteInt32",
+    # A structure field is written by whatever writes that structure, which is
+    # not an Encoder method, so it is matched as a nested write instead.
+    "tns:BuildInfo": NESTED_STRUCTURE,
 }
+
+# The Go name of a structure whose encoding constant is spelled differently
+# from the structure itself.
+INLINE_STRUCTURE_ALIASES = {"ServerStatus": "ServerStatusDataType"}
 
 
 def check_inline_structures(files, src):
     """Structures written field by field into an ExtensionObject body.
 
-    Range and EUInformation are built by closures rather than by a named
-    encoder, so the structure check above cannot read them -- and they are hand
-    written field sequences like any other, with a client-visible value in each
-    field.
+    These are built by closures rather than by a named encoder, so the structure
+    check cannot read them -- and they are hand written field sequences like any
+    other, with a client-visible value in each field.
 
-    This compares the sequence of writer calls with the schema's field types.
-    It cannot see a swap between two fields of the same type, which is exactly
-    the mistake most worth catching here: Range is two Doubles and EUInformation
-    ends in two LocalizedTexts. That half is covered by a Go test that decodes
-    the body and reads the values back, which is the only thing that can tell
-    Low from High.
+    Every extensionObject call is resolved, and one that cannot be is a failure
+    rather than a silent skip. That is not hypothetical: this check first
+    matched only the two whose encoding constant ends in EncodingDefaultBinary,
+    and reported "2 inline structures" while ServerStatus and BuildInfo went
+    unchecked beside it. A check that looks complete and is not is worse than
+    one that admits what it cannot see.
+
+    It compares the sequence of writer calls with the schema's field types. It
+    cannot see a swap between two fields of the same type, which is covered from
+    the other side by tests that decode a body and read the values back.
     """
     spec = {}
     for match in re.finditer(
             r'<opc:StructuredType\s+Name="([A-Za-z0-9_]+)"(.*?)</opc:StructuredType>',
             files["Opc.Ua.Types.bsd"], re.S):
-        spec[match.group(1)] = re.findall(r'<opc:Field\s+Name="[A-Za-z0-9_]+"\s+TypeName="([\w:]+)"',
-                                          match.group(2))
+        spec[match.group(1)] = re.findall(
+            r'<opc:Field\s+Name="[A-Za-z0-9_]+"\s+TypeName="([\w:]+)"', match.group(2))
 
     checked = 0
-    for match in re.finditer(
-            r'extensionObject\(NodeID(\w+?)EncodingDefaultBinary,\s*func\(e \*Encoder\) \{(.*?)\n\t\}\)',
-            src, re.S):
-        name, body = match.group(1), match.group(2)
-        want = spec.get(name)
+    for match in re.finditer(r'extensionObject\(NodeID(\w+?)Encoding(?:DefaultBinary|ID),\s*',
+                             src):
+        name = match.group(1)
+        body = inline_structure_body(src, match.end())
+        if body is None:
+            fail(f"the {name} extensionObject body could not be read")
+            continue
+        want = spec.get(INLINE_STRUCTURE_ALIASES.get(name, name))
         if want is None:
             fail(f"{name} is written inline but is not in the binary schema")
             continue
-        got = re.findall(r'e\.(Write[A-Za-z0-9]+)\(', body)
         expected = []
         for field_type in want:
             writer = FIELD_WRITERS.get(field_type)
@@ -464,10 +483,30 @@ def check_inline_structures(files, src):
             expected.append(writer)
         if expected is None:
             continue
+        got = [NESTED_STRUCTURE if call.group(1) is None else call.group(1)
+               for call in re.finditer(r'e\.(Write[A-Za-z0-9]+)\(|\w+\.encode\(e\)', body)]
         checked += 1
         if expected != got:
             fail(f"{name} writes {got}, the schema's fields are {want}")
     print(f"  {checked} inline structures")
+
+
+def inline_structure_body(src, start):
+    """The body an extensionObject call writes, whether inline or by name.
+
+    A closure is read directly. A method reference -- info.encode -- is followed
+    to the method, because BuildInfo is written that way and skipping it would
+    leave the structure unchecked while the count still went up.
+    """
+    closure = re.match(r'func\(e \*Encoder\) \{(.*?)\n\t*\}\)', src[start:], re.S)
+    if closure:
+        return closure.group(1)
+    reference = re.match(r'(\w+)\.(\w+)\)', src[start:])
+    if reference is None:
+        return None
+    method = re.search(r'func \(\w+ \w+\) ' + reference.group(2) + r'\(e \*Encoder\) \{(.*?)\n\}',
+                       src, re.S)
+    return method.group(1) if method else None
 
 
 def check_response_encoders(files, src):
