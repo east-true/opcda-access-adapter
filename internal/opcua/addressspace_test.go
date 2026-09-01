@@ -588,3 +588,70 @@ func TestOnlyInstancesAreTheSourceOfATypeDefinition(t *testing.T) {
 		t.Fatal("a type definition outside namespace zero was reported")
 	}
 }
+
+// OPC 10000-5 8.2 gives Root three standard browse entry points, and the OPC
+// Foundation's own NodeSet has Root organize all three. A client walking the
+// address space expects them, and finding two leaves it to guess whether the
+// server has no views or simply did not build that part of the tree.
+func TestRootCarriesTheThreeStandardEntryPoints(t *testing.T) {
+	space := testAddressSpace(t)
+	root, ok := space.Node(NumericNodeID(0, NodeIDRootFolder))
+	if !ok {
+		t.Fatal("there is no Root")
+	}
+
+	organized := map[string]NodeID{}
+	for _, reference := range root.References {
+		if reference.ReferenceTypeID.Numeric != NodeIDOrganizes || !reference.IsForward {
+			continue
+		}
+		organized[reference.BrowseName.Name] = reference.TargetID.NodeID
+	}
+	// 8.2.2, 8.2.3 and 8.2.4, with the identifiers NodeIds.csv gives them.
+	for name, identifier := range map[string]uint32{
+		"Objects": NodeIDObjectsFolder,
+		"Types":   NodeIDTypesFolder,
+		"Views":   NodeIDViewsFolder,
+	} {
+		target, present := organized[name]
+		if !present {
+			t.Fatalf("Root does not organize %s: it organizes %v", name, organized)
+		}
+		if target.Numeric != identifier || target.Namespace != 0 {
+			t.Fatalf("%s is %v, want namespace 0 identifier %d", name, target, identifier)
+		}
+		node, exists := space.Node(target)
+		if !exists {
+			t.Fatalf("%s is referenced but not in the address space", name)
+		}
+		// 8.2.3 Table 101 and its siblings: each is a FolderType Object.
+		if node.Class != NodeClassObject {
+			t.Fatalf("%s is node class %d, want an Object", name, node.Class)
+		}
+		if node.TypeDefinition.Numeric != NodeIDFolderType {
+			t.Fatalf("%s has type definition %v, want FolderType", name, node.TypeDefinition)
+		}
+		// Each is reachable back to Root, so a client browsing inverse from it
+		// does not dead-end.
+		inverse := false
+		for _, reference := range node.References {
+			if reference.ReferenceTypeID.Numeric == NodeIDOrganizes && !reference.IsForward &&
+				reference.TargetID.NodeID.Numeric == NodeIDRootFolder {
+				inverse = true
+			}
+		}
+		if !inverse {
+			t.Fatalf("%s has no inverse Organizes back to Root", name)
+		}
+	}
+
+	// 8.2.3: the Views Object "shall not reference any other NodeClasses", and
+	// this server publishes no views at all, so it stays empty.
+	views, _ := space.Node(NumericNodeID(0, NodeIDViewsFolder))
+	for _, reference := range views.References {
+		if reference.IsForward {
+			t.Fatalf("Views references %v, and this server publishes no views",
+				reference.BrowseName)
+		}
+	}
+}

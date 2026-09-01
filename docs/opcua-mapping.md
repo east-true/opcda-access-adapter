@@ -1309,6 +1309,27 @@ test of the framing passed, because the encoder and decoder agreed with each
 other. It only surfaced when a client parsed a real frame off a socket, which is
 why this slice came before more service logic.
 
+## Root's three standard entry points
+
+OPC 10000-5 8.2 gives Root three browse entry points — `Objects`, `Types` and
+`Views` — and the OPC Foundation's own NodeSet has Root organize all three. This
+server publishes all three, and two of them are empty.
+
+`Types` is empty because no type definition node is materialised, which
+OPC 10000-3 4.6 permits: a server may "use well-known NodeIds without
+representing the corresponding TypeDefinitionNodes in their AddressSpace".
+
+`Views` is empty because this server publishes no views at all — a Browse
+naming any view is refused with `Bad_ViewIdUnknown`. Clause 8.2.3 makes the
+folder the entry point for View nodes and says it "shall not reference any other
+NodeClasses", which an empty folder satisfies exactly.
+
+Both are present rather than omitted because an empty folder says "nothing
+here", while a missing one says nothing at all and leaves a client to guess
+whether the server has no views or simply did not build that part of the tree.
+Including one and omitting the other, which is what this server used to do, is
+the answer that tells a client least.
+
 ## Which services this server answers
 
 Everything else is answered with a `ServiceFault` carrying

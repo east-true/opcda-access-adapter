@@ -78,6 +78,7 @@ const (
 	NodeIDRootFolder           uint32 = 84
 	NodeIDObjectsFolder        uint32 = 85
 	NodeIDTypesFolder          uint32 = 86
+	NodeIDViewsFolder          uint32 = 87
 	NodeIDPropertyType         uint32 = 68
 	NodeIDServerType           uint32 = 2004
 	NodeIDServer               uint32 = 2253
@@ -344,6 +345,14 @@ func (s *AddressSpace) addStandardNodes() {
 	root := folderNode(NumericNodeID(0, NodeIDRootFolder), "Root")
 	objects := folderNode(NumericNodeID(0, NodeIDObjectsFolder), "Objects")
 	types := folderNode(NumericNodeID(0, NodeIDTypesFolder), "Types")
+	// OPC 10000-5 8.2 gives Root three standard entry points, and a client
+	// walking the address space expects all three. Types and Views are both
+	// empty here -- no type node is materialised, which 10000-3 4.6 permits,
+	// and 8.2.3 makes Views the entry point for View nodes this server has
+	// none of. An empty folder says "nothing here"; a missing one says nothing
+	// at all, and leaves a client to guess whether the server has no views or
+	// simply did not build the tree.
+	views := folderNode(NumericNodeID(0, NodeIDViewsFolder), "Views")
 	source := &Node{
 		ID:             s.sourceFolder,
 		Class:          NodeClassObject,
@@ -374,6 +383,7 @@ func (s *AddressSpace) addStandardNodes() {
 	hasProperty := NumericNodeID(0, NodeIDHasProperty)
 	addForward(root, organizes, objects)
 	addForward(root, organizes, types)
+	addForward(root, organizes, views)
 	addForward(objects, organizes, source)
 	addForward(objects, organizes, server)
 	addForward(server, hasProperty, serverArray)
@@ -381,12 +391,13 @@ func (s *AddressSpace) addStandardNodes() {
 	// The inverse reference lets a client walk back up the hierarchy.
 	addInverse(objects, organizes, root)
 	addInverse(types, organizes, root)
+	addInverse(views, organizes, root)
 	addInverse(source, organizes, objects)
 	addInverse(server, organizes, objects)
 	addInverse(serverArray, hasProperty, server)
 	addInverse(namespaceArray, hasProperty, server)
 
-	standard := []*Node{root, objects, types, source, server, serverArray, namespaceArray}
+	standard := []*Node{root, objects, types, views, source, server, serverArray, namespaceArray}
 	standard = append(standard, s.addServerStatusNodes(server)...)
 	for _, node := range standard {
 		s.nodes[nodeKey(node.ID)] = node
