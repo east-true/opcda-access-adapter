@@ -102,9 +102,10 @@ x64/amd64. Each architecture passed, against the source-built OPC Foundation DA
   log.
 
 The security policy and transport profile URIs used in this run are
-placeholders. The known URIs are defined by OPC 10000-7, which this project has
-not transcribed, so the run asserts only that the server publishes exactly what
-it was configured with. **No third-party OPC UA client was involved**: the probe
+placeholders. The known URIs are published in the OPC Foundation profile
+database, which OPC 10000-7 clause 1 points to rather than listing, so nothing
+pinned here could check them and the run asserts only that the server publishes
+exactly what it was configured with. **No third-party OPC UA client was involved**: the probe
 uses this project's own codec, so this is evidence that the server is internally
 consistent and reaches the DA source, not that a real UA client interoperates
 with it. No conformance or interoperability claim is made.
