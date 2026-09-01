@@ -887,6 +887,19 @@ another implementation, never from this encoder, and decodes to the bound.
 Booleans are written as `1` for true and any non-zero byte decodes as true, and
 NaN is normalised to an IEEE quiet NaN, both as the clause requires.
 
+### Picoseconds are dropped at a saturated timestamp
+
+Clause 5.2.2 requires that "the Picoseconds shall be set to 0 when the DateTime
+value is `DateTime.MinValue` or `DateTime.MaxValue`", and an encoded DataValue
+here omits them there. Those two values are sentinels for "outside the
+representable range" rather than instants, so a fraction of a tick past one says
+nothing — and saying it would suggest the timestamp were exact when it is the
+opposite.
+
+Nothing this adapter reads from a DA source carries picoseconds, so the rule
+bites only on a DataValue assembled with them. It is applied where it is stated
+rather than where it happens to matter.
+
 ### An array shape the decoder was told to reject
 
 Nothing here consumes an array Variant — the adapter carries no arrays — but the

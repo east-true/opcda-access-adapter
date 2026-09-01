@@ -376,13 +376,13 @@ func (e *Encoder) WriteDataValue(value DataValue) {
 	}
 	if !value.SourceTimestamp.IsZero() {
 		mask |= dataValueHasSourceTimestamp
-		if value.SourcePicoseconds != 0 {
+		if value.SourcePicoseconds != 0 && !atDateTimeBound(value.SourceTimestamp) {
 			mask |= dataValueHasSourcePicoseconds
 		}
 	}
 	if !value.ServerTimestamp.IsZero() {
 		mask |= dataValueHasServerTimestamp
-		if value.ServerPicoseconds != 0 {
+		if value.ServerPicoseconds != 0 && !atDateTimeBound(value.ServerTimestamp) {
 			mask |= dataValueHasServerPicoseconds
 		}
 	}
@@ -448,6 +448,17 @@ func (d *Decoder) ReadDataValue() (DataValue, error) {
 		value.ServerPicoseconds = clampPicoseconds(picoseconds)
 	}
 	return value, nil
+}
+
+// atDateTimeBound reports whether an instant encodes to one of the two values
+// OPC 10000-6 5.2.2.5 reserves. Clause 5.2.2 requires that "the Picoseconds
+// shall be set to 0 when the DateTime value is DateTime.MinValue or
+// DateTime.MaxValue", and those are sentinels for "outside the representable
+// range" rather than instants -- a fraction of a tick past an unknown time says
+// nothing, and saying it would suggest the timestamp were exact.
+func atDateTimeBound(value time.Time) bool {
+	encoded := EncodeDateTime(value)
+	return encoded == DateTimeMin || encoded == DateTimeMax
 }
 
 func clampPicoseconds(value uint16) uint16 {

@@ -362,3 +362,58 @@ func TestAScalarVariantMayNotCarryArrayDimensions(t *testing.T) {
 		t.Fatal("a scalar Variant with the ArrayDimensions flag was accepted")
 	}
 }
+
+// OPC 10000-6 5.2.2: "the Picoseconds shall be set to 0 when the DateTime value
+// is DateTime.MinValue or DateTime.MaxValue". Those two are sentinels for
+// "outside the representable range", so a fraction of a tick past one of them
+// says nothing, and saying it would suggest the timestamp were exact.
+func TestPicosecondsAreDroppedAtTheDateTimeBounds(t *testing.T) {
+	for _, testCase := range []struct {
+		name string
+		at   time.Time
+		want bool
+	}{
+		{"below the lower bound", time.Date(1500, time.January, 1, 0, 0, 0, 0, time.UTC), false},
+		{"the lower bound itself", dateTimeLowerBound, false},
+		{"at the upper bound", dateTimeUpperBound, false},
+		{"beyond the upper bound", time.Date(10000, time.January, 1, 0, 0, 0, 0, time.UTC), false},
+		{"an ordinary instant", time.Date(2026, time.September, 1, 12, 0, 0, 0, time.UTC), true},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			encoder, err := NewEncoder(DefaultBinaryLimits())
+			if err != nil {
+				t.Fatal(err)
+			}
+			encoder.WriteDataValue(DataValue{
+				Value: NullVariant(), Status: StatusGood,
+				SourceTimestamp: testCase.at, SourcePicoseconds: 500,
+				ServerTimestamp: testCase.at, ServerPicoseconds: 500,
+			})
+			encoded, err := encoder.Bytes()
+			if err != nil {
+				t.Fatal(err)
+			}
+			mask := encoded[0]
+			carried := mask&dataValueHasSourcePicoseconds != 0
+			if carried != testCase.want {
+				t.Fatalf("source picoseconds carried = %v, want %v", carried, testCase.want)
+			}
+			if server := mask&dataValueHasServerPicoseconds != 0; server != testCase.want {
+				t.Fatalf("server picoseconds carried = %v, want %v", server, testCase.want)
+			}
+
+			// Whatever the mask says, the value still decodes.
+			decoder, err := NewDecoder(encoded, DefaultBinaryLimits())
+			if err != nil {
+				t.Fatal(err)
+			}
+			decoded, err := decoder.ReadDataValue()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !testCase.want && decoded.SourcePicoseconds != 0 {
+				t.Fatalf("picoseconds survived at a bound: %d", decoded.SourcePicoseconds)
+			}
+		})
+	}
+}
