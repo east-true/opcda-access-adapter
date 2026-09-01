@@ -871,8 +871,36 @@ means empty, `Guid` as `UInt32`/`UInt16`/`UInt16`/`Byte[8]`, one-dimensional
 arrays preceded by an `Int32` element count, and `DateTime` as 100 nanosecond
 intervals since 1601-01-01 UTC with the clause's saturation rules at both ends.
 
+Those ends are where 5.2.2.5 puts them, not where the arithmetic happens to run
+out. Anything "equal to or earlier than 1601-01-01 12:00AM UTC" encodes as 0 and
+anything "equal to or greater than 9999-12-31 11:59:59PM UTC" encodes as the
+`Int64` maximum — the boundary instants included, which a threshold set a tick
+either side would quietly exclude. Go can represent instants well beyond the year
+9999, so it is the clause's boundary that binds here rather than the platform's.
+
+Both bounds round-trip exactly, which they have to: the clause closes by calling
+them "invalid date/time values" that applications "should treat as such", and an
+application cannot recognise a sentinel the encoder and decoder disagree about.
+A wire value between the upper bound and the maximum can only arrive from
+another implementation, never from this encoder, and decodes to the bound.
+
 Booleans are written as `1` for true and any non-zero byte decodes as true, and
 NaN is normalised to an IEEE quiet NaN, both as the clause requires.
+
+### An array shape the decoder was told to reject
+
+Nothing here consumes an array Variant — the adapter carries no arrays — but the
+decoder still has to walk one to find the end of it, and OPC 10000-6 Table 26
+gives it two rules while it does: "all dimensions shall be specified and shall be
+greater than zero", and "if ArrayDimensions are inconsistent with the ArrayLength
+then the decoder shall stop and raise a `Bad_DecodingError`". Both are applied. A
+decoder that accepts a shape it was told to reject is one that answers a message
+it should have refused.
+
+The `ArrayDimensions` flag on a scalar Variant is refused outright. Table 26
+gives the field to arrays alone, and reading the flag without reading the field
+would leave its bytes in the stream for the next field to take as its own —
+turning one malformed Variant into a whole message decoded as something else.
 
 ### Null is not empty
 

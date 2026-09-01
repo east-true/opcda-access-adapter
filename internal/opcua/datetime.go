@@ -22,11 +22,19 @@ const (
 	DateTimeMax int64 = math.MaxInt64
 )
 
-// dateTimeUpperBound is 9999-12-31T23:59:59.999999900Z, the latest instant the
-// clause represents before saturating to DateTimeMax.
+// The two instants the clause names as its bounds. It encodes anything "equal
+// to or earlier than 1601-01-01 12:00AM UTC" as DateTimeMin and anything "equal
+// to or greater than 9999-12-31 11:59:59PM UTC" as DateTimeMax, and decodes
+// those two back to the same pair -- so the bounds round-trip exactly, which
+// they must, given the clause closes by calling them "invalid date/time values"
+// that applications "should treat as such".
+//
+// Go can represent instants far beyond the year 9999, so the platform is not
+// what limits this. The clause's own boundary is, and using anything later
+// would encode a value the clause says shall saturate.
 var (
 	dateTimeLowerBound = time.Date(1601, time.January, 1, 0, 0, 0, 0, time.UTC)
-	dateTimeUpperBound = time.Date(9999, time.December, 31, 23, 59, 59, 999_999_900, time.UTC)
+	dateTimeUpperBound = time.Date(9999, time.December, 31, 23, 59, 59, 0, time.UTC)
 )
 
 // EncodeDateTime converts an instant to the UA wire value, applying the

@@ -2,6 +2,7 @@ package opcua
 
 import (
 	"bytes"
+	"math"
 	"testing"
 	"time"
 )
@@ -264,5 +265,100 @@ func TestDataValuePicosecondsAreClamped(t *testing.T) {
 	}
 	if decoded.SourcePicoseconds != maxPicoseconds {
 		t.Fatalf("picoseconds = %d, want %d", decoded.SourcePicoseconds, maxPicoseconds)
+	}
+}
+
+// variantBytes builds a Variant by hand, so a decoder can be given shapes this
+// encoder would never produce.
+func variantBytes(t *testing.T, build func(e *Encoder)) []byte {
+	t.Helper()
+	encoder, err := NewEncoder(DefaultBinaryLimits())
+	if err != nil {
+		t.Fatal(err)
+	}
+	build(encoder)
+	encoded, err := encoder.Bytes()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return encoded
+}
+
+func decodeVariantBytes(t *testing.T, encoded []byte) (Variant, error) {
+	t.Helper()
+	decoder, err := NewDecoder(encoded, DefaultBinaryLimits())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return decoder.ReadVariant()
+}
+
+// OPC 10000-6 Table 26 gives the decoder two rules about ArrayDimensions: "all
+// dimensions shall be specified and shall be greater than zero", and "if
+// ArrayDimensions are inconsistent with the ArrayLength then the decoder shall
+// stop and raise a Bad_DecodingError".
+func TestVariantArrayDimensionsAreValidated(t *testing.T) {
+	arrayOfInt32 := variantArrayValues | variantArrayDimensions | byte(BuiltInInt32)
+
+	for _, testCase := range []struct {
+		name       string
+		length     int32
+		dimensions []int32
+		wantErr    bool
+	}{
+		{"consistent", 6, []int32{2, 3}, false},
+		{"a dimension of zero", 6, []int32{2, 3, 0}, true},
+		{"a negative dimension", 6, []int32{2, -3}, true},
+		{"too few elements for the dimensions", 5, []int32{2, 3}, true},
+		{"too many elements for the dimensions", 8, []int32{2, 3}, true},
+		{"no dimensions at all", 0, []int32{}, true},
+		{"a dimension that would overflow the product", 6,
+			[]int32{math.MaxInt32, math.MaxInt32, math.MaxInt32}, true},
+		// Negative dimensions whose product happens to match the element
+		// count. Only the per-dimension rule refuses these; the consistency
+		// check alone would let them through.
+		{"negative dimensions that multiply to the right count", 6, []int32{-2, -3}, true},
+		// Four dimensions of 65536 multiply to exactly 2^64, which wraps to
+		// zero in an Int64 and would agree with an array declaring no
+		// elements. Only bailing as soon as the product passes the count
+		// keeps the arithmetic honest.
+		{"dimensions that wrap to the element count", 0, []int32{65536, 65536, 65536, 65536}, true},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			encoded := variantBytes(t, func(e *Encoder) {
+				e.WriteByteValue(arrayOfInt32)
+				e.WriteInt32(testCase.length)
+				for i := int32(0); i < testCase.length; i++ {
+					e.WriteInt32(i)
+				}
+				e.WriteInt32(int32(len(testCase.dimensions)))
+				for _, dimension := range testCase.dimensions {
+					e.WriteInt32(dimension)
+				}
+			})
+			_, err := decodeVariantBytes(t, encoded)
+			if testCase.wantErr && err == nil {
+				t.Fatal("the Variant was accepted")
+			}
+			if !testCase.wantErr && err != nil {
+				t.Fatalf("the Variant was refused: %v", err)
+			}
+		})
+	}
+}
+
+// Table 26 gives the ArrayDimensions field only to arrays. Reading the flag and
+// not the field would leave its bytes for the next field to consume as its own,
+// so the whole message after it decodes as something else entirely.
+func TestAScalarVariantMayNotCarryArrayDimensions(t *testing.T) {
+	encoded := variantBytes(t, func(e *Encoder) {
+		e.WriteByteValue(variantArrayDimensions | byte(BuiltInInt32))
+		e.WriteInt32(7)
+		// What a desynchronised decoder would go on to read as a new field.
+		e.WriteInt32(1)
+		e.WriteInt32(1)
+	})
+	if _, err := decodeVariantBytes(t, encoded); err == nil {
+		t.Fatal("a scalar Variant with the ArrayDimensions flag was accepted")
 	}
 }

@@ -264,9 +264,32 @@ func TestDateTimeFollowsTheSaturationRules(t *testing.T) {
 	if got := EncodeDateTime(time.Date(1500, time.January, 1, 0, 0, 0, 0, time.UTC)); got != DateTimeMin {
 		t.Fatalf("pre-epoch encoded as %d, want %d", got, DateTimeMin)
 	}
-	// Anything at or beyond 9999-12-31 saturates to the Int64 maximum.
-	if got := EncodeDateTime(time.Date(10000, time.January, 1, 0, 0, 0, 0, time.UTC)); got != DateTimeMax {
-		t.Fatalf("post-range encoded as %d, want %d", got, DateTimeMax)
+	// 5.2.2.5: a value "equal to or greater than 9999-12-31 11:59:59PM UTC"
+	// encodes as the Int64 maximum. The boundary instant itself is included,
+	// which is what "equal to or greater" says and what a threshold set one
+	// tick higher would quietly exclude.
+	for _, at := range []time.Time{
+		time.Date(9999, time.December, 31, 23, 59, 59, 0, time.UTC),
+		time.Date(9999, time.December, 31, 23, 59, 59, 500_000_000, time.UTC),
+		time.Date(10000, time.January, 1, 0, 0, 0, 0, time.UTC),
+	} {
+		if got := EncodeDateTime(at); got != DateTimeMax {
+			t.Fatalf("%s encoded as %d, want %d", at.Format(time.RFC3339Nano), got, DateTimeMax)
+		}
+	}
+	// A second earlier is a real instant, so the boundary is where the clause
+	// puts it rather than wherever saturation happens to begin.
+	justInside := time.Date(9999, time.December, 31, 23, 59, 58, 0, time.UTC)
+	if got := EncodeDateTime(justInside); got == DateTimeMax {
+		t.Fatal("an instant below the boundary saturated")
+	}
+	// Both bounds round-trip exactly. The clause calls them "invalid date/time
+	// values" applications "should treat as such", which they cannot do if the
+	// pair does not agree on where they are.
+	for _, ticks := range []int64{DateTimeMin, DateTimeMax} {
+		if got := EncodeDateTime(DecodeDateTime(ticks)); got != ticks {
+			t.Fatalf("%d round-tripped to %d", ticks, got)
+		}
 	}
 	// The reserved values decode to the platform bounds.
 	if got := DecodeDateTime(DateTimeMin).Year(); got != 1601 {
@@ -275,6 +298,19 @@ func TestDateTimeFollowsTheSaturationRules(t *testing.T) {
 	if got := DecodeDateTime(DateTimeMax).Year(); got != 9999 {
 		t.Fatalf("DateTimeMax decoded to year %d", got)
 	}
+	// 5.2.2.5 rule 12: a value that "represents a time later than the latest
+	// time that can be represented" decodes as the latest, not as whatever the
+	// arithmetic produces. Such a value cannot be reached by encoding -- the
+	// encoder saturates first -- so it can only arrive from the wire.
+	beyond := EncodeDateTime(time.Date(9999, time.December, 31, 23, 59, 58, 0, time.UTC)) +
+		int64(2*dateTimeTicksPerSecond)
+	if beyond >= DateTimeMax {
+		t.Fatalf("the probe value %d is not between the bound and the maximum", beyond)
+	}
+	if got := DecodeDateTime(beyond); !got.Equal(dateTimeUpperBound) {
+		t.Fatalf("ticks %d decoded to %s, want the bound", beyond, got.Format(time.RFC3339Nano))
+	}
+
 	// A negative wire value is earlier than the epoch and decodes as the
 	// earliest instant rather than wrapping.
 	if got := DecodeDateTime(-1).Year(); got != 1601 {
