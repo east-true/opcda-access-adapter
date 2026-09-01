@@ -643,6 +643,26 @@ One UA subscription is backed by one DA group, and a group has exactly one
 cannot be honoured, so it is refused; applying somebody else's deadband to it
 would report changes the client did not ask to hear about, or hide ones it did.
 
+### Republish, because the queue is already there
+
+Every Publish response carries its subscription's available sequence numbers,
+and 5.14.1.1 says what a non-empty list of them means: that the server "supports
+a retransmission queue and acknowledgement of NotificationMessages", and that
+clients "are required to acknowledge NotificationMessages as they are received".
+A server that answers those numbers and then refuses to act on them is
+advertising a queue its clients cannot reach.
+
+So Republish answers from that queue. 5.14.6.1: "this Service requests the
+Subscription to republish a NotificationMessage from its retransmission queue.
+If the Server does not have the requested Message in its retransmission queue, it
+returns an error response." A message that is not there — never sent, already
+acknowledged, or dropped when the queue overflowed — is `Bad_MessageNotAvailable`,
+and a subscription that is not this session's is `Bad_SubscriptionIdInvalid`,
+which are the two codes Table 93 defines.
+
+Republishing does not consume the message. Only an acknowledgement removes one,
+and a client that had to ask for a message again has not acknowledged it.
+
 ### The retransmission queue is bounded, and drops its oldest
 
 Clause 5.14.1.1 gives a session a retransmission queue "of at least two times

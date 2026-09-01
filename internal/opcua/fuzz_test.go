@@ -485,6 +485,7 @@ func FuzzDispatchService(f *testing.F) {
 	})
 	add(func(e *Encoder) { e.WriteDeleteSubscriptionsRequest(DeleteSubscriptionsRequest{Header: header}) })
 	add(func(e *Encoder) { e.WriteSetPublishingModeRequest(SetPublishingModeRequest{Header: header}) })
+	add(func(e *Encoder) { e.WriteRepublishRequest(RepublishRequest{Header: header}) })
 	add(func(e *Encoder) { e.WritePublishRequest(PublishRequest{Header: header}) })
 	for _, seed := range seeds {
 		f.Add(seed)

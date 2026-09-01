@@ -28,6 +28,8 @@ const (
 	SetPublishingModeResponseEncodingID    uint32 = 802
 	PublishRequestEncodingID               uint32 = 826
 	PublishResponseEncodingID              uint32 = 829
+	RepublishRequestEncodingID             uint32 = 832
+	RepublishResponseEncodingID            uint32 = 835
 	MonitoredItemNotificationEncodingID    uint32 = 808
 	DataChangeNotificationEncodingID       uint32 = 811
 )
@@ -43,10 +45,13 @@ const (
 	StatusBadDeadbandFilterInvalid          StatusCode = 0x808E0000
 	StatusBadFilterNotAllowed               StatusCode = 0x80450000
 	StatusBadTooManySubscriptions           StatusCode = 0x80770000
-	StatusBadTooManyPublishRequests         StatusCode = 0x80780000
-	StatusBadNoSubscription                 StatusCode = 0x80790000
-	StatusBadSequenceNumberUnknown          StatusCode = 0x807A0000
-	StatusBadTooManyMonitoredItems          StatusCode = 0x80DB0000
+	// Table 93: "the requested message is no longer available", which is the
+	// answer for a sequence number the retransmission queue has dropped.
+	StatusBadMessageNotAvailable    StatusCode = 0x807B0000
+	StatusBadTooManyPublishRequests StatusCode = 0x80780000
+	StatusBadNoSubscription         StatusCode = 0x80790000
+	StatusBadSequenceNumberUnknown  StatusCode = 0x807A0000
+	StatusBadTooManyMonitoredItems  StatusCode = 0x80DB0000
 )
 
 // MonitoringMode values from OPC 10000-4 Table 148.
@@ -945,6 +950,59 @@ func (subscription *uaSubscription) expired(now time.Time) bool {
 	return now.Sub(subscription.lastKeptAlive) >= time.Duration(subscription.lifetimeCount)*interval
 }
 
+// RepublishRequest is OPC 10000-4 Table 92.
+type RepublishRequest struct {
+	Header                   RequestHeader
+	SubscriptionID           uint32
+	RetransmitSequenceNumber uint32
+}
+
+// RepublishResponse is OPC 10000-4 Table 92.
+type RepublishResponse struct {
+	Header              ResponseHeader
+	NotificationMessage NotificationMessage
+}
+
+func (e *Encoder) WriteRepublishRequest(request RepublishRequest) {
+	e.WriteServiceTypeID(RepublishRequestEncodingID)
+	e.WriteRequestHeader(request.Header)
+	e.WriteUInt32(request.SubscriptionID)
+	e.WriteUInt32(request.RetransmitSequenceNumber)
+}
+
+func (d *Decoder) ReadRepublishRequest() (RepublishRequest, error) {
+	var request RepublishRequest
+	var err error
+	if request.Header, err = d.ReadRequestHeader(); err != nil {
+		return RepublishRequest{}, err
+	}
+	if request.SubscriptionID, err = d.ReadUInt32(); err != nil {
+		return RepublishRequest{}, err
+	}
+	if request.RetransmitSequenceNumber, err = d.ReadUInt32(); err != nil {
+		return RepublishRequest{}, err
+	}
+	return request, nil
+}
+
+func (e *Encoder) WriteRepublishResponse(response RepublishResponse) {
+	e.WriteServiceTypeID(RepublishResponseEncodingID)
+	e.WriteResponseHeader(response.Header)
+	e.WriteNotificationMessage(response.NotificationMessage)
+}
+
+func (d *Decoder) ReadRepublishResponse() (RepublishResponse, error) {
+	var response RepublishResponse
+	var err error
+	if response.Header, err = d.ReadResponseHeader(); err != nil {
+		return RepublishResponse{}, err
+	}
+	if response.NotificationMessage, err = d.ReadNotificationMessage(); err != nil {
+		return RepublishResponse{}, err
+	}
+	return response, nil
+}
+
 // SubscriptionService answers the subscription services over the DA Subscribe
 // core.
 //
@@ -1508,6 +1566,44 @@ func (s *SubscriptionService) acknowledge(sessionToken string, request PublishRe
 		acknowledgements[index] = StatusGood
 	}
 	return acknowledgements, nil
+}
+
+// Republish returns a message the client did not receive, from the queue that
+// held it. Clause 5.14.6.1: "this Service requests the Subscription to republish
+// a NotificationMessage from its retransmission queue. If the Server does not
+// have the requested Message in its retransmission queue, it returns an error
+// response."
+//
+// The queue exists whether or not this service does -- every Publish response
+// carries its available sequence numbers, which 5.14.1.1 says tells a client the
+// server "supports a retransmission queue and acknowledgement". Answering those
+// numbers and then refusing to act on them would be advertising a queue the
+// client cannot reach.
+func (s *SubscriptionService) Republish(sessionToken string, request RepublishRequest, now time.Time) (RepublishResponse, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	// lookup resets the lifetime counter: 5.14.1.1 counts "any Service call
+	// that uses the SubscriptionId", and this is one.
+	subscription, err := s.lookup(sessionToken, request.SubscriptionID, now)
+	if err != nil {
+		return RepublishResponse{}, err
+	}
+	message, held := subscription.retransmit[request.RetransmitSequenceNumber]
+	if !held {
+		// Table 93: "the requested message is no longer available".
+		return RepublishResponse{}, uacpError(StatusBadMessageNotAvailable,
+			"sequence number %d is not in the retransmission queue",
+			request.RetransmitSequenceNumber)
+	}
+	// The message stays queued. Only an acknowledgement removes one, and a
+	// client that had to ask for a message again has not acknowledged it.
+	return RepublishResponse{
+		Header: ResponseHeader{
+			Timestamp: now, RequestHandle: request.Header.RequestHandle,
+			ServiceResult: StatusGood, AdditionalHeader: NullExtensionObject(),
+		},
+		NotificationMessage: message,
+	}, nil
 }
 
 // publishPollInterval is how often a waiting Publish looks for something to
