@@ -766,6 +766,21 @@ that name timestamps plus `INVALID`, "no value specified". A request carrying
 table does not define at all. `NEITHER` is a real answer and is accepted: Table
 180 forbids it only for HistoryRead.
 
+### AccessLevel and UserAccessLevel answer alike
+
+A.3.1.3 maps `OPC_READABLE` and `OPC_WRITABLE` onto the AccessLevel attribute
+and adds: "note that the same values are also set for the UserAccessLevel in the
+COM UA Wrapper". This adapter does the same.
+
+The two can only differ where a server restricts a node per user, and there is
+no user model here to restrict it by. OPC DA reports one set of access rights per
+item, and every session sees the item the source described; answering a narrower
+UserAccessLevel would be inventing a restriction the source never stated.
+
+That is also why no operation answers `Bad_UserAccessDenied`. A refusal here is
+always about the item's own rights — `Bad_NotReadable` or `Bad_NotWritable` —
+never about who is asking.
+
 ### An undefined enumeration value is answered, not disconnected
 
 An out-of-range value reaches the service rather than being refused while

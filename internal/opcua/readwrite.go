@@ -666,6 +666,18 @@ func (s *DataAccessService) readAttribute(ctx context.Context, node *Node, attri
 		if node.Class != NodeClassVariable {
 			return failedDataValue(StatusBadAttributeIDInvalid)
 		}
+		// The two attributes answer alike, which A.3.1.3 asks for after
+		// mapping OPC_READABLE and OPC_WRITABLE onto AccessLevel: "note that
+		// the same values are also set for the UserAccessLevel in the COM UA
+		// Wrapper". They can only differ where a server restricts a node per
+		// user, and this adapter has no user model to restrict it by: OPC DA
+		// reports one set of access rights per item, and every session sees
+		// the item the source described. Answering a narrower UserAccessLevel
+		// would be inventing a restriction the source never stated.
+		//
+		// That is also why no operation here answers Bad_UserAccessDenied. A
+		// refusal is always the item's own rights, which is Bad_NotReadable or
+		// Bad_NotWritable, never this user's.
 		variant = Variant{Type: BuiltInByte, Value: node.AccessLevel}
 	case AttributeDescription:
 		// Table A.1 maps Item Description onto this attribute. The node knows

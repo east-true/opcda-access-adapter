@@ -1198,3 +1198,34 @@ func statusOfError(t *testing.T, err error) StatusCode {
 	}
 	return codecErr.Status
 }
+
+// A.3.1.3: "note that the same values are also set for the UserAccessLevel in
+// the COM UA Wrapper". They can differ only where a server restricts a node per
+// user, and this adapter has no user model -- so a divergence would be a
+// restriction invented here rather than one the source stated.
+func TestUserAccessLevelMatchesAccessLevel(t *testing.T) {
+	runtime := &stubRuntime{}
+	service, _ := testDataService(t, runtime)
+
+	for _, item := range []string{"Test/Int32", "Test/ReadOnly", "Test/Closed"} {
+		response, err := service.Read(context.Background(), readRequestFor(
+			ReadValueID{NodeID: ItemNodeID(opcda.DAItemID(item)), AttributeID: AttributeAccessLevel},
+			ReadValueID{NodeID: ItemNodeID(opcda.DAItemID(item)), AttributeID: AttributeUserAccessLevel},
+		), time.Now().UTC())
+		if err != nil {
+			t.Fatalf("%s: %v", item, err)
+		}
+		access, user := response.Results[0], response.Results[1]
+		if access.Status != user.Status {
+			t.Fatalf("%s: statuses differ, %s and %s", item,
+				access.Status.Hex(), user.Status.Hex())
+		}
+		if access.Status != StatusGood {
+			continue
+		}
+		if access.Value.Value != user.Value.Value {
+			t.Fatalf("%s: AccessLevel %v but UserAccessLevel %v", item,
+				access.Value.Value, user.Value.Value)
+		}
+	}
+}
