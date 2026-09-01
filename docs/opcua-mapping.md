@@ -383,8 +383,11 @@ An item whose Scan Rate the source has not stated reports **no interval at
 all** rather than zero: OPC 10000-3 reads zero as "the server samples as fast as
 possible", which would be a claim about the source that nobody made.
 
-`ValueRank` is always `Scalar`, because the DA layer carries no arrays. That is
-the same limit recorded under the property row above.
+Every node derived from the source reports `ValueRank` `Scalar`, because the DA
+layer carries no arrays. That is the same limit recorded under the property row
+above. The two nodes that do not are `ServerArray` and `NamespaceArray`, which
+OPC 10000-5 defines as one-dimensional and which describe this server rather
+than anything in the source.
 
 ### The SemanticsChanged bit
 

@@ -511,3 +511,37 @@ func TestABranchNodeIDCarriesTheItemIDTheSourceGaveIt(t *testing.T) {
 		t.Fatal("an item node reported a branch ItemID")
 	}
 }
+
+// Every node the adapter derives from the source is scalar, because the DA
+// layer carries no arrays. The claim is worth pinning rather than restating:
+// the two array-valued nodes describe this server, not the source, and a third
+// appearing would make the documented limit untrue.
+func TestOnlyTheServersOwnNodesAreArrays(t *testing.T) {
+	space := testAddressSpace(t)
+	rights := &opcda.DAAccessRights{Raw: 3, Read: true, Write: true}
+	if err := space.PopulateBranch(nil, []opcda.BrowseEntry{
+		{Kind: opcda.BrowseEntryItem, Name: "Int32", ItemID: itemID("Test/Int32"),
+			CanonicalType: varType(opcda.VTI4), AccessRights: rights},
+		{Kind: opcda.BrowseEntryBranch, Name: "Folder"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	arrays := map[string]bool{}
+	space.mu.Lock()
+	for _, node := range space.nodes {
+		if node.Class == NodeClassVariable && node.ValueRank != ValueRankScalar {
+			arrays[node.BrowseName.Name] = true
+		}
+	}
+	space.mu.Unlock()
+	want := map[string]bool{"ServerArray": true, "NamespaceArray": true}
+	if len(arrays) != len(want) {
+		t.Fatalf("array-valued nodes = %v, want %v", arrays, want)
+	}
+	for name := range want {
+		if !arrays[name] {
+			t.Fatalf("array-valued nodes = %v, want %v", arrays, want)
+		}
+	}
+}
