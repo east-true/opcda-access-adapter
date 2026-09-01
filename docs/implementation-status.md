@@ -27,8 +27,9 @@ against the source-built OPC Foundation fixture on both architectures. Only
 `SecurityMode` `None` is implemented and it is not production ready.
 
 **Three third-party UA clients now run against the frontend** — asyncua,
-open62541 and the OPC Foundation .NET stack, 401 checks in total, recorded in
-docs/compatibility.md. Three clients are not conformance and no conformance or
+open62541 and the OPC Foundation .NET stack, 425 checks in total, recorded in
+docs/compatibility.md. All three are gated in CI. Two of them were not, until
+gating open62541 found a stale assertion in it on the first run. Three clients are not conformance and no conformance or
 interoperability claim is made; ADR-0016 forbids describing this as certified or
 compliant. What they establish is narrower and worth having: two of the six
 defects they found came from the second and third client against a server the
@@ -52,6 +53,13 @@ This section used to pin a `main` SHA. It was forty-eight merges out of date
 before anyone noticed, because a recorded commit hash cannot stay true and
 nothing was going to keep updating it. `git rev-parse main` answers that
 question without rotting.
+
+The entries below record how many checks each pull request passed at the time
+it merged — seven early on, then eight. **The gate is ten today**: `quality`,
+`spec-check`, `interop`, `release-package`, and `windows-build`, `windows-test`
+and `OPC Foundation DA 2.05a` on each of 386 and amd64. Those historical counts
+are dated facts and are left alone; `gh pr checks` answers what a pull request
+faces now, which is the same reason no SHA is pinned above.
 
 ## Completed
 

@@ -125,8 +125,24 @@ jobs:
         with:
           go-version-file: go.mod
           cache: false
+      - name: Build the open62541 client library
+        # open62541 is the one client the runner cannot supply, so its
+        # assertions ran nowhere automatic while the other two were gated.
+        # That is the position the whole suite was in before it was added
+        # here, and it had gone nineteen pull requests failing on a stale
+        # assertion by then. The version is pinned to the one the
+        # compatibility table records.
+        run: |
+          git clone --quiet --depth 1 --branch v1.5.7 \
+            https://github.com/open62541/open62541.git "${{ runner.temp }}/open62541"
+          cmake -S "${{ runner.temp }}/open62541" -B "${{ runner.temp }}/open62541/build" \
+            -DCMAKE_BUILD_TYPE=Release -DUA_BUILD_EXAMPLES=OFF -DUA_ENABLE_AMALGAMATION=OFF
+          cmake --build "${{ runner.temp }}/open62541/build" --parallel
       - name: Third-party OPC UA client interoperability
-        # asyncua judges the UA frontend from outside. open62541 and the .NET
-        # stack skip here for want of their toolchains, which the runner
-        # reports rather than passing over; they stay runnable locally.
+        # All three clients judge the UA frontend from outside: the runner
+        # has Python and dotnet, and the step above builds open62541. The
+        # runner still reports a skip rather than passing over one silently,
+        # which is how the gap this step closes was found.
+        env:
+          INTEROP_O62_ROOT: ${{ runner.temp }}/open62541
         run: scripts/interop/run.sh

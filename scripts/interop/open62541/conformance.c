@@ -19,9 +19,11 @@
 #include <string.h>
 
 static int failures = 0;
+static int passes = 0;
 
 static void check(const char *name, int condition, const char *detail) {
     if(condition) {
+        passes++;
         printf("  PASS %s\n", name);
         return;
     }
@@ -260,12 +262,28 @@ static void checkServerObject(UA_Client *client) {
     }
     UA_Variant_clear(&value);
 
+    /* OPC 10000-5 8.3.2: index 0 is the OPC UA namespace and index 1 is
+     * reserved for the local Server, which is the ApplicationUri. The
+     * adapter's own namespace follows them, so the array is three entries.
+     * This asserted two until open62541 was gated: the reservation landed
+     * while this client was running nowhere, and the other two clients were
+     * corrected at the time because they were. */
     UA_Variant_init(&value);
     status = UA_Client_readValueAttribute(client, UA_NS0ID(SERVER_NAMESPACEARRAY), &value);
     int isArray = status == UA_STATUSCODE_GOOD &&
                   UA_Variant_hasArrayType(&value, &UA_TYPES[UA_TYPES_STRING]) &&
-                  value.arrayLength == 2;
-    check("the NamespaceArray is a two entry String array", isArray, "not an array of two");
+                  value.arrayLength >= 3;
+    check("the NamespaceArray holds the reserved two and the adapter's own",
+          isArray, "not an array of three or more");
+    if(isArray) {
+        UA_String *entries = (UA_String *)value.data;
+        UA_String ua = UA_STRING("http://opcfoundation.org/UA/");
+        UA_String app = UA_STRING(APPLICATION_URI);
+        check("namespace 0 is the OPC UA namespace",
+              UA_String_equal(&entries[0], &ua), "index 0 is not the UA namespace");
+        check("namespace 1 is the local server",
+              UA_String_equal(&entries[1], &app), "index 1 is not the ApplicationUri");
+    }
     UA_Variant_clear(&value);
 }
 
@@ -449,6 +467,6 @@ int main(int argc, char *argv[]) {
         printf("FAILED %d\n", failures);
         return 1;
     }
-    printf("ALL CHECKS PASSED\n");
+    printf("ALL CHECKS PASSED  open62541 checks=%d\n", passes);
     return 0;
 }

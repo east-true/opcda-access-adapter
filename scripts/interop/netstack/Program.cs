@@ -16,11 +16,13 @@ using Opc.Ua.Configuration;
 internal static class Program
 {
     private static int _failures;
+    private static int _passes;
 
     private static void Check(string name, bool condition, string? detail = null)
     {
         if (condition)
         {
+            _passes++;
             Console.WriteLine($"  PASS {name}");
             return;
         }
@@ -160,7 +162,7 @@ internal static class Program
             Console.WriteLine($"FAILED {_failures}");
             return 1;
         }
-        Console.WriteLine("ALL CHECKS PASSED");
+        Console.WriteLine($"ALL CHECKS PASSED  netstack checks={_passes}");
         return 0;
     }
 
