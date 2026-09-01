@@ -216,3 +216,97 @@ func TestReadingAStandardServerVariableDoesNotReachTheSource(t *testing.T) {
 		t.Fatal("a standard Server variable reached the DA source")
 	}
 }
+
+// OPC 10000-5 Table 10 makes these children of ServerCapabilities mandatory,
+// and Part 4 7.9 sends a client here for the continuation point limit. What is
+// published has to be what the services enforce: a limit a client reads and
+// then finds untrue is worse than one it could not read at all.
+func TestServerCapabilitiesPublishesTheLimitsInForce(t *testing.T) {
+	browse := DefaultBrowseLimits()
+	data := DefaultDataAccessLimits()
+	subscriptions := DefaultSubscriptionLimits()
+	config := AddressSpaceConfig{
+		NamespaceURI:     "urn:example:opcda-access-adapter",
+		SourceFolderName: "Source",
+	}
+	config.Limits = ServerLimits{
+		MinPublishingInterval:       subscriptions.MinPublishingInterval,
+		MaxBrowseContinuationPoints: browse.MaxContinuationPoints,
+		MaxNodesPerRead:             data.MaxNodesPerRead,
+		MaxNodesPerWrite:            data.MaxNodesPerWrite,
+		MaxNodesPerBrowse:           browse.MaxNodesPerBrowse,
+	}
+	space, err := NewAddressSpace(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	value := func(identifier uint32) any {
+		t.Helper()
+		node, ok := space.Node(NumericNodeID(0, identifier))
+		if !ok {
+			t.Fatalf("node %d is not in the address space", identifier)
+		}
+		if node.LocalValue == nil {
+			t.Fatalf("node %d has no value", identifier)
+		}
+		return node.LocalValue(time.Now().UTC()).Value
+	}
+
+	// Every published bound is the one the service was configured with.
+	for _, testCase := range []struct {
+		name       string
+		identifier uint32
+		want       any
+	}{
+		{"MinSupportedSampleRate", NodeIDServerCapabilitiesMinSampleRate,
+			float64(subscriptions.MinPublishingInterval / time.Millisecond)},
+		{"MaxBrowseContinuationPoints", NodeIDServerCapabilitiesMaxBrowseCP,
+			uint16(browse.MaxContinuationPoints)},
+		{"MaxNodesPerRead", NodeIDOperationLimitsMaxNodesPerRead, uint32(data.MaxNodesPerRead)},
+		{"MaxNodesPerWrite", NodeIDOperationLimitsMaxNodesPerWrite, uint32(data.MaxNodesPerWrite)},
+		{"MaxNodesPerBrowse", NodeIDOperationLimitsMaxNodesPerBrowse, uint32(browse.MaxNodesPerBrowse)},
+	} {
+		if got := value(testCase.identifier); got != testCase.want {
+			t.Errorf("%s publishes %#v, the service enforces %#v",
+				testCase.name, got, testCase.want)
+		}
+	}
+
+	// Query and HistoryRead are not implemented, so no continuation point for
+	// either is available.
+	for _, identifier := range []uint32{
+		NodeIDServerCapabilitiesMaxQueryCP, NodeIDServerCapabilitiesMaxHistoryCP,
+	} {
+		if got := value(identifier); got != uint16(0) {
+			t.Errorf("node %d publishes %#v for a service that is not implemented",
+				identifier, got)
+		}
+	}
+
+	// ADR-0016 forbids claiming a profile. An empty array says none is
+	// claimed, which is true; naming one would be the claim the ADR forbids.
+	profiles, ok := value(NodeIDServerCapabilitiesProfileArray).([]string)
+	if !ok || len(profiles) != 0 {
+		t.Fatalf("ServerProfileArray = %#v, want no profile claimed",
+			value(NodeIDServerCapabilitiesProfileArray))
+	}
+
+	// Table 10's two mandatory folders exist and are empty.
+	for _, identifier := range []uint32{
+		NodeIDServerCapabilitiesModellingRules, NodeIDServerCapabilitiesAggregateFunctions,
+	} {
+		node, present := space.Node(NumericNodeID(0, identifier))
+		if !present {
+			t.Fatalf("mandatory folder %d is missing", identifier)
+		}
+		if node.TypeDefinition.Numeric != NodeIDFolderType {
+			t.Fatalf("node %d is not a FolderType", identifier)
+		}
+		for _, reference := range node.References {
+			if reference.IsForward {
+				t.Fatalf("node %d has contents this server does not define", identifier)
+			}
+		}
+	}
+}

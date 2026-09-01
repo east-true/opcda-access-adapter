@@ -221,6 +221,15 @@ func NewListenerWithRuntime(config ListenerConfig, runtime opcda.Runtime, channe
 	if addressSpaceConfig.ProductName == "" {
 		addressSpaceConfig.ProductName = config.Endpoint.ApplicationName
 	}
+	// ServerCapabilities publishes what the services enforce, taken from the
+	// same configuration they are built from, so the two cannot drift.
+	addressSpaceConfig.Limits = ServerLimits{
+		MinPublishingInterval:       config.Subscriptions.MinPublishingInterval,
+		MaxBrowseContinuationPoints: config.Browse.MaxContinuationPoints,
+		MaxNodesPerRead:             config.DataAccess.MaxNodesPerRead,
+		MaxNodesPerWrite:            config.DataAccess.MaxNodesPerWrite,
+		MaxNodesPerBrowse:           config.Browse.MaxNodesPerBrowse,
+	}
 	space, err := NewAddressSpace(addressSpaceConfig)
 	if err != nil {
 		return nil, err

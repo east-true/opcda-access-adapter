@@ -29,6 +29,7 @@ suits their source should not have to find them scattered through the document.
 | A.3.1.4 | an array-valued property is exposed with `ValueRank` `OneOrMoreDimensions` | not exposed at all — it could be browsed and never read, and a property that cannot answer is worse than one that is absent |
 | Table A.3 | DA `LAST_KNOWN` → `Bad_OutOfService` | `Uncertain_NoCommunicationLastUsableValue`, because Table 61 says so and explains why: a Bad severity must return a Null value, which discards the last known value the quality exists to carry |
 | 5.2 | the `SemanticsChanged` bit is set when a semantic property changes | set when the adapter **observes** a change, which is when a property is read; a change nobody reads is not detected, and detecting every one means polling the source |
+| OPC 10000-5 Table 9 | `ServerType` makes `ServerDiagnostics`, `VendorServerInfo` and `ServerRedundancy` mandatory components of the Server Object | not published. The Server Object carries `ServerArray`, `NamespaceArray`, `ServerStatus`, `ServiceLevel`, `Auditing` and `ServerCapabilities`; the other three describe diagnostics this server does not collect, a vendor extension it does not define, and a redundancy model it does not implement |
 | OPC 10000-4 5.14.1.1 | on lifetime expiry the server "shall issue a StatusChangeNotification notificationMessage with the status code Bad_Timeout" | the subscription is deleted and its DA group released, but no notification is sent: expiry happens precisely because no Publish request was available to carry one |
 | OPC 10000-4 5.7.2.1 | subscriptions survive a session the server terminated, so they can be transferred | they are deleted with the session, because TransferSubscriptions is not implemented and a subscription nothing can reach would hold a DA group open indefinitely |
 | OPC 10000-4 5.13.2.1 | "if the access rights change to read rights, the Server shall start sending data for the MonitoredItem" | access rights are learned once and never revised, so an item that becomes readable stays silent until it is created again. The half of the clause that matters more — the create succeeding, with the status delivered through Publish — is met |
@@ -1308,6 +1309,37 @@ of Table 57, where it belongs, and again at the start of the body. Every unit
 test of the framing passed, because the encoder and decoder agreed with each
 other. It only surfaced when a client parsed a real frame off a socket, which is
 why this slice came before more service logic.
+
+## The limits a client can read instead of discovering
+
+Part 4 7.9 says a server "specif[ies] a maximum number of ContinuationPoints per
+Session in the ServerCapabilities Object defined in OPC 10000-5". This server
+enforces that limit and several others, and until now published none of them: a
+client learned each one by being refused.
+
+`ServerCapabilities` carries the children OPC 10000-5 Table 10 makes mandatory,
+and the values are taken from the same configuration the services are built
+from, so the two cannot drift. `MaxBrowseContinuationPoints` is the browse
+service's own per-session bound; `MinSupportedSampleRate` is the fastest
+publishing interval a subscription can be revised to; `OperationLimits` carries
+`MaxNodesPerRead`, `MaxNodesPerWrite` and `MaxNodesPerBrowse`.
+
+Three of the mandatory values say that something is absent rather than bounded.
+`MaxQueryContinuationPoints` and `MaxHistoryContinuationPoints` are zero because
+neither service exists here. `SoftwareCertificates` is empty, which is the same
+answer the endpoint gives.
+
+`ServerProfileArray` is **empty**, and deliberately. ADR-0016 forbids claiming a
+profile this project has not been certified against; an empty array says no
+profile is claimed, which is exactly true, while naming one would be the claim
+the ADR forbids.
+
+`ModellingRules` and `AggregateFunctions` are mandatory folders and both are
+empty: this server defines no modelling rules of its own and computes no
+aggregates.
+
+What is still missing from `ServerType` is recorded in the departures table:
+`ServerDiagnostics`, `VendorServerInfo` and `ServerRedundancy`.
 
 ## Root's three standard entry points
 

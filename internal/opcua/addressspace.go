@@ -240,6 +240,17 @@ func staticLocalValue(value Variant) func(time.Time) Variant {
 }
 
 // AddressSpaceConfig carries what the adapter cannot derive from the source.
+// ServerLimits are the operating bounds OPC 10000-5 Table 10 has a server
+// publish under ServerCapabilities. Part 4 7.9 sends a client here for the
+// continuation point limit; the rest are the same kind of promise.
+type ServerLimits struct {
+	MinPublishingInterval       time.Duration
+	MaxBrowseContinuationPoints int
+	MaxNodesPerRead             int
+	MaxNodesPerWrite            int
+	MaxNodesPerBrowse           int
+}
+
 type AddressSpaceConfig struct {
 	// NamespaceURI identifies this adapter's namespace and is kept stable
 	// across restarts. Design §35.2 forbids treating a namespace index as
@@ -254,6 +265,10 @@ type AddressSpaceConfig struct {
 	ApplicationURI string
 	// The remaining fields describe the adapter itself and are reported by the
 	// standard Server BuildInfo. None of them comes from the DA source.
+	// Limits are the bounds this server publishes under ServerCapabilities.
+	// They must be the bounds it actually enforces: a limit a client reads and
+	// then finds untrue is worse than one it could not read at all.
+	Limits           ServerLimits
 	ProductURI       string
 	ManufacturerName string
 	ProductName      string
@@ -399,6 +414,7 @@ func (s *AddressSpace) addStandardNodes() {
 
 	standard := []*Node{root, objects, types, views, source, server, serverArray, namespaceArray}
 	standard = append(standard, s.addServerStatusNodes(server)...)
+	standard = append(standard, s.addServerCapabilitiesNodes(server)...)
 	for _, node := range standard {
 		s.nodes[nodeKey(node.ID)] = node
 	}

@@ -1697,3 +1697,48 @@ func TestTheDispatchAnswersTheDocumentedServices(t *testing.T) {
 		}
 	}
 }
+
+// The listener is what fills ServerCapabilities from the configuration its
+// services are built from. A limit published here that the service does not
+// enforce would be a promise nothing keeps, so the two are compared through a
+// real listener rather than through a hand-built address space.
+func TestTheListenerPublishesTheLimitsItEnforces(t *testing.T) {
+	config := testListenerConfig()
+	// Values distinct from the defaults, so a hard-coded number cannot pass.
+	config.Browse.MaxNodesPerBrowse = 37
+	config.Browse.MaxContinuationPoints = 9
+	config.DataAccess.MaxNodesPerRead = 41
+	config.DataAccess.MaxNodesPerWrite = 13
+	config.Subscriptions.MinPublishingInterval = 250 * time.Millisecond
+
+	listener, err := NewListenerWithRuntime(config, &fuzzRuntime{}, 1000, 2000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	space := listener.AddressSpace()
+
+	value := func(identifier uint32) any {
+		t.Helper()
+		node, ok := space.Node(NumericNodeID(0, identifier))
+		if !ok {
+			t.Fatalf("node %d is not published", identifier)
+		}
+		return node.LocalValue(time.Now().UTC()).Value
+	}
+	for _, testCase := range []struct {
+		name       string
+		identifier uint32
+		want       any
+	}{
+		{"MaxNodesPerBrowse", NodeIDOperationLimitsMaxNodesPerBrowse, uint32(37)},
+		{"MaxBrowseContinuationPoints", NodeIDServerCapabilitiesMaxBrowseCP, uint16(9)},
+		{"MaxNodesPerRead", NodeIDOperationLimitsMaxNodesPerRead, uint32(41)},
+		{"MaxNodesPerWrite", NodeIDOperationLimitsMaxNodesPerWrite, uint32(13)},
+		{"MinSupportedSampleRate", NodeIDServerCapabilitiesMinSampleRate, float64(250)},
+	} {
+		if got := value(testCase.identifier); got != testCase.want {
+			t.Errorf("%s publishes %#v, the listener was configured with %#v",
+				testCase.name, got, testCase.want)
+		}
+	}
+}
