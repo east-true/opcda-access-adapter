@@ -55,14 +55,20 @@ func TestNamespaceArrayReportsTheConfiguredURI(t *testing.T) {
 		t.Fatalf("NamespaceArray value = %+v, want a String array", value)
 	}
 	uris, ok := value.Value.([]string)
-	if !ok || len(uris) != 2 {
+	if !ok || len(uris) != 3 {
 		t.Fatalf("namespace URIs = %#v", value.Value)
 	}
 	if uris[0] != "http://opcfoundation.org/UA/" {
 		t.Fatalf("namespace 0 = %q, want the OPC UA namespace", uris[0])
 	}
-	if uris[1] != "urn:example:opcda-access-adapter" {
-		t.Fatalf("namespace 1 = %q, want the configured URI", uris[1])
+	// 8.3.2 reserves index 1 for the local server and makes it the
+	// ApplicationUri; the adapter's own namespace follows it.
+	if uris[1] != "urn:example:opcda-access-adapter:server" {
+		t.Fatalf("namespace 1 = %q, want the ApplicationUri", uris[1])
+	}
+	if uris[AdapterNamespaceIndex] != "urn:example:opcda-access-adapter" {
+		t.Fatalf("namespace %d = %q, want the configured URI",
+			AdapterNamespaceIndex, uris[AdapterNamespaceIndex])
 	}
 }
 
@@ -93,6 +99,7 @@ func TestServerStatusCurrentTimeIsAnsweredAsOfTheRead(t *testing.T) {
 func TestServerStatusEncodesTheNodeSetFieldOrder(t *testing.T) {
 	space, err := NewAddressSpace(AddressSpaceConfig{
 		NamespaceURI:     "urn:example:opcda-access-adapter",
+		ApplicationURI:   "urn:example:opcda-access-adapter:server",
 		SourceFolderName: "Source",
 		ProductURI:       "urn:example:product",
 		ManufacturerName: "opcda-access-adapter",
@@ -227,6 +234,7 @@ func TestServerCapabilitiesPublishesTheLimitsInForce(t *testing.T) {
 	subscriptions := DefaultSubscriptionLimits()
 	config := AddressSpaceConfig{
 		NamespaceURI:     "urn:example:opcda-access-adapter",
+		ApplicationURI:   "urn:example:opcda-access-adapter:server",
 		SourceFolderName: "Source",
 	}
 	config.Limits = ServerLimits{

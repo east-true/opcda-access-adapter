@@ -1310,6 +1310,24 @@ test of the framing passed, because the encoder and decoder agreed with each
 other. It only surfaced when a client parsed a real frame off a socket, which is
 why this slice came before more service logic.
 
+## The namespace table's reserved entries
+
+OPC 10000-5 8.3.2 fixes the first two entries: "index 0 is reserved for the OPC
+UA namespace, and index 1 is reserved for the local Server", and "the
+ApplicationUri of an OPC UA Server shall be identical to the URI set in index 0
+of the ServerArray and index 1 of the NamespaceArray".
+
+So index 1 is the **ApplicationUri**, and this adapter's own namespace follows
+at index 2. The two URIs are configured separately on purpose: an ApplicationUri
+commonly names a host, while design §35.2 requires a namespace URI that stays
+stable across restarts, and the two do differ in practice — this project's own
+interop harness sets them to different values. Putting the stable one at index 1
+would have made it the server's identity as well.
+
+The ApplicationUri is therefore required to build an address space at all. It is
+this server's identity in two tables, and an absent one is a hole in both rather
+than a missing label.
+
 ## The limits a client can read instead of discovering
 
 Part 4 7.9 says a server "specif[ies] a maximum number of ContinuationPoints per
@@ -1675,7 +1693,11 @@ Design §35.2 governs this, and the mapping implements it literally:
   ItemID.
 - **BrowseName and DisplayName are what DA Browse returned**, unmodified.
 - The namespace **URI** is the durable name; the index is not treated as
-  identity.
+  identity. OPC 10000-5 8.3.2 reserves the first two entries of the namespace
+  table — "index 0 is reserved for the OPC UA namespace, and index 1 is reserved
+  for the local Server" — so this adapter's own nodes are at **index 2**. A
+  client resolves that index by looking its URI up in the table, which is the
+  same rule read from the other side.
 
 A nested branch keeps its full path, so two branches with the same name under
 different parents stay distinct nodes.

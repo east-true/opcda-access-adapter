@@ -29,15 +29,38 @@ def check(name, cond, detail=""):
 URL = sys.argv[1] if len(sys.argv) > 1 else "opc.tcp://127.0.0.1:48401"
 WRITE = "--write" in sys.argv
 BROWSELESS = "--browseless" in sys.argv
+# What internal/validation/uainterop configures. They are deliberately
+# different: an ApplicationUri names a deployment, a namespace URI has to stay
+# stable across restarts.
+APPLICATION_URI = "urn:opcda-access-adapter:uainterop"
+SOURCE_NAMESPACE_URI = "urn:opcda-access-adapter:uainterop:source"
+
+# Resolved from the server's namespace array at start-up. A client that hard
+# codes an index is doing what design §35.2 forbids -- treating the index as
+# identity rather than the URI -- and this one used to: it assumed 1, which was
+# right until OPC 10000-5 8.3.2 put the ApplicationUri there.
+ADAPTER_NS = None
 
 def nid(item_id):
-    return ua.NodeId(f"item:{item_id}", 1, ua.NodeIdType.String)
+    return ua.NodeId(f"item:{item_id}", ADAPTER_NS, ua.NodeIdType.String)
 
 async def main():
+    global ADAPTER_NS
     async with Client(url=URL) as c:
         ns = await c.get_namespace_array()
-        check("namespace array has the adapter URI",
-              len(ns) == 2 and ns[0] == "http://opcfoundation.org/UA/", str(ns))
+        # 8.3.2: "index 0 is reserved for the OPC UA namespace, and index 1 is
+        # reserved for the local Server", and the ApplicationUri is that entry.
+        check("namespace 0 is the OPC UA namespace",
+              len(ns) > 0 and ns[0] == "http://opcfoundation.org/UA/", str(ns))
+        check("namespace 1 is the local server",
+              len(ns) > 1 and ns[1] == APPLICATION_URI, str(ns))
+        check("the adapter's namespace follows the reserved two",
+              SOURCE_NAMESPACE_URI in ns and ns.index(SOURCE_NAMESPACE_URI) >= 2, str(ns))
+        if SOURCE_NAMESPACE_URI in ns:
+            ADAPTER_NS = ns.index(SOURCE_NAMESPACE_URI)
+        else:
+            print("  the adapter namespace is absent; nothing else can be addressed")
+            return 1
 
         # --- endpoints ---
         eps = await c.get_endpoints()

@@ -2,6 +2,7 @@ package opcua
 
 import (
 	"testing"
+	"time"
 
 	"github.com/east-true/opcda-access-adapter/internal/opcda"
 )
@@ -10,6 +11,7 @@ func testAddressSpace(t *testing.T) *AddressSpace {
 	t.Helper()
 	space, err := NewAddressSpace(AddressSpaceConfig{
 		NamespaceURI:     "urn:example:opcda-access-adapter",
+		ApplicationURI:   "urn:example:opcda-access-adapter:server",
 		SourceFolderName: "Source",
 	})
 	if err != nil {
@@ -121,20 +123,49 @@ func TestStandardNodesAreReachableFromRoot(t *testing.T) {
 	}
 }
 
-// The namespace table names the adapter's namespace by URI. Design §35.2
+// OPC 10000-5 8.3.2 fixes the first two entries of the namespace table: "index
+// 0 is reserved for the OPC UA namespace, and index 1 is reserved for the local
+// Server", and "the ApplicationUri of an OPC UA Server shall be identical to
+// the URI set in index 0 of the ServerArray and index 1 of the NamespaceArray".
+//
+// This adapter's own namespace therefore starts at index 2. Design §35.2
 // forbids treating an index as persistent identity, so the URI is the durable
-// name.
+// name either way.
 func TestNamespaceTable(t *testing.T) {
 	space := testAddressSpace(t)
 	uris := space.NamespaceURIs()
-	if len(uris) != 2 {
+	if len(uris) != 3 {
 		t.Fatalf("namespace table = %v", uris)
 	}
 	if uris[0] != "http://opcfoundation.org/UA/" {
 		t.Fatalf("index 0 = %q, want the OPC UA namespace", uris[0])
 	}
+	// Index 1 is the local server, and it is the ApplicationUri and not the
+	// adapter's own namespace: the two are configured separately and do differ.
+	if uris[1] != "urn:example:opcda-access-adapter:server" {
+		t.Fatalf("index 1 = %q, want the ApplicationUri", uris[1])
+	}
 	if uris[AdapterNamespaceIndex] != "urn:example:opcda-access-adapter" {
 		t.Fatalf("index %d = %q", AdapterNamespaceIndex, uris[AdapterNamespaceIndex])
+	}
+	if AdapterNamespaceIndex < 2 {
+		t.Fatalf("this adapter's namespace is at index %d, which 8.3.2 reserves",
+			AdapterNamespaceIndex)
+	}
+
+	// The same URI names this server in the server table, which is the other
+	// half of the rule.
+	server, ok := space.Node(NumericNodeID(0, NodeIDServerArray))
+	if !ok {
+		t.Fatal("ServerArray is missing")
+	}
+	servers, ok := server.LocalValue(time.Now().UTC()).Value.([]string)
+	if !ok || len(servers) == 0 {
+		t.Fatalf("ServerArray = %#v", server.LocalValue(time.Now().UTC()).Value)
+	}
+	if servers[0] != uris[1] {
+		t.Fatalf("ServerArray[0] = %q but NamespaceArray[1] = %q; 8.3.2 makes both "+
+			"the ApplicationUri", servers[0], uris[1])
 	}
 }
 
@@ -395,13 +426,15 @@ func TestDataTypeNodeIDResolution(t *testing.T) {
 }
 
 func TestAddressSpaceConfigValidation(t *testing.T) {
-	valid := AddressSpaceConfig{NamespaceURI: "urn:x", SourceFolderName: "Source"}
+	valid := AddressSpaceConfig{NamespaceURI: "urn:x", ApplicationURI: "urn:server",
+		SourceFolderName: "Source"}
 	if err := valid.ValidateForConfiguration(); err != nil {
 		t.Fatal(err)
 	}
 	for name, config := range map[string]AddressSpaceConfig{
-		"no namespace uri": {SourceFolderName: "Source"},
-		"no folder name":   {NamespaceURI: "urn:x"},
+		"no namespace uri":   {ApplicationURI: "urn:server", SourceFolderName: "Source"},
+		"no application uri": {NamespaceURI: "urn:x", SourceFolderName: "Source"},
+		"no folder name":     {NamespaceURI: "urn:x"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			if err := config.ValidateForConfiguration(); err == nil {

@@ -47,6 +47,7 @@ func testListenerConfig() ListenerConfig {
 	config.Endpoint = testEndpointConfig()
 	config.AddressSpace = AddressSpaceConfig{
 		NamespaceURI:     "urn:example:opcda-access-adapter",
+		ApplicationURI:   "urn:example:opcda-access-adapter:server",
 		SourceFolderName: "Source",
 	}
 	return config
