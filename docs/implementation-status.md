@@ -130,7 +130,7 @@ faces now, which is the same reason no SHA is pinned above.
   thread, explicit invalidation on disconnect/unsubscribe/shutdown with pending
   values discarded, explicit resubscribe with generation-scoped identifiers, and
   preserved per-item AddItems HRESULTs. A `subscribeprobe` real-DA harness and
-  ADR-0013 were merged with it. No frontend exposes Subscribe.
+  ADR-0013 were merged with it. No frontend exposed Subscribe yet.
 
 - DA-native unary gRPC Status/Browse/Read/Write, exact scalar widths, typed
   error layers, explicit frontend selection, aggregate HTTP/2 bounds,
@@ -664,8 +664,11 @@ faces now, which is the same reason no SHA is pinned above.
    source semantics. `docs/compatibility.md` lists the vendor variations to
    record, including a source without an `IOPCDataCallback` connection point and
    an unrecognized vendor disconnect HRESULT.
-6. Phase 7 is the DA callback/Subscribe core before any gRPC stream. Do not
-   start OPC UA first or infer a streaming contract from the unary frontend.
+6. Phases 7 and 8 are both complete, so the ordering this item used to
+   prescribe -- the DA callback core before any gRPC stream, and before OPC UA
+   -- has been carried out. What survives it is the reason it was written: a
+   streaming contract is not to be inferred from the unary frontend, and the DA
+   sampling model is carried rather than re-sampled.
 7. The Subscribe core is validated against the OPC Foundation fixture only.
    Treat vendor callback behavior as untested: a server may refuse connection
    points, revise update rates differently, or report Quality and timestamps
@@ -673,12 +676,12 @@ faces now, which is the same reason no SHA is pinned above.
 8. Three third-party UA clients are not conformance. CI runs
    `scripts/interop/run.sh` on every pull request now, because asking for it to
    be run by hand did not work: the suite failed for nineteen pull requests on
-   an assertion left behind by #105 before anyone ran it. Run it locally too
-   before any change to the UA wire format, since CI can only reach asyncua —
-   and keep
-   all three enabled where their toolchains exist — two of the six defects
-   found so far came from the second and third clients against a server the
-   first already passed. UA Expert stays untested until someone with an account
+   an assertion left behind by #105 before anyone ran it. All three clients
+   are gated there as of #153 — until then the runner reached two, and the
+   third had gone stale in exactly the same way, on a `NamespaceArray`
+   assertion from before index 1 was reserved. Keep all three gated: two of the
+   six defects found so far came from the second and third clients against a
+   server the first already passed. UA Expert stays untested until someone with an account
    runs it. Do not make an "OPC UA Certified" or "OPC UA Compliant" claim;
    ADR-0016 forbids it.
 9. The absent-session-nonce acceptance under `SecurityMode None` is a recorded
