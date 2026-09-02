@@ -1,6 +1,7 @@
 package app
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -114,6 +115,28 @@ func documentedKeys(t *testing.T) map[string]bool {
 // frontend documents its own settings; the shared DA runtime settings live in
 // the HTTP reference, which the other two point at.
 var referenceDocuments = []string{"http-api.md", "grpc-api.md", "opcua-mapping.md"}
+
+// A frontend the adapter serves has to be named where somebody would look for
+// it. The OPC UA frontend shipped, was validated, and was gated in CI while
+// README.md still listed "OPC UA, Subscribe/streaming" among the things that
+// are "deliberately out of the current scope", and the setup guide offered two
+// choices for a command that offers three. Nothing failed, because no check
+// reads prose against the set of frontends the code accepts.
+func TestEveryFrontendIsNamedWhereItIsChosen(t *testing.T) {
+	root := repositoryRoot(t)
+	for _, document := range []string{"README.md", filepath.Join("docs", "setup.md")} {
+		body, err := os.ReadFile(filepath.Join(root, document))
+		if err != nil {
+			t.Fatalf("read %s: %v", document, err)
+		}
+		for _, frontend := range []FrontendType{FrontendHTTP, FrontendGRPC, FrontendOPCUA} {
+			if !bytes.Contains(body, []byte(string(frontend))) {
+				t.Errorf("%s never names the %q frontend, which the adapter serves",
+					document, frontend)
+			}
+		}
+	}
+}
 
 // documentedDefaults reads the configuration table out of the reference.
 func documentedDefaults(t *testing.T) map[string]string {
