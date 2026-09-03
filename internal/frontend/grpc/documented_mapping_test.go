@@ -49,16 +49,10 @@ func TestDocumentedGRPCMappingMatchesTheFrontend(t *testing.T) {
 // arrive as, and flattens it to one entry per code.
 func documentedMapping(t *testing.T) map[string]string {
 	t.Helper()
-	body, err := os.ReadFile(filepath.Join(repositoryRootFromGRPCTest(t), "docs", "grpc-api.md"))
-	if err != nil {
-		t.Fatalf("read the gRPC reference: %v", err)
-	}
+	body := readNormalised(t, repositoryRootFromGRPCTest(t), "docs", "grpc-api.md")
 	row := regexp.MustCompile("(?m)^\\| `([A-Za-z]+)` \\| (.+) \\|$")
 	mapping := map[string]string{}
-	// A Windows checkout has CRLF line endings, and the row ends at "|\r"
-	// rather than at "|". Without this the table reads as empty on Windows and
-	// as complete everywhere else -- which is how it got here.
-	for _, match := range row.FindAllStringSubmatch(withoutCarriageReturns(body), -1) {
+	for _, match := range row.FindAllStringSubmatch(body, -1) {
 		grpcStatus := match[1]
 		// The default row lists codes that reach Unavailable by falling through
 		// rather than by being named, so it is not evidence about any of them.
@@ -77,11 +71,7 @@ func documentedMapping(t *testing.T) map[string]string {
 func codesTheSwitchNames(t *testing.T) []string {
 	t.Helper()
 	root := repositoryRootFromGRPCTest(t)
-	body, err := os.ReadFile(filepath.Join(root, "internal", "frontend", "grpc", "server.go"))
-	if err != nil {
-		t.Fatalf("read the gRPC frontend: %v", err)
-	}
-	source := string(body)
+	source := readNormalised(t, root, "internal", "frontend", "grpc", "server.go")
 	start := strings.Index(source, "func mapOperationError(")
 	if start < 0 {
 		t.Fatal("mapOperationError is gone; this test names it")
@@ -90,13 +80,9 @@ func codesTheSwitchNames(t *testing.T) []string {
 	if end < 0 {
 		t.Fatal("cannot find the end of mapOperationError")
 	}
-	body2, err := os.ReadFile(filepath.Join(root, "internal", "opcda", "errors.go"))
-	if err != nil {
-		t.Fatalf("read the error codes: %v", err)
-	}
 	byIdentifier := map[string]string{}
 	declaration := regexp.MustCompile(`(Code[A-Za-z0-9]+)\s+ErrorCode\s*=\s*"([A-Z0-9_]+)"`)
-	for _, match := range declaration.FindAllStringSubmatch(string(body2), -1) {
+	for _, match := range declaration.FindAllStringSubmatch(readNormalised(t, root, "internal", "opcda", "errors.go"), -1) {
 		byIdentifier[match[1]] = match[2]
 	}
 	var named []string
@@ -110,7 +96,17 @@ func codesTheSwitchNames(t *testing.T) []string {
 	return named
 }
 
-func withoutCarriageReturns(body []byte) string {
+// readNormalised is the only way this test reads a file. A Windows checkout
+// uses CRLF, and every pattern here -- a table row anchored to end of line, and
+// the "\n}\n" that ends a function -- silently matches nothing against it. The
+// first fix normalised the two documents and missed the Go source, so the
+// normalising belongs at the read rather than at each use.
+func readNormalised(t *testing.T, parts ...string) string {
+	t.Helper()
+	body, err := os.ReadFile(filepath.Join(parts...))
+	if err != nil {
+		t.Fatalf("read %s: %v", filepath.Join(parts...), err)
+	}
 	return strings.ReplaceAll(string(body), "\r\n", "\n")
 }
 
