@@ -8,6 +8,7 @@ import (
 	"regexp"
 	"runtime"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/east-true/opcda-access-adapter/internal/opcda"
@@ -106,13 +107,10 @@ func statusFromName(t *testing.T, name string) int {
 
 func documentedErrorRows(t *testing.T) map[string]int {
 	t.Helper()
-	body, err := os.ReadFile(filepath.Join(repositoryRootFromTest(t), "docs", "http-api.md"))
-	if err != nil {
-		t.Fatalf("read the HTTP reference: %v", err)
-	}
+	body := readNormalised(t, repositoryRootFromTest(t), "docs", "http-api.md")
 	row := regexp.MustCompile("(?m)^\\| `([A-Z][A-Z0-9_]+)` \\| (\\d{3}) \\|")
 	rows := map[string]int{}
-	for _, match := range row.FindAllStringSubmatch(string(body), -1) {
+	for _, match := range row.FindAllStringSubmatch(body, -1) {
 		status, err := strconv.Atoi(match[2])
 		if err != nil {
 			t.Fatalf("row %s has an unreadable status %q", match[1], match[2])
@@ -144,12 +142,9 @@ func errorCodeIdentifiers(t *testing.T) map[string]string {
 
 func errorCodeDeclarations(t *testing.T) [][]string {
 	t.Helper()
-	body, err := os.ReadFile(filepath.Join(repositoryRootFromTest(t), "internal", "opcda", "errors.go"))
-	if err != nil {
-		t.Fatalf("read the error codes: %v", err)
-	}
 	declaration := regexp.MustCompile(`(Code[A-Za-z0-9]+)\s+ErrorCode\s*=\s*"([A-Z0-9_]+)"`)
-	return declaration.FindAllStringSubmatch(string(body), -1)
+	return declaration.FindAllStringSubmatch(
+		readNormalised(t, repositoryRootFromTest(t), "internal", "opcda", "errors.go"), -1)
 }
 
 func frontendSource(t *testing.T) string {
@@ -163,14 +158,22 @@ func frontendSource(t *testing.T) string {
 	for _, entry := range entries {
 		name := entry.Name()
 		if !entry.IsDir() && filepath.Ext(name) == ".go" && !isTestFile(name) {
-			body, err := os.ReadFile(filepath.Join(directory, name))
-			if err != nil {
-				t.Fatalf("read %s: %v", name, err)
-			}
-			source += string(body)
+			source += readNormalised(t, directory, name)
 		}
 	}
 	return source
+}
+
+// readNormalised is the only way this test reads a file, for the reason given
+// on its twin in the gRPC package: a Windows checkout uses CRLF, and patterns
+// anchored to a line ending match nothing against it.
+func readNormalised(t *testing.T, parts ...string) string {
+	t.Helper()
+	body, err := os.ReadFile(filepath.Join(parts...))
+	if err != nil {
+		t.Fatalf("read %s: %v", filepath.Join(parts...), err)
+	}
+	return strings.ReplaceAll(string(body), "\r\n", "\n")
 }
 
 func isTestFile(name string) bool {

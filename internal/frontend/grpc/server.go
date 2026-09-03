@@ -736,7 +736,7 @@ func grpcOperationError(code codes.Code, layer, errorCode, message, operation st
 
 func mapOperationError(err error) error {
 	if sourceError, ok := opcda.AsSourceError(err); ok {
-		return grpcOperationError(codes.Unavailable, "source", "DA_METHOD_FAILED", sourceError.Operation+" failed", sourceError.Operation, encodeHRESULT(sourceError.HRESULT))
+		return grpcOperationError(codes.Unavailable, "source", string(opcda.CodeDAMethodFailed), sourceError.Operation+" failed", sourceError.Operation, encodeHRESULT(sourceError.HRESULT))
 	}
 	if adapterError, ok := opcda.AsAdapterError(err); ok {
 		code := codes.Unavailable
@@ -772,7 +772,7 @@ func mapOperationError(err error) error {
 	if errors.Is(err, context.Canceled) {
 		return grpcOperationError(codes.Canceled, "adapter", string(opcda.CodeRuntimeDeadline), "request canceled", "", nil)
 	}
-	return grpcOperationError(codes.Internal, "adapter", "INTERNAL_ERROR", "internal adapter error", "", nil)
+	return grpcOperationError(codes.Internal, "adapter", string(opcda.CodeInternalError), "internal adapter error", "", nil)
 }
 
 // AvailableItemProperties reports which OPC DA properties a source offers for

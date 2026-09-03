@@ -359,7 +359,7 @@ func specialFloat(value float64) string {
 func writeOperationError(w stdhttp.ResponseWriter, err error) {
 	if sourceError, ok := opcda.AsSourceError(err); ok {
 		hresult := sourceError.HRESULT.Representation()
-		writeLayerError(w, stdhttp.StatusServiceUnavailable, "source", "DA_METHOD_FAILED", sourceError.Operation+" failed", &hresult)
+		writeLayerError(w, stdhttp.StatusServiceUnavailable, "source", opcda.CodeDAMethodFailed, sourceError.Operation+" failed", &hresult)
 		return
 	}
 	if adapterError, ok := opcda.AsAdapterError(err); ok {
@@ -382,5 +382,5 @@ func writeOperationError(w stdhttp.ResponseWriter, err error) {
 		writeLayerError(w, stdhttp.StatusGatewayTimeout, "adapter", opcda.CodeRuntimeDeadline, "request deadline exceeded", nil)
 		return
 	}
-	writeLayerError(w, stdhttp.StatusInternalServerError, "adapter", "INTERNAL_ERROR", "internal adapter error", nil)
+	writeLayerError(w, stdhttp.StatusInternalServerError, "adapter", opcda.CodeInternalError, "internal adapter error", nil)
 }

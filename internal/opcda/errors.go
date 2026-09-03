@@ -5,6 +5,14 @@ import "errors"
 type ErrorCode string
 
 const (
+	// NOT_FOUND, INTERNAL_ERROR and DA_METHOD_FAILED reach a client exactly
+	// like the rest, but were written as string literals at their call sites
+	// rather than named here. Nothing that enumerates this block could see
+	// them, so the reference did not document them and the check that reads
+	// this block could not notice they were missing.
+	CodeNotFound                     ErrorCode = "NOT_FOUND"
+	CodeInternalError                ErrorCode = "INTERNAL_ERROR"
+	CodeDAMethodFailed               ErrorCode = "DA_METHOD_FAILED"
 	CodeInvalidRequest               ErrorCode = "INVALID_REQUEST"
 	CodeMethodNotAllowed             ErrorCode = "METHOD_NOT_ALLOWED"
 	CodeRequestBodyTooLarge          ErrorCode = "REQUEST_BODY_TOO_LARGE"
