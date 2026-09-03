@@ -102,9 +102,10 @@ x64/amd64. Each architecture passed, against the source-built OPC Foundation DA
   log.
 
 The security policy and transport profile URIs used in this run are
-placeholders. The known URIs are defined by OPC 10000-7, which this project has
-not transcribed, so the run asserts only that the server publishes exactly what
-it was configured with. **No third-party OPC UA client was involved**: the probe
+placeholders. The known URIs are published in the OPC Foundation profile
+database, which OPC 10000-7 clause 1 points to rather than listing, so nothing
+pinned here could check them and the run asserts only that the server publishes
+exactly what it was configured with. **No third-party OPC UA client was involved**: the probe
 uses this project's own codec, so this is evidence that the server is internally
 consistent and reaches the DA source, not that a real UA client interoperates
 with it. No conformance or interoperability claim is made.
@@ -320,14 +321,26 @@ independent third-party clients now run against the UA frontend over a scripted
 DA source — all as interop clients only, as design §5.2 permits, with nothing
 in the adapter linking against any of them:
 
-| Client | Version | Checks |
-| --- | --- | --- |
-| [asyncua](https://github.com/FreeOpcUa/opcua-asyncio) (Python) | 1.1.x | 142 |
-| [open62541](https://github.com/open62541/open62541) (C) | 1.5.7 | 128 |
-| [OPC Foundation .NET stack](https://github.com/OPCFoundation/UA-.NETStandard) | 1.5.378.156 | 131 |
+| Client | Version | Checks | Runs in CI |
+| --- | --- | --- | --- |
+| [asyncua](https://github.com/FreeOpcUa/opcua-asyncio) (Python) | 1.1.x | 148 | yes |
+| [open62541](https://github.com/open62541/open62541) (C) | 1.5.7 | 137 | yes |
+| [OPC Foundation .NET stack](https://github.com/OPCFoundation/UA-.NETStandard) | 1.5.378.156 | 140 | yes |
 
 See [docs/validation/ua-client-interop.md](validation/ua-client-interop.md) for
-what they check and `scripts/interop/run.sh` to run them.
+what they check and `scripts/interop/run.sh` to run them. Each client reports
+its own count, so these are read off a run rather than counted by hand — which
+is why they had drifted: this table said 142/128/131, and none of the three was
+still true.
+
+All three are gated now. Until they were, only two were: `run.sh` skips a client
+whose toolchain is absent rather than failing, which is right for a developer
+running one of them, and the runner had Python and dotnet but no open62541
+build. Gating it found a stale assertion on its first run — a two entry
+`NamespaceArray`, from before index 1 was reserved for the local server. The
+other two clients were corrected when that reservation landed, because they ran.
+That is the same failure the interop job was added to CI to prevent, recurring
+for the one client the job did not reach.
 
 Together they found six defects the Go suite could not see. Four came from
 asyncua: an `OpenSecureChannel` reply naming no security policy, so **no

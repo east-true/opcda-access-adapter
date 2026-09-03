@@ -22,9 +22,12 @@ import asyncio, sys, datetime
 from asyncua import Client, ua
 
 FAILS = []
+PASSES = 0
 def check(name, cond, detail=""):
+    global PASSES
     print(("  PASS " if cond else "  FAIL ") + name + (f"  [{detail}]" if detail and not cond else ""))
-    if not cond: FAILS.append(f"{name}: {detail}")
+    if cond: PASSES += 1
+    else: FAILS.append(f"{name}: {detail}")
 
 URL = sys.argv[1] if len(sys.argv) > 1 else "opc.tcp://127.0.0.1:48401"
 WRITE = "--write" in sys.argv
@@ -236,6 +239,6 @@ async def main():
         print(f"FAILED {len(FAILS)}")
         for f in FAILS: print("  -", f)
         sys.exit(1)
-    print("ALL CHECKS PASSED")
+    print(f"ALL CHECKS PASSED  asyncua checks={PASSES}")
 
 asyncio.run(main())

@@ -1,6 +1,7 @@
 package app
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -51,14 +52,100 @@ func TestDocumentedDefaultsAreTheRealDefaults(t *testing.T) {
 	}
 }
 
+// The test above proves every documented key is real. Nothing proved the other
+// direction, and ten keys had accumulated on the unchecked side: the OPC UA
+// frontend's whole environment surface -- five of whose settings are required,
+// so the frontend refuses to start without them -- plus both subscription
+// bounds. A setting an operator cannot find is not configurable in any sense
+// that matters, and the gap was invisible precisely because a check that only
+// walks the documentation can never see what the documentation omits.
+func TestEveryEnvironmentVariableIsDocumented(t *testing.T) {
+	read := environmentVariablesRead(t)
+	if len(read) < 40 {
+		t.Fatalf("only %d environment variables were found in the loader; it moved", len(read))
+	}
+	documented := documentedKeys(t)
+	for _, key := range read {
+		if _, ok := documented[key]; !ok {
+			t.Errorf("%s is read by the configuration loader but no reference documents it", key)
+		}
+	}
+}
+
+// environmentVariablesRead is every OPCDA_ name the loader looks up, read from
+// its source rather than from a list that would have to be kept in step.
+func environmentVariablesRead(t *testing.T) []string {
+	t.Helper()
+	body, err := os.ReadFile(filepath.Join(repositoryRoot(t), "internal", "app", "config.go"))
+	if err != nil {
+		t.Fatalf("read the configuration loader: %v", err)
+	}
+	seen := map[string]bool{}
+	var keys []string
+	for _, match := range regexp.MustCompile(`"(OPCDA_[A-Z0-9_]+)"`).FindAllStringSubmatch(string(body), -1) {
+		if !seen[match[1]] {
+			seen[match[1]] = true
+			keys = append(keys, match[1])
+		}
+	}
+	return keys
+}
+
+// documentedKeys is every key named in a configuration table row of a
+// reference. A row is the standard: prose can mention a variable while leaving
+// an operator no way to see its default or that it exists at all.
+func documentedKeys(t *testing.T) map[string]bool {
+	t.Helper()
+	root := repositoryRoot(t)
+	row := regexp.MustCompile("(?m)^\\| `(OPCDA_[A-Z0-9_]+)` \\|")
+	keys := map[string]bool{}
+	for _, reference := range referenceDocuments {
+		body, err := os.ReadFile(filepath.Join(root, "docs", reference))
+		if err != nil {
+			t.Fatalf("read %s: %v", reference, err)
+		}
+		for _, match := range row.FindAllStringSubmatch(string(body), -1) {
+			keys[match[1]] = true
+		}
+	}
+	return keys
+}
+
+// referenceDocuments are the documents that carry configuration tables. Each
+// frontend documents its own settings; the shared DA runtime settings live in
+// the HTTP reference, which the other two point at.
+var referenceDocuments = []string{"http-api.md", "grpc-api.md", "opcua-mapping.md"}
+
+// A frontend the adapter serves has to be named where somebody would look for
+// it. The OPC UA frontend shipped, was validated, and was gated in CI while
+// README.md still listed "OPC UA, Subscribe/streaming" among the things that
+// are "deliberately out of the current scope", and the setup guide offered two
+// choices for a command that offers three. Nothing failed, because no check
+// reads prose against the set of frontends the code accepts.
+func TestEveryFrontendIsNamedWhereItIsChosen(t *testing.T) {
+	root := repositoryRoot(t)
+	for _, document := range []string{"README.md", filepath.Join("docs", "setup.md")} {
+		body, err := os.ReadFile(filepath.Join(root, document))
+		if err != nil {
+			t.Fatalf("read %s: %v", document, err)
+		}
+		for _, frontend := range []FrontendType{FrontendHTTP, FrontendGRPC, FrontendOPCUA} {
+			if !bytes.Contains(body, []byte(string(frontend))) {
+				t.Errorf("%s never names the %q frontend, which the adapter serves",
+					document, frontend)
+			}
+		}
+	}
+}
+
 // documentedDefaults reads the configuration table out of the reference.
 func documentedDefaults(t *testing.T) map[string]string {
 	t.Helper()
 	root := repositoryRoot(t)
-	row := regexp.MustCompile("(?m)^\\| `(OPCDA_[A-Z_]+)` \\| `([^`]+)` \\|")
+	row := regexp.MustCompile("(?m)^\\| `(OPCDA_[A-Z0-9_]+)` \\| `([^`]+)` \\|")
 	defaults := map[string]string{}
-	// Both API references document configuration, and either can drift.
-	for _, reference := range []string{"http-api.md", "grpc-api.md"} {
+	// Every reference documents configuration, and any of them can drift.
+	for _, reference := range referenceDocuments {
 		body, err := os.ReadFile(filepath.Join(root, "docs", reference))
 		if err != nil {
 			t.Fatalf("read %s: %v", reference, err)

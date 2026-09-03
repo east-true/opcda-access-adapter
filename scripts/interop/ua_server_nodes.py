@@ -11,9 +11,12 @@ Usage:
 import asyncio, sys
 from asyncua import Client, ua
 FAILS=[]
+PASSES=0
 def check(n,c,d=""):
+    global PASSES
     print(("  PASS " if c else "  FAIL ")+n+(f"  [{d}]" if d and not c else ""))
-    if not c: FAILS.append(n)
+    if c: PASSES += 1
+    else: FAILS.append(n)
 async def main():
     async with Client(url=sys.argv[1]) as c:
         st = await c.nodes.server_state.read_value()
@@ -41,5 +44,5 @@ async def main():
     print()
     if FAILS:
         print("FAILED:", FAILS); sys.exit(1)
-    print("ALL CHECKS PASSED")
+    print(f"ALL CHECKS PASSED  asyncua checks={PASSES}")
 asyncio.run(main())

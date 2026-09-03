@@ -363,11 +363,13 @@ func (d *Decoder) ReadGetEndpointsResponse() (GetEndpointsResponse, error) {
 
 // EndpointConfig describes the one endpoint this adapter publishes.
 //
-// SecurityPolicyURI is required and is not defaulted. The set of known URIs is
-// defined by OPC 10000-7, which this project has not been able to obtain in a
-// transcribable form, so the value is supplied by configuration rather than
-// guessed from recollection. A server that published a wrong policy URI would
-// be unusable by a real client, which is exactly why it is not invented here.
+// SecurityPolicyURI is required and is not defaulted. OPC 10000-7 governs
+// profiles and does not list the URIs: its clause 1 says "the actual Profiles
+// are maintained in an online database and accessible via
+// https://profiles.opcfoundation.org/", and no other part carries them. With no
+// pinned document to check a transcription against, the value is supplied by
+// configuration rather than guessed from recollection -- a server that
+// published a wrong policy URI would be unusable by a real client.
 type EndpointConfig struct {
 	EndpointURL         string
 	ApplicationURI      string
@@ -388,7 +390,9 @@ func (config EndpointConfig) validate() error {
 		return fmt.Errorf("an application URI is required")
 	}
 	if config.SecurityPolicyURI == "" {
-		return fmt.Errorf("a security policy URI is required; the known URIs are defined by OPC 10000-7")
+		return fmt.Errorf("a security policy URI is required; the known URIs are published " +
+			"at https://profiles.opcfoundation.org/, which OPC 10000-7 clause 1 points to " +
+			"rather than listing")
 	}
 	if len(config.SecurityPolicyURI) > MaxSecurityPolicyURIBytes {
 		return fmt.Errorf("the security policy URI must not exceed %d bytes", MaxSecurityPolicyURIBytes)

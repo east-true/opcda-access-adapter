@@ -33,7 +33,7 @@ suits their source should not have to find them scattered through the document.
 | OPC 10000-4 5.14.1.1 | on lifetime expiry the server "shall issue a StatusChangeNotification notificationMessage with the status code Bad_Timeout" | the subscription is deleted and its DA group released, but no notification is sent: expiry happens precisely because no Publish request was available to carry one |
 | OPC 10000-4 5.7.2.1 | subscriptions survive a session the server terminated, so they can be transferred | they are deleted with the session, because TransferSubscriptions is not implemented and a subscription nothing can reach would hold a DA group open indefinitely |
 | OPC 10000-4 5.13.2.1 | "if the access rights change to read rights, the Server shall start sending data for the MonitoredItem" | access rights are learned once and never revised, so an item that becomes readable stays silent until it is created again. The half of the clause that matters more — the create succeeding, with the status delivered through Publish — is met |
-| OPC 10000-4 Table 47 | a `maxAge` of max Int32 or greater "shall attempt to get a cached value" | every Read goes to the device — the adapter maintains no cache (its DA group is inactive, and the design forbids serving cached values), and a fresh value satisfies any staleness bound a client can ask for. The cost is source load, never correctness |
+| OPC 10000-4 Table 47 | a `maxAge` of max Int32 or greater "shall attempt to get a cached value" | every Read goes to the device. The DA group is created inactive, so the source keeps no cache for it, and design §16.2 makes device the v0 default "for correctness". A fresh value satisfies any staleness bound a client can ask for, so the cost is source load and never correctness. §16.2 permits exposing the DA cache source later, so this is a v0 choice rather than a closed question |
 | 5.4 | a DataItem is never "defined by itself" | an item addressed without being browsed has no parent, because the adapter does not know where it sits in the source's hierarchy and inventing a place would point clients at the wrong one |
 
 `scripts/spec-check/check.py` carries the Table A.3 row as a recorded deviation:
@@ -932,14 +932,19 @@ which is what every Read here does.
 
 **A `maxAge` of max Int32 or greater "shall attempt to get a cached value"**, and
 this adapter reads from the device anyway. It has no cache to offer: its DA group
-is created inactive, so the source maintains nothing for it, and design forbids
-the adapter serving cached values at all. Serving that rule would mean activating
-the group, which makes the source push updates for every item ever read — load an
-operator did not ask for.
+is created inactive, so the source maintains nothing for it, and design §16.2
+makes `device` the v0 default "for correctness". Serving that rule would mean
+activating the group, which makes the source push updates for every item ever
+read — load an operator did not ask for.
 
 Nothing is misreported by this. `maxAge` bounds how **stale** a value may be, and
 a value read now is within any bound. The client receives something fresher than
 it asked for, and the source does more work than it needed to.
+
+This is a v0 choice and not a closed question. §16.2 permits representing the DA
+`cache` source and says that exposing it later "scope 위반이 아니다" — what INV-6
+forbids is a persistent value store, which is a different thing from the source's
+own cache. A later version that exposed `cache` could meet this rule as written.
 
 ## Timestamps
 
@@ -1191,16 +1196,18 @@ one** per chunk, and a wrap is accepted only where the selected rule set allows
 it — above `UInt32.MaxValue - 1024` and back below 1024 for the legacy rules, or
 at `UInt32.MaxValue` and back to 0 for the zero-based rules.
 
-Which rule set applies is a property of the SecurityPolicy, assigned by OPC
-10000-7. That specification is **not** transcribed here, so the rule set is a
-parameter the caller supplies rather than a value assumed for any policy.
+Which rule set applies is a property of the SecurityPolicy. OPC 10000-7 governs
+profiles and does not list the per-policy assignment: its clause 1 puts the
+profiles in an online database. So the rule set is a parameter the caller
+supplies rather than a value assumed for any policy.
 
 ### What is deliberately not bound yet
 
 For the same reason, the `SecurityPolicy` URI strings are not hardcoded. The
 framing layer treats `SecurityPolicyUri` as a length-validated opaque string,
 which is all Table 58 requires of it. Binding the URI belongs with endpoint
-description and `GetEndpoints`, where it can be checked against OPC 10000-7.
+description and `GetEndpoints`, where an operator supplies it from the profile
+database — there is no pinned document to check it against.
 
 Only `SecurityMode` `None` is implemented, and `RequireSupportedSecurityMode`
 refuses `Sign` and `SignAndEncrypt` with `Bad_SecurityModeRejected` rather than
@@ -1490,12 +1497,27 @@ endpoint.
 
 ### The security policy URI is configuration, not a constant
 
-`EndpointConfig.SecurityPolicyURI` is **required and never defaulted**. The set
-of known URIs is defined by **OPC 10000-7**, which this project has not been
-able to obtain in a transcribable form. A server that published a wrong policy
-URI would be unusable by a real client, which is precisely why the value is
-supplied by configuration rather than written from recollection. The same
-applies to the transport profile URI.
+`EndpointConfig.SecurityPolicyURI` is **required and never defaulted**, and the
+same applies to the transport profile URI.
+
+Neither can be transcribed the way every other constant here is. OPC 10000-7 is
+the specification that governs profiles, and it does not list them: its clause 1
+says "the actual Profiles are maintained in an online database and accessible
+via https://profiles.opcfoundation.org/". Nothing in Parts 3, 4, 5 or 6 carries
+either URI either, so there is no pinned document to check a transcription
+against — which is exactly the condition under which this project does not write
+a constant from recollection.
+
+A server that published a wrong policy URI would be unusable by a real client,
+so the value is supplied by configuration and an operator takes it from the
+profile database rather than from a specification PDF.
+
+What the server does **not** do is verify it. The security mode is fixed to
+`None` in code and cannot be misconfigured, but the policy URI is advertised
+verbatim: an operator who typed the URI of a signing policy would publish an
+endpoint naming it, alongside the `None` mode that contradicts it. Checking that
+would mean hard-coding the one URI this adapter implements, from a source that
+cannot be pinned, and the endpoint's mode is the field a client acts on.
 
 ## Concurrency
 
@@ -2046,9 +2068,39 @@ The endpoint settings have **no defaults**:
 
 | Setting | Why it is not defaulted |
 |---|---|
-| `securityPolicyUri` | Defined by OPC 10000-7. A wrong URI makes the server unusable by a real client. |
+| `securityPolicyUri` | From the OPC Foundation profile database, which OPC 10000-7 clause 1 points to rather than listing. A wrong URI makes the server unusable by a real client, and the server does not verify it. |
 | `transportProfileUri` | Same. |
 | `endpointUrl`, `applicationUri`, `namespaceUri` | These identify a deployment, and the namespace URI must stay stable across restarts because design §35.2 forbids treating a namespace index as identity. |
+
+### Configuration
+
+The no-argument startup path reads these. They are the same settings guided
+setup writes into a file, under their environment names:
+
+| Environment variable | Default | Purpose |
+|---|---:|---|
+| `OPCDA_OPCUA_LISTEN` | `127.0.0.1:4840` | OPC UA bind address |
+| `OPCDA_OPCUA_ENDPOINT_URL` | *required* | endpoint URL published to clients |
+| `OPCDA_OPCUA_APPLICATION_URI` | *required* | application identity, stable across restarts |
+| `OPCDA_OPCUA_NAMESPACE_URI` | *required* | this adapter's namespace, stable across restarts |
+| `OPCDA_OPCUA_SECURITY_POLICY_URI` | *required* | SecurityPolicy URI |
+| `OPCDA_OPCUA_TRANSPORT_PROFILE_URI` | *required* | transport profile URI |
+| `OPCDA_OPCUA_SOURCE_FOLDER` | `Source` | folder name for the DA source |
+| `OPCDA_OPCUA_PRODUCT_URI` | empty | product identity in the endpoint description |
+| `OPCDA_OPCUA_APPLICATION_NAME` | empty | display name in the endpoint description |
+
+`OPCDA_FRONTEND=opcua` selects the frontend. The DA batch, Browse, ItemID,
+BSTR, queue, reconnect and watchdog variables are shared with the other
+frontends and are documented in the [HTTP reference](http-api.md#configuration);
+the per-session and per-operation bounds a UA client meets are the ones
+published in `ServerCapabilities` above, which are fixed rather than configured.
+
+The five *required* settings have no default for the reason the table in the
+previous section gives: a guessed value would make the server unusable by a
+real client rather than merely misconfigured. `OPCDA_OPCUA_PRODUCT_URI` and
+`OPCDA_OPCUA_APPLICATION_NAME` are the two that stay empty rather than being
+invented — an empty display name is honest, and a wrong one is not. Neither has
+a setup flag; both are environment-only.
 
 Guided setup lists OPC UA as a third frontend and labels it plainly:
 `SecurityPolicy None; local interoperability only, not production ready`. The

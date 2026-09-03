@@ -72,7 +72,8 @@ Phase 7 adds a DA-native Subscribe core plus its gRPC frontend: one
 subscription is one DA group advised through `IOPCDataCallback`, exposed as a
 server-streaming `Subscribe` RPC. The core is validated against the OPC
 Foundation DA 2.05a fixture on both architectures. HTTP exposes no Subscribe,
-and HTTP streaming, SSE, and WebSocket remain out of scope. OPC UA,
-UI, storage, and all non-DA sources remain out of scope. Local CLI detection is
-registration inventory only and does not alter the single explicitly configured
-runtime source.
+and HTTP streaming, SSE, and WebSocket remain out of scope. UI, storage, and
+all non-DA sources remain out of scope, as does any OPC UA `SecurityMode` other
+than `None` -- the frontend described above is the whole of what is in scope
+for UA. Local CLI detection is registration inventory only and does not alter
+the single explicitly configured runtime source.

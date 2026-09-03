@@ -39,6 +39,18 @@ func TestItemPropertyRequestsAreBoundedBeforeReachingTheSource(t *testing.T) {
 		{"the item value", ItemPropertiesRequest{ItemID: "Test/Float", Properties: []PropertyID{PropertyValue}}, CodeInvalidRequest},
 		{"the item quality", ItemPropertiesRequest{ItemID: "Test/Float", Properties: []PropertyID{PropertyQuality}}, CodeInvalidRequest},
 		{"the item timestamp", ItemPropertiesRequest{ItemID: "Test/Float", Properties: []PropertyID{PropertyTimestamp}}, CodeInvalidRequest},
+		// The refusal is the whole request's, not one property's, so it does
+		// not depend on the value sitting alone or arriving first. Both
+		// references now say so, and a check that only ever asked for one
+		// property could not tell a scan of the list from a look at its head.
+		{"the item value after a valid property", ItemPropertiesRequest{
+			ItemID:     "Test/Float",
+			Properties: []PropertyID{PropertyEUUnits, PropertyValue},
+		}, CodeInvalidRequest},
+		{"the item quality among valid properties", ItemPropertiesRequest{
+			ItemID:     "Test/Float",
+			Properties: []PropertyID{PropertyEUUnits, PropertyQuality, PropertyEUUnits},
+		}, CodeInvalidRequest},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
 			_, err := runtime.ItemProperties(ctx, testCase.request)

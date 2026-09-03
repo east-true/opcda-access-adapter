@@ -10,7 +10,7 @@ inventory into one reviewed adapter configuration:
 It asks for:
 
 1. one locally registered OPC DA 2.0 source;
-2. one frontend (`HTTP/JSON` or DA-native gRPC);
+2. one frontend (`HTTP/JSON`, DA-native gRPC, or OPC UA);
 3. foreground, Windows Service, or save-only execution;
 4. final confirmation.
 
@@ -23,6 +23,7 @@ enumeration does not activate or probe the vendor server.
 - configuration: `opcda-access-adapter.json` in the current directory;
 - HTTP listener: `127.0.0.1:8080`;
 - gRPC listener: `127.0.0.1:50051` when gRPC is selected;
+- OPC UA listener: `127.0.0.1:4840` when OPC UA is selected;
 - typed value Write: disabled;
 - Windows Service name: `OPCDAAccessAdapter`;
 - service account: `NT AUTHORITY\LocalService`.
@@ -36,6 +37,47 @@ Change the reversible setup defaults explicitly when required:
   --grpc-listen 127.0.0.1:50051 `
   --service-name OPCDAAccessAdapter_LineA
 ```
+
+### Selecting OPC UA
+
+OPC UA is the third choice. Setup labels it
+`SecurityPolicy None; local interoperability only, not production ready`, and
+the review screen repeats that the mode is None — no signing, no encryption,
+anonymous users — before anything is written. ADR-0016 requires that language.
+
+Five of its settings have **no default** and setup refuses without them, because
+a server that published a guessed value would be unusable by a real client
+rather than merely misconfigured:
+
+```powershell
+.\opcda-access-adapter.exe setup `
+  --opcua-listen 127.0.0.1:4840 `
+  --opcua-endpoint-url opc.tcp://host.example:4840/ `
+  --opcua-application-uri urn:host.example:opcda-access-adapter `
+  --opcua-namespace-uri urn:host.example:opcda-access-adapter:source `
+  --opcua-security-policy-uri <from profiles.opcfoundation.org> `
+  --opcua-transport-profile-uri <from profiles.opcfoundation.org>
+```
+
+| Flag | Default | Purpose |
+|---|---:|---|
+| `--opcua-listen` | `127.0.0.1:4840` | OPC UA bind address |
+| `--opcua-endpoint-url` | *required* | endpoint URL published to clients |
+| `--opcua-application-uri` | *required* | application identity, stable across restarts |
+| `--opcua-namespace-uri` | *required* | this adapter's namespace, stable across restarts |
+| `--opcua-security-policy-uri` | *required* | SecurityPolicy URI |
+| `--opcua-transport-profile-uri` | *required* | transport profile URI |
+| `--opcua-source-folder` | `Source` | folder name for the DA source |
+
+The two profile URIs are not defaulted because OPC 10000-7 does not list them:
+its clause 1 points to the online database at
+<https://profiles.opcfoundation.org/> instead. There is no pinned document to
+check a transcription against, so the operator supplies them. The namespace URI
+must stay stable across restarts — design §35.2 forbids treating a namespace
+index as identity.
+
+[`docs/opcua-mapping.md`](opcua-mapping.md#configuration) documents the
+equivalent environment variables for the no-argument startup path.
 
 `--enable-write` is deliberately separate and visible in the confirmation.
 The adapter still performs strict typed value-only Write with no automatic
@@ -53,7 +95,7 @@ state.
 
 ```json
 {
-  "version": 2,
+  "version": 3,
   "source": {
     "clsid": "{00000000-0000-0000-0000-000000000000}"
   },
@@ -74,9 +116,29 @@ For gRPC, the frontend object is instead:
 }
 ```
 
-Existing version 1 HTTP configuration remains readable. Version 2 keeps the
-selected frontend unambiguous: an HTTP config has only `httpListen`, and a gRPC
-config has only `grpcListen`.
+For OPC UA it carries the endpoint settings as well:
+
+```json
+"frontend": {
+  "type": "opcua",
+  "opcuaListen": "127.0.0.1:4840",
+  "opcua": {
+    "endpointUrl": "opc.tcp://host.example:4840/",
+    "applicationUri": "urn:host.example:opcda-access-adapter",
+    "namespaceUri": "urn:host.example:opcda-access-adapter:source",
+    "securityPolicyUri": "...",
+    "transportProfileUri": "...",
+    "sourceFolderName": "Source"
+  }
+}
+```
+
+Setup writes **version 3**. Versions 1 and 2 remain readable, so an installed
+adapter keeps running after an upgrade. Each version keeps the selected
+frontend unambiguous: an HTTP config has only `httpListen`, a gRPC config only
+`grpcListen`, and an OPC UA config only `opcuaListen` plus its `opcua` object.
+A file below version 3 that names the OPC UA frontend is refused rather than
+half-understood, and a non-UA frontend may not carry OPC UA settings.
 
 Unknown or duplicate fields, multiple JSON values, unsupported versions,
 invalid listener/bounds, and zero or multiple sources fail closed. Environment

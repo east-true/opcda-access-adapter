@@ -163,10 +163,15 @@ text, VARTYPEs and HRESULTs are reported and mapped onto nothing. OPC 10000-8
 Table A.1 is applied by the OPC UA frontend, not here.
 
 A per-property HRESULT is a result rather than a failure: the request succeeds
-and a refused property carries its exact HRESULT with no substituted value. The
-item's value, quality and timestamp are properties 2, 3 and 4 and are refused,
-because Read and Subscribe deliver a value with its timestamp and raw quality
-together.
+and a refused property carries its exact HRESULT with no substituted value.
+
+The item's value, quality and timestamp are properties 2, 3 and 4, and naming
+any of them is **not** a refusal of that kind. It fails the whole call with
+`InvalidArgument` and `INVALID_REQUEST`, even alongside valid identifiers and
+wherever in the list it appears: a source declining a property is a result, but
+asking this method for a value is a mistake in the request. Read and Subscribe
+deliver a value with its timestamp and raw quality together, and answering the
+same question a second way without them could produce a different answer.
 
 A source that does not implement `IOPCItemProperties` reports
 `capabilities.properties` as `unsupported` and answers `Unimplemented` with
@@ -174,18 +179,19 @@ A source that does not implement `IOPCItemProperties` reports
 
 ## Configuration
 
-Guided setup lists HTTP/JSON and gRPC and requires an explicit choice:
+Guided setup lists HTTP/JSON, gRPC and OPC UA, and requires an explicit
+choice:
 
 ```powershell
 .\opcda-access-adapter.exe setup --grpc-listen 127.0.0.1:50051
 ```
 
 Select `gRPC`, then foreground, Windows Service, or save only. New setup files
-use strict configuration version 2:
+use strict configuration version 3:
 
 ```json
 {
-  "version": 2,
+  "version": 3,
   "source": {
     "clsid": "{00000000-0000-0000-0000-000000000000}"
   },
@@ -197,14 +203,15 @@ use strict configuration version 2:
 }
 ```
 
-Version 1 HTTP files remain readable. A gRPC configuration contains no HTTP
-listener and a single adapter process still owns one runtime and one source.
+Versions 1 and 2 remain readable. A gRPC configuration contains no HTTP or
+OPC UA listener and a single adapter process still owns one runtime and one
+source.
 
 The original environment workflow can select gRPC explicitly:
 
 | Environment variable | Default | Purpose |
 |---|---:|---|
-| `OPCDA_FRONTEND` | `http` | select `http` or `grpc` |
+| `OPCDA_FRONTEND` | `http` | select `http`, `grpc`, or `opcua` |
 | `OPCDA_GRPC_LISTEN` | `127.0.0.1:50051` | gRPC bind address |
 | `OPCDA_MAX_GRPC_RECEIVE_BYTES` | `1048576` | inbound message bound |
 | `OPCDA_MAX_GRPC_SEND_BYTES` | `4194304` | outbound message bound |
@@ -218,6 +225,8 @@ The original environment workflow can select gRPC explicitly:
 | `OPCDA_GRPC_MAX_CONNECTION_AGE_GRACE` | `30s` | bounded grace after maximum age |
 | `OPCDA_GRPC_KEEPALIVE_MIN_TIME` | `30s` | minimum accepted client ping interval |
 | `OPCDA_REQUEST_DEADLINE` | `10s` | server-side operation deadline |
+| `OPCDA_MAX_SUBSCRIPTIONS` | `16` | concurrent `Subscribe` stream bound |
+| `OPCDA_MAX_SUBSCRIPTION_ITEMS` | `100` | items in one `Subscribe` request |
 
 DA batch, Browse, ItemID, queue, reconnect, BSTR, and COM watchdog variables
 are shared with HTTP and documented in the HTTP reference.

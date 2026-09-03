@@ -2588,3 +2588,69 @@ func TestTheFirstCycleAnswersWhateverTheKeepAliveCountSays(t *testing.T) {
 		t.Fatal("the second keep-alive never came")
 	}
 }
+
+// The Republish response codec had no test of its own. Its encoder's field
+// order is compared with the schema by scripts/spec-check, so a decoder that
+// agrees with the encoder agrees with the specification -- but only if
+// something checks that the two agree, which is what this does.
+func TestRepublishResponseRoundTrip(t *testing.T) {
+	sent := RepublishResponse{
+		Header: ResponseHeader{
+			Timestamp: channelEpoch.UTC(), RequestHandle: 11,
+			ServiceResult: StatusGood, AdditionalHeader: NullExtensionObject(),
+		},
+		NotificationMessage: NotificationMessage{
+			SequenceNumber: 5,
+			PublishTime:    channelEpoch.UTC(),
+			HasData:        true,
+			Notifications: []MonitoredItemNotification{{
+				ClientHandle: 3,
+				Value: DataValue{
+					Value:  Variant{Type: BuiltInInt32, Value: int32(42)},
+					Status: StatusGood, ServerTimestamp: channelEpoch.UTC(),
+				},
+			}},
+		},
+	}
+
+	encoder, err := NewEncoder(DefaultBinaryLimits())
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoder.WriteRepublishResponse(sent)
+	encoded, err := encoder.Bytes()
+	if err != nil {
+		t.Fatal(err)
+	}
+	decoder, err := NewDecoder(encoded, DefaultBinaryLimits())
+	if err != nil {
+		t.Fatal(err)
+	}
+	identifier, err := decoder.ReadServiceTypeID()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if identifier != RepublishResponseEncodingID {
+		t.Fatalf("encoding id = %d, want %d", identifier, RepublishResponseEncodingID)
+	}
+	got, err := decoder.ReadRepublishResponse()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Header.RequestHandle != sent.Header.RequestHandle {
+		t.Fatalf("request handle = %d", got.Header.RequestHandle)
+	}
+	message := got.NotificationMessage
+	if message.SequenceNumber != sent.NotificationMessage.SequenceNumber {
+		t.Fatalf("sequence number = %d", message.SequenceNumber)
+	}
+	if !message.HasData || len(message.Notifications) != 1 {
+		t.Fatalf("notifications = %+v", message)
+	}
+	if message.Notifications[0].ClientHandle != 3 {
+		t.Fatalf("client handle = %d", message.Notifications[0].ClientHandle)
+	}
+	if value, ok := message.Notifications[0].Value.Value.Value.(int32); !ok || value != 42 {
+		t.Fatalf("value = %#v", message.Notifications[0].Value.Value.Value)
+	}
+}

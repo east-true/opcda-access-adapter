@@ -52,15 +52,21 @@ history and does not replace per-item Read/Write HRESULTs.
 
 ## Configuration
 
+Exactly one of `OPCDA_SOURCE_PROG_ID` and `OPCDA_SOURCE_CLSID` identifies the
+source; neither has a default, because there is no source this adapter may pick
+on an operator's behalf.
+
 `opcda-access-adapter setup` can create a versioned, bounded configuration for
 `run --config` or Windows Service execution. File-based execution does not
 merge ambient environment variables. See [guided setup](setup.md). The
 existing no-argument mode reads the environment variables below. New files use
-configuration version 2; version 1 HTTP files remain readable.
+configuration version 3; versions 1 and 2 remain readable.
 
 | Environment variable | Default | Purpose |
 |---|---:|---|
-| `OPCDA_FRONTEND` | `http` | select HTTP; `grpc` selects the separate typed frontend |
+| `OPCDA_SOURCE_PROG_ID` | *one of two* | the local OPC DA source's ProgID |
+| `OPCDA_SOURCE_CLSID` | *one of two* | the same source's exact CLSID, when there is no ProgID |
+| `OPCDA_FRONTEND` | `http` | select `http`, `grpc`, or `opcua` |
 | `OPCDA_HTTP_LISTEN` | `127.0.0.1:8080` | HTTP bind address |
 | `OPCDA_WRITE_ENABLED` | `false` | enable value Write explicitly |
 | `OPCDA_MAX_HTTP_BODY_BYTES` | `1048576` | request body bound |
@@ -87,8 +93,10 @@ configuration version 2; version 1 HTTP files remain readable.
 | `OPCDA_MAX_ITEM_PROPERTIES` | `64` | DA item properties per item bound |
 
 gRPC-specific listener and transport bounds are documented in the
-[gRPC API reference](grpc-api.md). Only one frontend listener is selected per
-adapter process; both frontends call the same DA runtime semantics.
+[gRPC API reference](grpc-api.md), and the OPC UA endpoint settings in the
+[OPC UA mapping](opcua-mapping.md#configuration). Only one frontend listener is
+selected per adapter process; all three frontends call the same DA runtime
+semantics.
 
 The runtime also applies the hard per-batch, Browse, ItemID, BSTR, command
 queue, and registration limits recorded in ADR-0001. No recent operation or
@@ -104,9 +112,15 @@ Every logging call in the adapter is in `cmd/adapter`, and none carries a value:
 they log an address, a frontend name, a CLI argument, and errors. So the only
 route a value could take into a log is inside an error message, and no error
 message carries one -- they carry the VARTYPE, which is the part worth
-reporting. `TestValueHandlingPackagesDoNotLog` fails the build if a
-value-handling package acquires a logging import, which is what keeps that
-reasoning true rather than merely currently accurate.
+reporting.
+
+`TestValueHandlingPackagesDoNotLog` fails the build if a value-handling package
+acquires a logging import **or writes anything out directly** — a `fmt.Print`
+or a use of `os.Stdout` would break the guarantee just as completely as a `log`
+call, and the reasoning above depends on neither existing. Building a string
+with `fmt.Errorf` or `fmt.Sprintf` stays allowed: that hands it to a caller to
+decide about rather than emitting it. This is what keeps the reasoning true
+rather than merely currently accurate.
 
 Individually valid settings must also fit the aggregate memory ceilings in
 [ADR-0008](adr/0008-http-origin-and-aggregate-bounds.md). This prevents, for
@@ -164,13 +178,47 @@ Error bodies distinguish `frontend`, `adapter`, and `source` layers. Source
 method errors include the raw HRESULT. Item errors are not replaced by a
 generic request error.
 
-Transport hardening errors include `METHOD_NOT_ALLOWED`,
-`UNSUPPORTED_MEDIA_TYPE`,
-`UNSUPPORTED_CONTENT_ENCODING`, `DUPLICATE_JSON_FIELD`,
-`JSON_DEPTH_LIMIT_EXCEEDED`, `BROWSER_ORIGIN_REJECTED`, and, for a loopback
-listener, `UNTRUSTED_HOST`.
-An internal Read/Write result count or ordered ItemID mismatch is
-`INTERNAL_RESULT_MISMATCH` and fails closed with HTTP 500.
+Every code the adapter can return is below. The `frontend` layer rejects a
+request before any source work; the `adapter` layer is the runtime refusing or
+failing; a `source` error carries the vendor's raw HRESULT and has no code of
+its own.
+
+| Code | HTTP | Layer | Means |
+|---|---:|---|---|
+| `INVALID_REQUEST` | 400 | frontend/adapter | the request is malformed or asks for something this endpoint does not answer |
+| `INVALID_VALUE` | 400 | adapter | a Write value does not fit the VARTYPE it was given |
+| `ITEM_ID_TOO_LONG` | 400 | adapter | an ItemID exceeds `OPCDA_MAX_ITEM_ID_BYTES` |
+| `BSTR_TOO_LONG` | 400 | adapter | a string exceeds `OPCDA_MAX_BSTR_CODE_UNITS` |
+| `REQUEST_LIMIT_EXCEEDED` | 400 | adapter | a batch exceeds its per-request bound. A properties response carrying more properties than the bound is the one place this is 422: the request was fine and the source overran |
+| `JSON_DEPTH_LIMIT_EXCEEDED` | 400 | frontend | nesting exceeds `OPCDA_MAX_JSON_DEPTH` |
+| `DUPLICATE_JSON_FIELD` | 400 | frontend | an object repeats a field, which is ambiguous |
+| `METHOD_NOT_ALLOWED` | 405 | frontend | known endpoint, wrong method; the response carries `Allow` |
+| `UNSUPPORTED_MEDIA_TYPE` | 415 | frontend | the body is not `application/json` |
+| `UNSUPPORTED_CONTENT_ENCODING` | 415 | frontend | a compressed body, which is not accepted |
+| `REQUEST_BODY_TOO_LARGE` | 413 | frontend | the body exceeds `OPCDA_MAX_HTTP_BODY_BYTES` |
+| `BROWSER_ORIGIN_REJECTED` | 403 | frontend | the request carried an `Origin` header |
+| `UNTRUSTED_HOST` | 421 | frontend | a loopback listener received a non-loopback `Host` |
+| `WRITE_DISABLED` | 403 | adapter | Write was not explicitly enabled |
+| `BROWSE_UNSUPPORTED` | 422 | adapter | the source does not implement `IOPCBrowseServerAddressSpace` |
+| `PROPERTIES_UNSUPPORTED` | 422 | adapter | the source does not implement `IOPCItemProperties` |
+| `SUBSCRIBE_UNSUPPORTED` | 503 | adapter | the source offers no `IOPCDataCallback` connection point |
+| `BROWSE_RESULT_LIMIT_EXCEEDED` | 422 | adapter | a Browse produced more than `OPCDA_MAX_BROWSE_ENTRIES` |
+| `DETECTION_RESULT_LIMIT_EXCEEDED` | 503 | adapter | local detection found more registrations than its bound. Detection is a CLI command, so this does not arise over HTTP |
+| `UNSUPPORTED_VARTYPE` | 422 | adapter | the value's VARTYPE has no lossless representation here |
+| `TYPE_MISMATCH` | 503 | adapter | a Write named a VARTYPE the item does not accept |
+| `REGISTERED_ITEM_LIMIT_EXCEEDED` | 503 | adapter | the item-registration cache is full for this connection generation |
+| `QUEUE_FULL` | 503 | adapter | the serialized DA command queue is at `OPCDA_COMMAND_QUEUE` |
+| `RUNTIME_UNAVAILABLE` | 503 | adapter | no usable source connection: disconnected, reconnecting, or degraded |
+| `SUBSCRIPTION_NOT_FOUND` | 503 | adapter | the subscription is unknown, or belongs to an ended generation |
+| `SUBSCRIPTION_LIMIT_EXCEEDED` | 503 | adapter | `OPCDA_MAX_SUBSCRIPTIONS` concurrent subscriptions already exist |
+| `SUBSCRIPTION_INVALIDATED` | 503 | adapter | the connection generation ended under an open subscription |
+| `RUNTIME_DEADLINE_EXCEEDED` | 504 | adapter | the operation outlived `OPCDA_REQUEST_DEADLINE` |
+| `INTERNAL_RESULT_MISMATCH` | 500 | adapter | a Read/Write result count or ordered ItemID did not match the request, and the response fails closed |
+
+`SUBSCRIPTION_*` and `SUBSCRIBE_UNSUPPORTED` are reachable over gRPC and OPC UA;
+HTTP exposes no Subscribe. The gRPC frontend maps these same codes onto
+canonical gRPC statuses, described in the
+[gRPC API reference](grpc-api.md#batch-and-error-semantics).
 
 ## Browse
 
@@ -241,10 +289,16 @@ property for one item and refuse it for another, so the request succeeds and the
 refusal is reported against that property, carrying the exact HRESULT and no
 substituted value.
 
-The item's value, quality and timestamp are properties 2, 3 and 4, and are
-refused: Read and Subscribe deliver a value together with its timestamp and its
-raw quality, and answering the same question a second way without them could
-produce a different answer.
+The item's value, quality and timestamp are properties 2, 3 and 4, and naming
+any of them is **not** a per-property refusal of that kind. It fails the whole
+request with HTTP 400 `INVALID_REQUEST`, even alongside valid identifiers and
+wherever in the list it appears: a source declining a property is a result, but
+asking this endpoint for a value is a mistake in the request, and a request
+built on that mistake should not half-succeed.
+
+Read and Subscribe deliver a value together with its timestamp and its raw
+quality, and answering the same question a second way without them could produce
+a different answer.
 
 `IOPCItemProperties` is optional. A source that does not implement it reports
 `capabilities.properties` as `unsupported` and answers these endpoints with HTTP
