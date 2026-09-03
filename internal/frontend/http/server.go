@@ -145,7 +145,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		s.handleWrite(ctx, w, r)
 	default:
-		writeError(w, http.StatusNotFound, "NOT_FOUND", "endpoint not found")
+		writeError(w, http.StatusNotFound, opcda.CodeNotFound, "endpoint not found")
 	}
 }
 
