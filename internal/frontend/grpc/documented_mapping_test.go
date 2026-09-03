@@ -55,7 +55,10 @@ func documentedMapping(t *testing.T) map[string]string {
 	}
 	row := regexp.MustCompile("(?m)^\\| `([A-Za-z]+)` \\| (.+) \\|$")
 	mapping := map[string]string{}
-	for _, match := range row.FindAllStringSubmatch(string(body), -1) {
+	// A Windows checkout has CRLF line endings, and the row ends at "|\r"
+	// rather than at "|". Without this the table reads as empty on Windows and
+	// as complete everywhere else -- which is how it got here.
+	for _, match := range row.FindAllStringSubmatch(withoutCarriageReturns(body), -1) {
 		grpcStatus := match[1]
 		// The default row lists codes that reach Unavailable by falling through
 		// rather than by being named, so it is not evidence about any of them.
@@ -105,6 +108,10 @@ func codesTheSwitchNames(t *testing.T) []string {
 		}
 	}
 	return named
+}
+
+func withoutCarriageReturns(body []byte) string {
+	return strings.ReplaceAll(string(body), "\r\n", "\n")
 }
 
 func repositoryRootFromGRPCTest(t *testing.T) string {

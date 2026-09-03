@@ -8,6 +8,7 @@ import (
 	"regexp"
 	"runtime"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/east-true/opcda-access-adapter/internal/opcda"
@@ -112,7 +113,9 @@ func documentedErrorRows(t *testing.T) map[string]int {
 	}
 	row := regexp.MustCompile("(?m)^\\| `([A-Z][A-Z0-9_]+)` \\| (\\d{3}) \\|")
 	rows := map[string]int{}
-	for _, match := range row.FindAllStringSubmatch(string(body), -1) {
+	// CRLF, for the same reason the gRPC table reader normalises it: a row
+	// anchored to the end of a line finds nothing in a Windows checkout.
+	for _, match := range row.FindAllStringSubmatch(strings.ReplaceAll(string(body), "\r\n", "\n"), -1) {
 		status, err := strconv.Atoi(match[2])
 		if err != nil {
 			t.Fatalf("row %s has an unreadable status %q", match[1], match[2])
