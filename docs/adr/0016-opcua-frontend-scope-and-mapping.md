@@ -119,6 +119,35 @@ The implemented subset and actual interoperability results are recorded instead.
 
 ## Later refinements
 
+Two decisions recorded above have since been superseded. The decisions stand as
+made -- they were right on what was known then -- and what changed is recorded
+here rather than by editing them, which is how the rest of this document treats
+a dated fact.
+
+**`LAST_KNOWN` no longer maps to `Bad_OutOfService`.** The Decision cites it as
+a row transcribed exactly as the specification states it. Part 8 Table A.3 does
+say `Bad_OutOfService`, but OPC 10000-4 Table 61 contradicts it and explains
+itself: the fieldbus code `Bad_LastKnown` "shall be mapped to
+`Uncertain_NoCommunicationLastUsable`" because "OPC UA requires that the Server
+shall return a Null value when the Severity is Bad". A Bad severity therefore
+discards exactly the value `LAST_KNOWN` exists to carry. #105 follows the clause
+that explains itself, and `scripts/spec-check/check.py` reports the divergence
+from A.3 on every run rather than leaving it to be noticed. This is the one
+place where "transcribed, not recalled" was not enough: both rows were
+transcribed correctly and they disagree.
+
+**Every row of Tables A.4 and A.5 is bound, not two.** The Decision binds only
+`OPC_E_BADRIGHTS` and `OPC_E_UNKNOWNITEMID`, because "their numeric HRESULT
+values are not in the fetched sources" and an unverified constant is not added
+on recollection. That condition ended when `opcerror.h` -- from the commit
+ADR-0006 already pins for the validation fixture -- became a checked source in
+#68, which made the remaining values available from the same place the test
+server was built from. #69 bound the rest. Thirteen DA error codes are bound
+today, and the "Others" row still catches everything outside both tables.
+
+The rule this ADR set was never relaxed: a constant is bound when a pinned
+source states it. What changed is which sources are pinned.
+
 Two things this ADR left unbound have since been closed from primary sources:
 `MessageSecurityMode`'s wire values from OPC 10000-4 Table 139, and
 `SecurityTokenRequestType`'s from the OPC Foundation UA NodeSet's `DataType`
