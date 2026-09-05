@@ -17,6 +17,7 @@ param(
     [string]$GRPCProbePath,
 
     [string]$SubscribeProbePath,
+    [string]$LatencyProbePath,
 
     [string]$OPCUAProbePath,
 
@@ -877,6 +878,24 @@ function Test-SubscribeCore {
     Write-Host 'Completed DA Subscribe core validation'
 }
 
+function Test-ReadLatency {
+    Assert-True ($null -ne $script:LatencyProbeExecutable) 'latency probe path is required for latency measurement'
+    Write-Host 'Measuring the adapter share of a DA Read against the real local COM server'
+    # Batches of 1 and 100 because they answer different questions: what one
+    # Read costs, and whether the adapter's share grows with the batch while
+    # the source's single device call does not.
+    foreach ($batch in @(1, 100)) {
+        Invoke-NativeProcess -FilePath $script:LatencyProbeExecutable -ArgumentList @(
+            '-clsid', $expectedCLSID,
+            '-item', 'Test/Int32',
+            '-batch', "$batch",
+            '-iterations', '2000',
+            '-timeout', '120s'
+        ) -TimeoutSeconds 180
+    }
+    Write-Host 'Completed adapter Read latency measurement'
+}
+
 function Test-GRPCWriteEnabledForeground {
     Assert-True ($null -ne $script:GRPCProbeExecutable) 'gRPC probe path is required for gRPC validation'
     $grpcPort = if ($AdapterArch -eq '386') { 18651 } else { 18652 }
@@ -974,6 +993,12 @@ $script:SubscribeProbeExecutable = if ([string]::IsNullOrWhiteSpace($SubscribePr
 }
 else {
     (Resolve-Path -LiteralPath $SubscribeProbePath).Path
+}
+$script:LatencyProbeExecutable = if ([string]::IsNullOrWhiteSpace($LatencyProbePath)) {
+    $null
+}
+else {
+    (Resolve-Path -LiteralPath $LatencyProbePath).Path
 }
 $script:OPCUAProbeExecutable = if ([string]::IsNullOrWhiteSpace($OPCUAProbePath)) {
     $null
@@ -1079,6 +1104,9 @@ try {
     }
     if ($null -ne $script:OPCUAProbeExecutable) {
         Test-OPCUAFrontend
+    }
+    if ($null -ne $script:LatencyProbeExecutable) {
+        Test-ReadLatency
     }
 
     if ($Destructive.IsPresent) {
