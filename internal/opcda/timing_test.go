@@ -54,6 +54,39 @@ func TestTimingSnapshotSeparatesThePhases(t *testing.T) {
 	if snapshot.QueueWait.P50 <= 0 || snapshot.QueueWait.P50 >= snapshot.QueueWait.P99 {
 		t.Errorf("p50 %v and p99 %v are not ordered", snapshot.QueueWait.P50, snapshot.QueueWait.P99)
 	}
+	// 1..100 microseconds averages 50.5.
+	if want := 50500 * time.Nanosecond; snapshot.QueueWait.Mean != want {
+		t.Errorf("queue wait mean = %v, want %v", snapshot.QueueWait.Mean, want)
+	}
+}
+
+// Mean has to survive the ring dropping samples, because that is the whole
+// reason it exists: on a platform whose clock is coarser than the thing being
+// measured, the percentiles are quantised and the mean is the only figure that
+// converges. A mean computed from the retained window rather than from every
+// sample would drift as the ring wrapped.
+func TestTimingMeanCoversEverySampleNotOnlyTheRetainedOnes(t *testing.T) {
+	collector := newTimingCollector(true)
+	// Half the samples are 0 and half are 1ms, in an order that puts every
+	// zero outside the retained window. A mean over the window alone would
+	// report 1ms; the true mean is 500µs.
+	total := timingSamples * 2
+	for i := 0; i < total; i++ {
+		sample := time.Duration(0)
+		if i >= total/2 {
+			sample = time.Millisecond
+		}
+		collector.record(sample, 0, 0)
+	}
+	snapshot := collector.snapshot()
+	if want := 500 * time.Microsecond; snapshot.QueueWait.Mean != want {
+		t.Errorf("mean = %v, want %v; it is being computed over the retained window",
+			snapshot.QueueWait.Mean, want)
+	}
+	if snapshot.QueueWait.P50 != time.Millisecond {
+		t.Errorf("p50 = %v; the retained window should hold only the 1ms samples",
+			snapshot.QueueWait.P50)
+	}
 }
 
 // The ring is what keeps the state bounded, which is the condition INV-6 puts

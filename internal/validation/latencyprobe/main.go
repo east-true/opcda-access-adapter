@@ -89,7 +89,13 @@ func main() {
 	}
 	before := measured.TimingSnapshot()
 
+	// The whole loop is timed as one block as well as per iteration. A single
+	// Read can be shorter than the platform's clock tick -- a Windows CI runner
+	// quantises to about half a millisecond -- and a per-iteration figure then
+	// reads as zero. Dividing one long measurement by the iteration count is
+	// immune to that, and is the number to trust.
 	endToEnd := make([]time.Duration, 0, *iterations)
+	blockStart := time.Now()
 	for i := 0; i < *iterations; i++ {
 		start := time.Now()
 		results, err := runtime.ReadBatch(ctx, request)
@@ -102,35 +108,55 @@ func main() {
 		}
 		endToEnd = append(endToEnd, elapsed)
 	}
+	blockMean := time.Since(blockStart) / time.Duration(*iterations)
 	after := measured.TimingSnapshot()
 	if after.SourceCall.Count == before.SourceCall.Count {
 		fail("collect timings", fmt.Errorf("no commands were recorded; instrumentation is not running"))
 	}
 
-	report(*batch, *iterations, endToEnd, after)
+	report(*batch, *iterations, endToEnd, blockMean, clockResolution(endToEnd), after)
 }
 
 // report prints durations and counts only. No ItemID and no value appears
 // here, and none is available to: the probe holds a batch of one repeated
 // identifier and discards every result it reads.
-func report(batch, iterations int, endToEnd []time.Duration, timings opcda.TimingSnapshot) {
+func report(batch, iterations int, endToEnd []time.Duration, blockMean, resolution time.Duration, timings opcda.TimingSnapshot) {
 	sort.Slice(endToEnd, func(a, b int) bool { return endToEnd[a] < endToEnd[b] })
 	at := func(q float64) time.Duration { return endToEnd[int(float64(len(endToEnd)-1)*q)] }
 
-	fmt.Printf("LATENCY batch=%d iterations=%d\n", batch, iterations)
-	line := func(name string, p50, p95, p99, max time.Duration) {
-		fmt.Printf("  %-22s p50=%-12v p95=%-12v p99=%-12v max=%v\n",
-			name, round(p50), round(p95), round(p99), round(max))
+	fmt.Printf("LATENCY batch=%d iterations=%d clock=%v\n", batch, iterations, round(resolution))
+	fmt.Printf("  %-22s %-14s %-13s %-13s %s\n", "", "mean", "p95", "p99", "max")
+	line := func(name string, mean, p95, p99, max time.Duration) {
+		fmt.Printf("  %-22s %-14v %-13v %-13v %v\n",
+			name, round(mean), round(p95), round(p99), round(max))
 	}
-	line("read end to end", at(0.50), at(0.95), at(0.99), endToEnd[len(endToEnd)-1])
-	line("  queue wait", timings.QueueWait.P50, timings.QueueWait.P95, timings.QueueWait.P99, timings.QueueWait.Max)
-	line("  source COM call", timings.SourceCall.P50, timings.SourceCall.P95, timings.SourceCall.P99, timings.SourceCall.Max)
-	line("  dispatch", timings.Dispatch.P50, timings.Dispatch.P95, timings.Dispatch.P99, timings.Dispatch.Max)
+	line("read end to end", blockMean, at(0.95), at(0.99), endToEnd[len(endToEnd)-1])
+	line("  queue wait", timings.QueueWait.Mean, timings.QueueWait.P95, timings.QueueWait.P99, timings.QueueWait.Max)
+	line("  source COM call", timings.SourceCall.Mean, timings.SourceCall.P95, timings.SourceCall.P99, timings.SourceCall.Max)
+	line("  dispatch", timings.Dispatch.Mean, timings.Dispatch.P95, timings.Dispatch.P99, timings.Dispatch.Max)
 
-	adapter := timings.QueueWait.P50 + timings.Dispatch.P50
-	fmt.Printf("\n  adapter share at p50: %v of %v end to end; the rest is the source's call\n",
-		round(adapter), round(at(0.50)))
+	adapter := timings.QueueWait.Mean + timings.Dispatch.Mean
+	fmt.Printf("\n  adapter share: %v of %v per Read; the rest is the source's call\n",
+		round(adapter), round(blockMean))
+	if resolution > adapter && adapter > 0 {
+		fmt.Printf("  the clock ticks every %v, coarser than the adapter's share, so read the\n"+
+			"  mean rather than a percentile: a single sample cannot resolve this.\n", round(resolution))
+	}
 	fmt.Println("\nLATENCY_PROBE_PASS")
+}
+
+// clockResolution is the smallest non-zero gap the platform's clock reported
+// across the run. It is printed because it decides whether a percentile here
+// means anything, and a measurement that hides the limit of its own instrument
+// is worse than one that states it.
+func clockResolution(samples []time.Duration) time.Duration {
+	smallest := time.Duration(0)
+	for _, sample := range samples {
+		if sample > 0 && (smallest == 0 || sample < smallest) {
+			smallest = sample
+		}
+	}
+	return smallest
 }
 
 func round(d time.Duration) time.Duration {

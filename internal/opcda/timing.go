@@ -26,9 +26,18 @@ import (
 // without growing.
 const timingSamples = 4096
 
-// PhaseTiming is what one phase of a command cost, over the samples retained.
+// PhaseTiming is what one phase of a command cost.
+//
+// Mean is the figure to read. The percentiles come from individual samples and
+// are therefore limited by the platform's clock: a Windows CI runner was
+// observed quantising to about half a millisecond, which is coarser than the
+// adapter's whole share, so every sample read as either zero or one tick. Mean
+// is computed from a running sum over every command rather than from the
+// retained samples, and because the tick boundary falls at random relative to
+// the operation, it converges on the true value where a percentile cannot.
 type PhaseTiming struct {
 	Count int
+	Mean  time.Duration
 	P50   time.Duration
 	P95   time.Duration
 	P99   time.Duration
@@ -93,6 +102,9 @@ type ring struct {
 	next    int
 	filled  bool
 	count   int
+	// sum is over every sample ever recorded, not only those retained, which
+	// is what makes Mean independent of the ring size.
+	sum time.Duration
 }
 
 func newRing(size int) *ring {
@@ -106,6 +118,7 @@ func (r *ring) add(sample time.Duration) {
 		r.filled = true
 	}
 	r.count++
+	r.sum += sample
 }
 
 func (r *ring) summarise() PhaseTiming {
@@ -116,6 +129,7 @@ func (r *ring) summarise() PhaseTiming {
 	if held == 0 {
 		return PhaseTiming{}
 	}
+	mean := r.sum / time.Duration(r.count)
 	sorted := make([]time.Duration, held)
 	copy(sorted, r.samples[:held])
 	sort.Slice(sorted, func(a, b int) bool { return sorted[a] < sorted[b] })
@@ -125,6 +139,7 @@ func (r *ring) summarise() PhaseTiming {
 	}
 	return PhaseTiming{
 		Count: r.count,
+		Mean:  mean,
 		P50:   at(0.50),
 		P95:   at(0.95),
 		P99:   at(0.99),
