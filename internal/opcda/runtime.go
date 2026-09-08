@@ -37,6 +37,11 @@ type Config struct {
 	ReconnectInitial time.Duration
 	ReconnectMax     time.Duration
 	COMCallWatchdog  time.Duration
+	// CollectTimings separates the adapter's share of a DA operation from the
+	// source's, for a validation run that wants to measure it. A default build
+	// leaves it false and retains no operation history at all, which is what
+	// the HTTP reference says of a production adapter.
+	CollectTimings bool
 }
 
 const (

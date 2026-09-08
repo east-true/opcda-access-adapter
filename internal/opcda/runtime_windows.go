@@ -15,7 +15,11 @@ import (
 type daThreadCommand struct {
 	context context.Context
 	name    string
-	run     func(*daThreadSession)
+	// enqueued is when the caller handed this command over, so the wait in the
+	// queue can be separated from the vendor's call. It is zero unless the
+	// runtime was configured to collect timings.
+	enqueued time.Time
+	run      func(*daThreadSession)
 	// skipped answers the caller when the DA thread drops the command because
 	// its context expired before the command could run.
 	skipped func()
@@ -56,6 +60,19 @@ type windowsRuntime struct {
 
 	statusMu sync.RWMutex
 	status   RuntimeStatus
+
+	// timings is nil unless Config.CollectTimings asked for it, which is what
+	// makes a production build retain no operation history.
+	timings *timingCollector
+}
+
+// TimingSnapshot separates this adapter's share of a DA operation from the
+// vendor's. It is empty unless the runtime was configured to collect timings.
+// It is a method on the concrete runtime rather than on the Runtime interface:
+// every fake runtime in this repository would otherwise have to carry a
+// measurement it does not make.
+func (r *windowsRuntime) TimingSnapshot() TimingSnapshot {
+	return r.timings.snapshot()
 }
 
 func New(config Config) (Runtime, error) {
@@ -73,6 +90,7 @@ func New(config Config) (Runtime, error) {
 	}
 	daRuntime := &windowsRuntime{
 		config:   config,
+		timings:  newTimingCollector(config.CollectTimings),
 		commands: make(chan daThreadCommand, config.Limits.CommandQueue),
 		wake:     wake,
 		stop:     make(chan struct{}),
@@ -378,9 +396,22 @@ func (r *windowsRuntime) processReadyCommands(session *daThreadSession) bool {
 		case command := <-r.commands:
 			r.updateQueueDepth()
 			if command.context.Err() == nil {
+				dequeued := time.Now()
 				finishWatchdog := r.beginCOMWatchdog(command.name)
+				startedCall := time.Now()
 				command.run(session)
+				finishedCall := time.Now()
 				finishWatchdog()
+				if r.timings != nil {
+					// The watchdog brackets the call on both sides, so the
+					// dispatch figure is this thread's own overhead per
+					// command and not part of the vendor's.
+					r.timings.record(
+						dequeued.Sub(command.enqueued),
+						finishedCall.Sub(startedCall),
+						time.Since(finishedCall)+startedCall.Sub(dequeued),
+					)
+				}
 			} else if command.skipped != nil {
 				command.skipped()
 			}
@@ -726,6 +757,9 @@ func (r *windowsRuntime) enqueue(ctx context.Context, command daThreadCommand) e
 	case <-ctx.Done():
 		return &AdapterError{Code: CodeRuntimeDeadline, Message: "request deadline exceeded before enqueue", Cause: ctx.Err()}
 	default:
+	}
+	if r.timings != nil {
+		command.enqueued = time.Now()
 	}
 	select {
 	case r.commands <- command:
