@@ -229,6 +229,40 @@ The tables spell the same DA error two ways: `OPC_E_BADRIGHTS` in A.4,
 `E_BADRIGHTS` in A.5, and neither spelling is reliably the one `opcerror.h`
 uses. The names above are `opcerror.h`'s, which is where the values come from.
 
+### The adapter's own failures, which no Part 8 table covers
+
+Tables A.4 and A.5 map what the *source* said. They say nothing about the
+adapter refusing or failing before the source is reached, and that mapping is
+this project's, so it is recorded here rather than left for a client to infer.
+
+| UA StatusCode | Adapter error codes |
+|---|---|
+| `Bad_NotConnected` | `RUNTIME_UNAVAILABLE` |
+| `Bad_Timeout` | `RUNTIME_DEADLINE_EXCEEDED` |
+| `Bad_NotWritable` | `WRITE_DISABLED` |
+| `Bad_TooManyOperations` | `QUEUE_FULL`, `REQUEST_LIMIT_EXCEEDED`, `REGISTERED_ITEM_LIMIT_EXCEEDED` |
+| `Bad_TypeMismatch` | `TYPE_MISMATCH`, `INVALID_VALUE` |
+| `Bad_DataTypeIdUnknown` | `UNSUPPORTED_VARTYPE` |
+| `Bad_ServiceUnsupported` | `BROWSE_UNSUPPORTED`, `SUBSCRIBE_UNSUPPORTED`, `PROPERTIES_UNSUPPORTED` |
+| `Bad_InternalError` | anything not named above, and any error that is neither a source nor an adapter error |
+
+The codes themselves are described in the
+[HTTP reference](http-api.md#errors), which is the one place they are defined;
+this is the mapping, not a second vocabulary.
+
+`Bad_ServiceUnsupported` carries all three optional DA 2.05a interfaces —
+Browse, the callback connection point, and `IOPCItemProperties`. A source
+lacking one is reporting a capability, not failing, and answering
+`Bad_InternalError` would tell a client the server broke. The third was missing
+from that list until it was written down here: no client could reach it, because
+population treats an absent property interface as "this item has no properties"
+and every property read is of a node population attached. It was a trap for the
+next path rather than a live defect, and lists like this are where that kind of
+omission is visible.
+
+`Bad_InternalError` is the default, so a code this table does not name arrives
+as an internal error rather than as something more specific.
+
 ### Which rows this adapter can produce at all
 
 Binding a row and being able to reach it are different questions, and the tables

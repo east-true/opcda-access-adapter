@@ -22,6 +22,7 @@ on:
       - internal/validation/stabilityprobe/**
       - internal/validation/grpcprobe/**
       - internal/validation/subscribeprobe/**
+      - internal/validation/latencyprobe/**
       - internal/validation/opcuaprobe/**
       - internal/validation/daerrorprobe/**
       - api/opcda/**
@@ -83,6 +84,7 @@ jobs:
           go build -trimpath -o "_test/stability-probe-${{ matrix.arch }}.exe" ./internal/validation/stabilityprobe
           go build -trimpath -o "_test/grpc-probe-${{ matrix.arch }}.exe" ./internal/validation/grpcprobe
           go build -trimpath -o "_test/subscribe-probe-${{ matrix.arch }}.exe" ./internal/validation/subscribeprobe
+          go build -trimpath -o "_test/latency-probe-${{ matrix.arch }}.exe" ./internal/validation/latencyprobe
           go build -trimpath -o "_test/opcua-probe-${{ matrix.arch }}.exe" ./internal/validation/opcuaprobe
           go build -trimpath -o "_test/da-error-probe-${{ matrix.arch }}.exe" ./internal/validation/daerrorprobe
 
@@ -108,6 +110,7 @@ jobs:
           -StabilityProbePath "_test/stability-probe-${{ matrix.arch }}.exe"
           -GRPCProbePath "_test/grpc-probe-${{ matrix.arch }}.exe"
           -SubscribeProbePath "_test/subscribe-probe-${{ matrix.arch }}.exe"
+          -LatencyProbePath "_test/latency-probe-${{ matrix.arch }}.exe"
           -OPCUAProbePath "_test/opcua-probe-${{ matrix.arch }}.exe"
           -DAErrorProbePath "_test/da-error-probe-${{ matrix.arch }}.exe"
           -FailureCycles 3

@@ -10,6 +10,22 @@
 > **현재 확장 Frontend:** gRPC unary Status/Browse/Read/Write
 > **향후 승인된 Frontend 방향:** OPC UA; DA callback core 이후 gRPC stream
 >
+> **이 문서는 기준일 시점의 설계 baseline이며, 그 뒤 구현된 것을 되짚어
+> 수정하지 않는다.** 계획으로 쓰인 문장을 현재형으로 고치면 이 프로젝트가
+> 무엇을 왜 그렇게 정했는지의 기록이 사라지기 때문이다. 다만 "향후"라고 적힌
+> 것 중 아래는 **이미 구현·검증되어 CI에서 게이팅된다.** 지금 존재하는 것의
+> 설명은 각각의 문서에 있다.
+>
+> | 이 문서가 "향후"라 부르는 것 | 현재 상태 | 존재하는 것의 설명 |
+> |---|---|---|
+> | DA Subscribe core (§18) | 구현됨. `IOPCDataCallback` connection point 기반 | ADR-0013 |
+> | gRPC server streaming `Subscribe` (§34) | 구현됨 | [gRPC API](grpc-api.md#subscribe) |
+> | OPC UA Frontend (§35) | 구현됨, `SecurityPolicy None` 한정. production ready가 아니며 conformance 주장도 아니다 | [OPC UA mapping](opcua-mapping.md), ADR-0016 |
+> | UA Subscription / MonitoredItem / Publish (§5.2 부근) | 구현됨 | [OPC UA mapping](opcua-mapping.md#subscriptions-and-monitoreditems) |
+>
+> 나머지 "향후" 항목(HTTP streaming frontend, MTA/복수 worker, subprocess
+> isolation, remote network)은 여전히 미구현이며 v0 범위 밖이다.
+>
 > 이 문서는 프로젝트의 목적, 설계 철학, 경계, 런타임 구조, 데이터 계약, 초기 HTTP API, 향후 Frontend 확장 규칙, COM 제약, 오류/재연결/보안/테스트/호환성 정책을 하나의 기준 문서로 정의한다.  
 > 별도 ADR 또는 명시적인 설계 변경 없이 이 문서의 **불변 조건(Invariants)** 을 깨는 구현은 허용하지 않는다.
 
@@ -1120,7 +1136,7 @@ silent narrowing/overflow 금지.
 
 ---
 
-# 18. Subscribe — 향후 Core Capability
+# 18. Subscribe — Core Capability (구현됨; 아래는 설계 시점의 기준)
 
 Subscribe는 UA만의 기능이 아니다.
 
@@ -1881,7 +1897,7 @@ Asset/Metric protobuf 모델을 만들지 않는다.
 
 ---
 
-# 35. OPC UA Frontend — 향후
+# 35. OPC UA Frontend (구현됨, `SecurityPolicy None` 한정; 아래는 설계 시점의 기준)
 
 OPC UA Frontend는 Access Adapter의 여러 Frontend 중 하나다.
 

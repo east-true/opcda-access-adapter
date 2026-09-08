@@ -180,8 +180,7 @@ generic request error.
 
 Every code the adapter can return is below. The `frontend` layer rejects a
 request before any source work; the `adapter` layer is the runtime refusing or
-failing; a `source` error carries the vendor's raw HRESULT and has no code of
-its own.
+failing; a `source` error is the vendor's, and carries its raw HRESULT.
 
 | Code | HTTP | Layer | Means |
 |---|---:|---|---|
@@ -214,6 +213,9 @@ its own.
 | `SUBSCRIPTION_INVALIDATED` | 503 | adapter | the connection generation ended under an open subscription |
 | `RUNTIME_DEADLINE_EXCEEDED` | 504 | adapter | the operation outlived `OPCDA_REQUEST_DEADLINE` |
 | `INTERNAL_RESULT_MISMATCH` | 500 | adapter | a Read/Write result count or ordered ItemID did not match the request, and the response fails closed |
+| `INTERNAL_ERROR` | 500 | adapter | an adapter failure that fits no other code |
+| `NOT_FOUND` | 404 | frontend | the request target is not one of the endpoints above |
+| `DA_METHOD_FAILED` | 503 | source | the DA method failed; the body carries the vendor's raw HRESULT and the operation name |
 
 `SUBSCRIPTION_*` and `SUBSCRIBE_UNSUPPORTED` are reachable over gRPC and OPC UA;
 HTTP exposes no Subscribe. The gRPC frontend maps these same codes onto

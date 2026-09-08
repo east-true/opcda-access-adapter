@@ -1016,9 +1016,16 @@ func statusForRuntimeError(err error) StatusCode {
 		return StatusBadTypeMismatch
 	case opcda.CodeUnsupportedVarType:
 		return StatusBadDataTypeIDUnknown
-	case opcda.CodeBrowseUnsupported, opcda.CodeSubscribeUnsupported:
-		// The DA 2.05a Browse and callback interfaces are both optional, so a
-		// source lacking one is reporting a capability rather than failing.
+	case opcda.CodeBrowseUnsupported, opcda.CodeSubscribeUnsupported,
+		opcda.CodePropertiesUnsupported:
+		// The DA 2.05a Browse, callback and item-property interfaces are all
+		// optional, so a source lacking one is reporting a capability rather
+		// than failing. IOPCItemProperties was missing from this list, which
+		// left the third optional interface answering Bad_InternalError while
+		// the other two answered a capability. No client reaches it today --
+		// EnsureItemProperties treats an absent interface as "no properties"
+		// and every property read is of a node population attached -- so this
+		// was a trap for the next path rather than a live defect.
 		return StatusBadServiceUnsupported
 	default:
 		return StatusBadInternalError
