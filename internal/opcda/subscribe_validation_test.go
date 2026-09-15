@@ -178,9 +178,11 @@ func TestTheRegistrationCacheStopsAtItsCapacity(t *testing.T) {
 //   - registrationCache.remaining's `remaining < 0` to `<=`: both arms answer
 //     zero when the cache is exactly full, and remaining cannot go negative
 //     because put refuses a new entry at capacity. The guard is defensive.
-//   - LocalDetectionLimits.Validate's `MaxServers <= 0` to `< 0`: withDefaults
-//     replaces a zero with the default before the check runs, so only a
-//     negative ever reaches it and both forms catch that.
+//   - LocalDetectionLimits.Validate's `MaxServers <= 0` and
+//     `MaxProgIDCodeUnits <= 0` to `< 0`: withDefaults replaces a zero with the
+//     default before the check runs, so only a negative ever reaches it and
+//     both forms catch that. The ceilings on the next line are not equivalent
+//     and are pinned in detection_ceiling_test.go.
 //   - sortDetectedLocalServers' comparators to their inclusive forms: the
 //     detected set has distinct CLSIDs, so a less function that also answers
 //     true for equal keys produces the same order.
