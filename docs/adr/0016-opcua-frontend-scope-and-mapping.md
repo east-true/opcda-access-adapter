@@ -145,6 +145,22 @@ ADR-0006 already pins for the validation fixture -- became a checked source in
 server was built from. #69 bound the rest. Thirteen DA error codes are bound
 today, and the "Others" row still catches everything outside both tables.
 
+**`VT_INT`, `VT_UINT` and `VT_ERROR` report the type the core decoded.** The
+Decision lists them among the VARTYPEs reported as unmapped, and the rejected
+alternatives name "mapping `VT_INT` and `VT_ERROR` onto the `VT_I4` row" as an
+invention. The adapter now answers `Int32` and `UInt32` for them.
+
+What the rejection was protecting against is still respected, and the reason
+the answer changed is that the ADR was reasoning about one question when there
+are two. A node declares a type and a value carries one, and answering them
+from different inputs made the server contradict itself: `decodeVariant` reads
+all three out of `VT_I4` and `VT_UI4` storage, so a `VT_INT` item was delivered
+as an `Int32` by a node that declared the abstract base type. #61 states the
+normalisation once, as `DAVarType.DecodesAs`, and has `DataTypeFor` compose with
+it. Nothing is widened, narrowed or guessed: the type reported is the storage
+the core already read the value into. `VT_CY` has a row in neither the table nor
+the normalisation, and is still unmapped.
+
 The rule this ADR set was never relaxed: a constant is bound when a pinned
 source states it. What changed is which sources are pinned.
 
