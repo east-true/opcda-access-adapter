@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"os/signal"
@@ -14,40 +15,60 @@ import (
 	"github.com/east-true/opcda-access-adapter/internal/opcda"
 )
 
-func main() {
-	arguments := os.Args[1:]
-	if printVersion(arguments, os.Stdout) {
-		return
-	}
-	dependencies := utilityDependencies{
-		detect:        opcda.DetectLocalServers,
-		writeConfig:   app.WriteConfigFileExclusive,
-		runForeground: runForegroundConfig,
-		service: serviceCommandDependencies{
-			installAndStart: installAndStartWindowsService,
-			uninstall:       uninstallWindowsService,
-			runDispatcher:   runWindowsServiceDispatcher,
+// mainDependencies is what the top-level command needs from outside itself.
+// Every other command in this package already takes its effects this way; main
+// was the one that reached for them directly, which left its exit codes -- the
+// only thing an operator's supervisor sees -- untestable.
+type mainDependencies struct {
+	utility    utilityDependencies
+	loadConfig func() (app.Config, error)
+	runAdapter func(app.Config) error
+}
+
+func productionDependencies() mainDependencies {
+	return mainDependencies{
+		utility: utilityDependencies{
+			detect:        opcda.DetectLocalServers,
+			writeConfig:   app.WriteConfigFileExclusive,
+			runForeground: runForegroundConfig,
+			service: serviceCommandDependencies{
+				installAndStart: installAndStartWindowsService,
+				uninstall:       uninstallWindowsService,
+				runDispatcher:   runWindowsServiceDispatcher,
+			},
 		},
+		loadConfig: app.LoadConfig,
+		runAdapter: runForeground,
 	}
-	if handled, exitCode := handleUtilityCommand(arguments, os.Stdin, os.Stdout, os.Stderr, dependencies); handled {
-		if exitCode != 0 {
-			os.Exit(exitCode)
-		}
-		return
+}
+
+func main() {
+	os.Exit(run(os.Args[1:], os.Stdin, os.Stdout, os.Stderr, productionDependencies()))
+}
+
+// run reports the process exit code rather than ending the process, so every
+// path out of it can be exercised.
+func run(arguments []string, input io.Reader, output, errorOutput io.Writer, dependencies mainDependencies) int {
+	if printVersion(arguments, output) {
+		return 0
+	}
+	if handled, exitCode := handleUtilityCommand(arguments, input, output, errorOutput, dependencies.utility); handled {
+		return exitCode
 	}
 	if len(arguments) != 0 {
 		slog.Error("unknown command or argument", "argument", arguments[0])
-		os.Exit(2)
+		return 2
 	}
-	config, err := app.LoadConfig()
+	config, err := dependencies.loadConfig()
 	if err != nil {
 		slog.Error("invalid configuration", "error", err)
-		os.Exit(2)
+		return 2
 	}
-	if err := runForeground(config); err != nil {
+	if err := dependencies.runAdapter(config); err != nil {
 		slog.Error("adapter stopped with an error", "error", err)
-		os.Exit(1)
+		return 1
 	}
+	return 0
 }
 
 func runForegroundConfig(path string) error {
