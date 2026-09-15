@@ -609,6 +609,18 @@ faces now, which is the same reason no SHA is pinned above.
   reconnect generation invalidation, and no-stale-value outage behavior were
   rechecked against code and tests.
 
+## Measured adapter latency
+
+The adapter's own share of a DA Read is 34-54 microseconds, separated from the
+vendor's COM call by timestamps around it rather than estimated. It does not
+grow with the batch size. `docs/compatibility.md` carries the table and the
+caveats, the most important being that the source's call is the rest of the
+figure and is not this adapter's to answer for.
+
+design.md lists operation latency as an observability item. This is a probe run
+on demand, not the metric that item describes: nothing is exported at runtime,
+and a default build collects no timings at all.
+
 ## Known issues
 
 - The OPC UA listener's shared services were audited for concurrency on
