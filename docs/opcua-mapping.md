@@ -73,10 +73,17 @@ Two points are easy to get wrong and are called out deliberately:
 `VT_EMPTY` and `VT_NULL` have no row. The adapter maps them to a DataValue with
 no value; this is an adapter decision recorded in ADR-0016.
 
-`VT_INT`, `VT_UINT`, `VT_ERROR`, and `VT_CY` have no row either. They are
-reported as **unmapped** and fail explicitly. The DA core happens to decode
-`VT_INT` and `VT_ERROR` as `int32`, but borrowing the `VT_I4` row for them would
-be an invention, not a mapping.
+`VT_INT`, `VT_UINT`, `VT_ERROR`, and `VT_CY` have no row either. `VT_CY` is
+therefore reported as **unmapped** and fails explicitly, and so is anything else
+Table A.2 does not cover.
+
+The other three are not, and the section below says why: the DA core reads
+`VT_INT` and `VT_ERROR` out of the same storage as `VT_I4`, and `VT_UINT` out of
+the same storage as `VT_UI4`, so reporting `Int32` and `UInt32` names the value
+the adapter actually produced rather than borrowing a row. This paragraph used
+to say all four were unmapped; that was true until the node's declared type and
+the delivered `Variant` were found to disagree, and it is recorded in
+ADR-0016's later refinements.
 
 ### A node must not declare one type and deliver another
 
