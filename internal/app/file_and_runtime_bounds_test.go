@@ -173,3 +173,10 @@ func TestStoppingTheAddressSpaceWatchTwiceIsSafe(t *testing.T) {
 // holds a concrete listener rather than an interface, so there is no seam to
 // substitute one either. Adding an accessor for the test alone would widen a
 // production API to watch a field, so it is written down instead.
+
+// One more survivor in this package is unreachable rather than untested. New
+// allocates a DA runtime when the caller passes none, and reports a failure to
+// do so -- but finalizeAndValidate has already validated the same runtime
+// configuration by the time that line runs, so the allocation cannot fail for
+// any configuration that gets there. Both arms answer alike for every input a
+// caller can supply.
