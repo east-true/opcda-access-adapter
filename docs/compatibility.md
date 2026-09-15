@@ -423,6 +423,37 @@ and 200-Read soak regression. This result covers the pinned fixture only; it
 does not validate third-party vendors, TLS/authentication, Subscribe, OPC UA,
 or external network exposure.
 
+### What the adapter adds to a Read
+
+`latencyprobe` runs in-process against the fixture and timestamps the
+boundaries of a DA command's life, so the adapter's share is separable from the
+source's call rather than estimated around it. Workflow run
+[`33980592074`](https://github.com/east-true/opcda-access-adapter/actions/runs/33980592074),
+2,000 Reads per case after a warm-up.
+
+| | 386 | amd64 |
+|---|---:|---:|
+| **adapter share** | **54.2 µs** / **38.1 µs** | **36.7 µs** / **33.6 µs** |
+| source COM call | 128.2 µs / 444.7 µs | 70.5 µs / 278.5 µs |
+| Read end to end | 201.8 µs / 499.6 µs | 128.2 µs / 325.2 µs |
+
+Each cell is a batch of one and a batch of a hundred. The adapter's share does
+not grow with the batch; the source's call does, which is the argument for
+reading in batches and has nothing to do with this adapter.
+
+Read the means. The runner's clock ticks about every 300 µs, which is coarser
+than the number being reported, so the probe reports a mean computed from a
+running sum and prints the resolution it observed. A percentile here would be
+quantised to the tick and say nothing.
+
+The gRPC frontend adds its own encoding cost on top, measured separately
+against a source replaced by an immediate answer: p50 89 µs for a batch of one
+and 301 µs for a hundred, on one developer machine over loopback.
+
+**These are the fixture's numbers.** A vendor server's device read is its own,
+and this table says nothing about it — which is the same rule the rest of this
+document applies to every other fixture result.
+
 ### Long-running resource result
 
 Workflow run
