@@ -387,4 +387,19 @@ func TestEveryRuntimeDurationMustBePositive(t *testing.T) {
 		t.Errorf("a zero reconnect maximum was refused as %v, which names the ordering rule "+
 			"rather than the variable the operator set", err)
 	}
+
+	// The gRPC connection age is the same shape: a zero age is refused either
+	// way, because any positive grace period then outlasts it. Again what the
+	// positivity check adds is which variable the operator is told about.
+	zeroAge := DefaultConfig()
+	zeroAge.GRPCMaxConnectionGrace = time.Nanosecond
+	zeroAge.GRPCMaxConnectionAge = 0
+	ageErr := zeroAge.finalizeAndValidate()
+	if ageErr == nil {
+		t.Fatal("a zero gRPC connection age was accepted")
+	}
+	if !strings.Contains(ageErr.Error(), "positive") {
+		t.Errorf("a zero gRPC connection age was refused as %v, which names the grace rule "+
+			"rather than the variable the operator set", ageErr)
+	}
 }
