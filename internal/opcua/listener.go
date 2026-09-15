@@ -303,7 +303,11 @@ func (l *Listener) Serve(listener net.Listener) error {
 	l.mu.Lock()
 	if l.closed {
 		l.mu.Unlock()
-		return net.ErrClosed
+		// Already closed, which is the same outcome the accept loop reports as
+		// a clean stop below. Saying so with an error instead would make a
+		// shutdown that arrives before this goroutine is scheduled look to the
+		// caller like a listener that failed.
+		return nil
 	}
 	l.listener = listener
 	l.mu.Unlock()

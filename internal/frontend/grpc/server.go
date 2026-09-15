@@ -146,6 +146,12 @@ func (s *Server) Serve(listener net.Listener) error {
 	s.listening.Store(true)
 	err := s.server.Serve(listener)
 	s.listening.Store(false)
+	// Having been stopped is not a failure to serve. gRPC reports it this way
+	// when Stop arrives before Serve does, which is what a shutdown racing a
+	// just-started listener looks like.
+	if errors.Is(err, grpcgo.ErrServerStopped) {
+		return nil
+	}
 	return err
 }
 
