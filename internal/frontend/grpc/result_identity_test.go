@@ -114,3 +114,95 @@ func TestAnItemPropertiesRequestMayFillItsBound(t *testing.T) {
 		t.Error("a request naming no properties was accepted")
 	}
 }
+
+// An active subscription item carries the DA metadata that makes it usable:
+// the canonical VARTYPE the source keeps it in, and the access rights it
+// grants. An item reported active without them is the source and the adapter
+// disagreeing, and relaying it would give a client a subscription entry it
+// cannot type or write. Both halves are checked separately, because either
+// alone would let the other through.
+func TestAnActiveSubscriptionItemCarriesItsMetadata(t *testing.T) {
+	canonical := opcda.VTI4
+	rights := opcda.DAAccessRights{Raw: 3, Read: true, Write: true}
+
+	for _, testCase := range []struct {
+		name     string
+		item     opcda.SubscriptionItemStatus
+		accepted bool
+	}{
+		{
+			name: "an active item with both",
+			item: opcda.SubscriptionItemStatus{
+				ItemID: "Test/A", Active: true,
+				CanonicalType: &canonical, AccessRights: &rights,
+			},
+			accepted: true,
+		},
+		{
+			name: "an active item with no canonical type",
+			item: opcda.SubscriptionItemStatus{
+				ItemID: "Test/A", Active: true, AccessRights: &rights,
+			},
+		},
+		{
+			name: "an active item with no access rights",
+			item: opcda.SubscriptionItemStatus{
+				ItemID: "Test/A", Active: true, CanonicalType: &canonical,
+			},
+		},
+		{
+			name: "an active item with neither",
+			item: opcda.SubscriptionItemStatus{ItemID: "Test/A", Active: true},
+		},
+		// An item that is not active was never established, so it has no
+		// metadata to carry and is not held to any.
+		{
+			name:     "an inactive item with neither",
+			item:     opcda.SubscriptionItemStatus{ItemID: "Test/A"},
+			accepted: true,
+		},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			info := opcda.SubscriptionInfo{
+				ID:    "s1",
+				Items: []opcda.SubscriptionItemStatus{testCase.item},
+			}
+			if testCase.item.Active {
+				info.ActiveItemCount = 1
+			}
+			_, err := encodeSubscriptionCreated(info, 64)
+			if accepted := err == nil; accepted != testCase.accepted {
+				t.Errorf("accepted = %v, want %v (%v)", accepted, testCase.accepted, err)
+			}
+		})
+	}
+}
+
+// VT_EMPTY and VT_NULL carry no value, and this is the third place that rule
+// is written -- the DA core validates a Write of one, the HTTP frontend
+// encodes a Read of one, and this encodes it for gRPC. Inverting the check
+// makes the rule its own opposite here too: an empty value carrying a number
+// would be encoded and one carrying nothing refused.
+func TestAnEmptyScalarOverGRPCIsTheAbsenceOfAValue(t *testing.T) {
+	for _, varType := range []opcda.DAVarType{opcda.VTEmpty, opcda.VTNull} {
+		t.Run(varType.String(), func(t *testing.T) {
+			encoded, err := encodeScalar(varType, nil)
+			if err != nil {
+				t.Fatalf("a %s value carrying nothing was refused: %v", varType, err)
+			}
+			if encoded.GetEmptyOrNull() != true {
+				t.Errorf("a %s value was encoded as %#v", varType, encoded.Value)
+			}
+			if _, err := encodeScalar(varType, int32(0)); err == nil {
+				t.Errorf("a %s value carrying a number was encoded", varType)
+			}
+		})
+	}
+	// The control: a type that does carry a value still requires the right one.
+	if _, err := encodeScalar(opcda.VTI4, int32(1)); err != nil {
+		t.Errorf("a VT_I4 value carrying an int32 was refused: %v", err)
+	}
+	if _, err := encodeScalar(opcda.VTI4, nil); err == nil {
+		t.Error("a VT_I4 value carrying nothing was encoded")
+	}
+}

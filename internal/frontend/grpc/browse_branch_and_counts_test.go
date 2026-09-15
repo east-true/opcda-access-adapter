@@ -2,6 +2,7 @@ package grpcfrontend
 
 import (
 	"context"
+	"reflect"
 	"testing"
 	"time"
 
@@ -129,11 +130,16 @@ func TestAnExplicitGRPCBoundIsNotReplacedByItsDefault(t *testing.T) {
 			got, explicit)
 	}
 
-	// And a bound left at zero does get a default, or the checks would be
-	// doing nothing at all.
+	// And every bound left at zero gets a default. Checking a sample of the
+	// fields would leave the rest free to stay zero, which is a server running
+	// with no bound at all where the operator expected the documented one, so
+	// the whole struct is walked.
 	defaulted := New(&testRuntime{}, Config{}).config
-	if defaulted.MaxConcurrent == 0 || defaulted.MaxConcurrentStream == 0 ||
-		defaulted.ConnectionTimeout == 0 || defaulted.MaxConnectionIdle == 0 {
-		t.Errorf("an unset configuration was left unfilled: %+v", defaulted)
+	value := reflect.ValueOf(defaulted)
+	for index := 0; index < value.NumField(); index++ {
+		if value.Field(index).IsZero() {
+			t.Errorf("%s was left at zero by an unset configuration",
+				value.Type().Field(index).Name)
+		}
 	}
 }
