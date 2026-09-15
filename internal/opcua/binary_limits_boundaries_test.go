@@ -76,6 +76,16 @@ func TestNestingDepthHasAFloorAsWellAsACeiling(t *testing.T) {
 // A length field is an Int32. A bound above what one can express describes a
 // message that could never be encoded, so the ceiling is the width of the
 // field rather than an arbitrary choice.
+//
+// The check only has work to do on a 64-bit build. This project ships
+// windows/386 as well, where int is 32 bits and a limit past math.MaxInt32
+// cannot be represented at all -- the type system enforces the same rule
+// before the validator sees it, and a test that tried would not compile. So
+// the over-the-ceiling half is skipped there rather than dropped, and says
+// why, because "this bound is unreachable on half the builds we ship" is
+// something a reader should be told rather than left to infer from a build tag.
+const intIsWiderThanInt32 = math.MaxInt > math.MaxInt32
+
 func TestNoBinaryLimitMayExceedAnInt32LengthField(t *testing.T) {
 	for _, field := range binaryLimitFields {
 		if field.name == "MaxNestingDepth" {
@@ -92,9 +102,17 @@ func TestNoBinaryLimitMayExceedAnInt32LengthField(t *testing.T) {
 				t.Errorf("%s at exactly math.MaxInt32 was refused: %v", field.name, err)
 			}
 
+			if !intIsWiderThanInt32 {
+				t.Skip("int is 32 bits here, so a limit past math.MaxInt32 " +
+					"cannot be built and the type system enforces this rule")
+			}
 			limits = DefaultBinaryLimits()
 			limits.MaxMessageBytes = math.MaxInt32
-			field.set(&limits, math.MaxInt32+1)
+			// Through a variable, so the compiler does not fold it: as a
+			// constant expression this does not build on a 32-bit int at all,
+			// which is the same rule arriving one layer earlier.
+			ceiling := math.MaxInt32
+			field.set(&limits, ceiling+1)
 			err := limits.validate()
 			if err == nil {
 				t.Fatalf("%s one past math.MaxInt32 was accepted", field.name)
