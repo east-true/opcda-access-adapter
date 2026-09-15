@@ -31,12 +31,24 @@ func writeConfigFile(t *testing.T, body string) string {
 
 const testSource = `"source":{"clsid":"{AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA}"}`
 
+// A complete endpoint object, so an OPC UA case is refused for the stray
+// setting it carries rather than for the settings it is missing. Without it
+// the next check answers first and the exclusivity rule is never reached.
+const storedOPCUAEndpoint = `"opcua":{` +
+	`"endpointUrl":"opc.tcp://127.0.0.1:4840",` +
+	`"applicationUri":"urn:example:adapter",` +
+	`"namespaceUri":"urn:example:adapter",` +
+	`"securityPolicyUri":"http://opcfoundation.org/UA/SecurityPolicy#None",` +
+	`"transportProfileUri":"http://opcfoundation.org/UA-Profile/Transport/uatcp-uasc-uabinary",` +
+	`"sourceFolderName":"Source"}`
+
 func TestAFrontendMayNotCarryAnotherFrontendsSettings(t *testing.T) {
 	// The control: each frontend loads when it carries only its own settings,
 	// or the refusals below would prove nothing.
 	for _, testCase := range []struct{ name, frontend string }{
 		{"HTTP", `{"type":"http","httpListen":"127.0.0.1:8080"}`},
 		{"gRPC", `{"type":"grpc","grpcListen":"127.0.0.1:50051"}`},
+		{"OPC UA", `{"type":"opcua","opcuaListen":"127.0.0.1:4840",` + storedOPCUAEndpoint + `}`},
 	} {
 		t.Run("only its own/"+testCase.name, func(t *testing.T) {
 			path := writeConfigFile(t, `{"version":3,`+testSource+`,"frontend":`+testCase.frontend+`}`)
@@ -63,9 +75,13 @@ func TestAFrontendMayNotCarryAnotherFrontendsSettings(t *testing.T) {
 		{"gRPC with an HTTP listen address",
 			`{"type":"grpc","grpcListen":"127.0.0.1:50051","httpListen":"127.0.0.1:8080"}`},
 		{"OPC UA with an HTTP listen address",
-			`{"type":"opcua","opcuaListen":"127.0.0.1:4840","httpListen":"127.0.0.1:8080"}`},
+			`{"type":"opcua","opcuaListen":"127.0.0.1:4840","httpListen":"127.0.0.1:8080",` +
+				storedOPCUAEndpoint + `}`},
 		{"OPC UA with a gRPC listen address",
-			`{"type":"opcua","opcuaListen":"127.0.0.1:4840","grpcListen":"127.0.0.1:50051"}`},
+			`{"type":"opcua","opcuaListen":"127.0.0.1:4840","grpcListen":"127.0.0.1:50051",` +
+				storedOPCUAEndpoint + `}`},
+		{"OPC UA with no listen address of its own",
+			`{"type":"opcua","httpListen":"127.0.0.1:8080",` + storedOPCUAEndpoint + `}`},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
 			path := writeConfigFile(t, `{"version":3,`+testSource+`,"frontend":`+testCase.frontend+`}`)
