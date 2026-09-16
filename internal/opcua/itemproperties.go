@@ -67,10 +67,15 @@ type itemVariableType struct {
 // it, so claiming the type would mean claiming one whose mandatory property the
 // adapter knows it cannot supply. Such an item is given DataItemType instead.
 //
-// MultiStateDiscreteType is never claimed, for the same reason: its mandatory
-// EnumStrings comes from EU Info, whose DA value is an array of strings, and
-// the DA layer does not carry array VARIANTs. A type is a promise, and the
-// adapter does not make one it cannot keep.
+// MultiStateDiscreteType is never claimed, for a related but narrower reason.
+// Its mandatory EnumStrings comes from EU Info, whose DA value is an array of
+// strings. The DA layer carries array VARIANTs now (ADR-0019), so that is no
+// longer the obstacle; EnumStrings is LocalizedText[], and a DA array of BSTR
+// is String[]. Turning one into the other is a conversion this adapter has not
+// decided -- a DA string carries no locale, and inventing one, or publishing an
+// empty one, is a choice rather than a transcription. A type is a promise, and
+// the adapter does not make one whose mandatory property it would have to
+// invent the shape of.
 //
 // The same rule covers the DataType each type constrains. Clause 5.3.2.3 gives
 // AnalogItemType the DataType Number and 5.3.3.2 gives TwoStateDiscreteType the
@@ -620,15 +625,11 @@ func OtherPropertyForNode(id NodeID) (opcda.DAItemID, opcda.PropertyID, bool) {
 // otherPropertiesFor reports the properties a source offers that the item's
 // VariableType does not already carry, and that the adapter can represent.
 //
-// A property whose DA VARTYPE has no Table A.2 row, or whose value is an array,
-// is left out. A.3.1.4 would have an array exposed with ValueRank
-// OneOrMoreDimensions, and the DA layer now carries array VARIANTs (ADR-0019),
-// so the reason has narrowed: Table A.2 gives no row for an array VARTYPE, so
-// the node has no DataType to declare. Exposing one means giving it an element
-// DataType and a ValueRank of its own, which is a change to the node rather
-// than to the value path. Until then such a node could be browsed and never
-// declared, and a property that exists without a type is worse than one that
-// is absent.
+// A property whose DA VARTYPE has no Table A.2 row is left out, because a node
+// that could be browsed and never read is worse than one that is absent. An
+// array is judged by its element type and exposed with ValueRank
+// OneOrMoreDimensions, which is what A.3.1.4 asks for; a by-reference property
+// is left out outright, since the DA layer carries none.
 func otherPropertiesFor(available []opcda.AvailableProperty, claimed []itemPropertyBinding) []opcda.AvailableProperty {
 	used := map[opcda.PropertyID]struct{}{
 		// These map onto attributes rather than properties, so they are not
@@ -653,13 +654,15 @@ func otherPropertiesFor(available []opcda.AvailableProperty, claimed []itemPrope
 		if _, taken := used[property.ID]; taken {
 			continue
 		}
-		// DataTypeFor refuses an array or byref VARTYPE: Table A.2 gives no
-		// scalar type for one, so there is nothing to put in the node's
-		// DataType attribute. The value path can carry an array now, so what
-		// remains is the node -- an element DataType and a ValueRank of
-		// OneOrMoreDimensions, which A.3.1.4 describes and this does not yet
-		// build.
-		if _, ok := DataTypeFor(property.VarType); !ok {
+		// A property the mapping has no type for is left out, because a node
+		// that could be browsed and never read is worse than one that is
+		// absent. An array is judged by its element type: A.3.1.4 exposes an
+		// array property, and what has to be representable is what the array
+		// holds.
+		if _, ok := DataTypeFor(property.VarType.Base()); !ok {
+			continue
+		}
+		if property.VarType.IsByRef() {
 			continue
 		}
 		others = append(others, property)
@@ -709,8 +712,11 @@ func otherPropertyNode(itemID opcda.DAItemID, property opcda.AvailableProperty, 
 		DisplayName:    LocalizedText{Text: name},
 		TypeDefinition: NumericNodeID(0, NodeIDPropertyType),
 		DataType:       NumericNodeID(0, NodeIDBaseDataType),
-		// Only scalar properties are exposed, so the rank is never in doubt.
-		ValueRank:         ValueRankScalar,
+		// A.3.1.4 gives an array-valued property ValueRank
+		// OneOrMoreDimensions. A DA source does not declare how many
+		// dimensions an array property has before it is read, so the rank
+		// says "one or more" rather than naming a count that could be wrong.
+		ValueRank:         valueRankFor(property.VarType),
 		ItemID:            itemID,
 		AccessLevel:       AccessLevelCurrentRead,
 		AccessRightsKnown: true,
@@ -888,4 +894,15 @@ func (s *AddressSpace) NoteScanRate(itemID opcda.DAItemID, milliseconds float64)
 	}
 	item.MinimumSamplingInterval = milliseconds
 	item.MinimumSamplingIntervalKnown = true
+}
+
+// valueRankFor reports the ValueRank a DA property's VARTYPE calls for.
+// A.3.1.4 exposes an array-valued property with OneOrMoreDimensions, which is
+// the rank for an array whose dimension count is not declared -- and a DA
+// source declares none until the value is read.
+func valueRankFor(varType opcda.DAVarType) int32 {
+	if varType.IsArray() {
+		return ValueRankOneOrMoreDimensions
+	}
+	return ValueRankScalar
 }

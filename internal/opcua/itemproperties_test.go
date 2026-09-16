@@ -883,9 +883,8 @@ func TestUnnamedDAPropertiesBecomePropertiesOfTheItem(t *testing.T) {
 	available := []opcda.AvailableProperty{
 		{ID: opcda.PropertyScanRate, Description: "Scan Rate", VarType: opcda.VTR4},
 		{ID: opcda.PropertyEUType, Description: "EU Type", VarType: opcda.VTI4},
-		// An array property is left out: A.3.1.4 would expose it with
-		// OneOrMoreDimensions, and the DA layer cannot read one, so the node
-		// would exist and never answer.
+		// An array property is exposed with OneOrMoreDimensions, which is what
+		// A.3.1.4 asks for. EU Info is the one a real source carries.
 		{ID: opcda.PropertyEUInfo, Description: "EU Info", VarType: opcda.VTBSTR | opcda.VTArray},
 		// Access Rights and Item Description are attributes, not properties.
 		{ID: opcda.PropertyAccessRights, Description: "Access Rights", VarType: opcda.VTI4},
@@ -902,7 +901,18 @@ func TestUnnamedDAPropertiesBecomePropertiesOfTheItem(t *testing.T) {
 	// Access Rights, Item Description and Scan Rate map onto attributes --
 	// Table A.1 names the first two and A.3.1.3's common mappings name Scan
 	// Rate -- so none of them is exposed a second time as a property.
-	for _, unwanted := range []string{"EU Info", "Access Rights", "Item Description", "Scan Rate"} {
+	if !names["EU Info"] {
+		t.Errorf("the array-valued EU Info was not exposed; got %v", names)
+	}
+	euInfo, ok := space.Node(OtherPropertyNodeID("Test/Float", opcda.PropertyEUInfo))
+	if !ok {
+		t.Fatal("the EU Info node is missing")
+	}
+	if euInfo.ValueRank != ValueRankOneOrMoreDimensions {
+		t.Errorf("EU Info has ValueRank %d, want OneOrMoreDimensions (%d)",
+			euInfo.ValueRank, ValueRankOneOrMoreDimensions)
+	}
+	for _, unwanted := range []string{"Access Rights", "Item Description", "Scan Rate"} {
 		if names[unwanted] {
 			t.Errorf("%s was exposed as a property", unwanted)
 		}

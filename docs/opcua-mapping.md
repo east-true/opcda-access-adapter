@@ -25,8 +25,8 @@ suits their source should not have to find them scattered through the document.
 |---|---|---|
 | A.3.1.2 | the root branch's BrowseName "should" be the Server ProgId | named from `OPCDA_OPCUA_SOURCE_FOLDER`, default `Source` — a source may be configured by CLSID, where there is no ProgID, and an operator who wants the clause's behaviour can configure it |
 | A.3.1.3 | `AnalogItemType` if the item has High and Low EU **or** an Analog EU Type | the EU Type alone does not promote, because 5.3.2.3 makes `EURange` mandatory and there would be no range to publish |
-| A.3.1.3 | `MultiStateDiscreteType` for an enumerated EU Type | never claimed: its mandatory `EnumStrings` comes from EU Info, an array, and the DA layer carries no array VARIANTs |
-| A.3.1.4 | an array-valued property is exposed with `ValueRank` `OneOrMoreDimensions` | not exposed as a node — the value path carries arrays now, but Table A.2 gives no `DataType` for an array VARTYPE, so the node has no type to declare |
+| A.3.1.3 | `MultiStateDiscreteType` for an enumerated EU Type | never claimed: its mandatory `EnumStrings` is `LocalizedText[]` and EU Info is a DA `String[]`, a conversion this adapter has not decided |
+| A.3.1.4 | an array-valued property is exposed with `ValueRank` `OneOrMoreDimensions` | applied |
 | Table A.3 | DA `LAST_KNOWN` → `Bad_OutOfService` | `Uncertain_NoCommunicationLastUsableValue`, because Table 61 says so and explains why: a Bad severity must return a Null value, which discards the last known value the quality exists to carry |
 | 5.2 | the `SemanticsChanged` bit is set when a semantic property changes | set when the adapter **observes** a change, which is when a property is read; a change nobody reads is not detected, and detecting every one means polling the source |
 | OPC 10000-5 Table 9 | `ServerType` makes `ServerDiagnostics` a mandatory component of the Server Object | not published. Its mandatory children are counters, session and subscription diagnostics arrays this server does not collect, and publishing them as zeros would report a diagnostic answer rather than the absence of one. The other eight mandatory components are carried |
@@ -417,20 +417,14 @@ values and this is an item, so it could be — but the refusal in the previous
 section is by node kind, and lifting it for one kind of property without a way
 for a client to learn the underlying ItemID would be a half-measure.
 
-**One of A.3.1.4's rules remains unapplied, and it is a limit of this adapter,
-not of the source.**
+**An array-valued property is exposed**, with `ValueRank`
+`OneOrMoreDimensions`, which is what A.3.1.4 asks for. A DA source does not
+declare how many dimensions an array property has before it is read, so the
+rank says "one or more" rather than naming a count that could be wrong.
 
-An **array-valued property is not exposed as a node**. A.3.1.4 would have it
-carried with `ValueRank` `OneOrMoreDimensions`.
-
-The reason has narrowed rather than gone. The DA layer now carries array
-VARIANTs ([ADR-0019](adr/0019-safearray-representation.md)) and the value path
-converts one to a UA array, so a node like this would no longer be unreadable.
-What is missing is the node: Table A.2 gives no row for an array VARTYPE, so
-there is nothing to put in its `DataType` attribute, and exposing one means
-giving it an element `DataType` and a `ValueRank` of its own. Until that is
-built, **a source whose items carry array properties still gets less than
-A.3.1.4 describes** — EU Info is the property this excludes on a real source.
+A by-reference property is still left out: the DA layer carries none, so such a
+node could be browsed and never read, and a property that exists and cannot
+answer is worse than one that is absent.
 
 **A property belongs to the type its item was given.** `EngineeringUnits` and
 `InstrumentRange` exist on an analog item; `TrueState` and `FalseState` on a
@@ -639,9 +633,18 @@ whose EU Type is Analog but which offers neither bound has no range to publish,
 so claiming the type would promise a property the adapter knows it cannot
 supply. Such an item is given `DataItemType`.
 
-`MultiStateDiscreteType` is never claimed. Its mandatory `EnumStrings` comes
-from EU Info, whose DA value is an array of strings, and the DA layer does not
-carry array VARIANTs — so the promise could never be kept.
+`MultiStateDiscreteType` is never claimed, and the reason has narrowed rather
+than gone. Its mandatory `EnumStrings` comes from EU Info, whose DA value is an
+array of strings. The DA layer carries arrays now
+([ADR-0019](adr/0019-safearray-representation.md)), so that is no longer the
+obstacle.
+
+What remains is the type. `EnumStrings` is `LocalizedText[]`; a DA array of
+`VT_BSTR` is `String[]`. Turning one into the other is a conversion this
+adapter has not decided — a DA string carries no locale, and inventing one or
+publishing an empty one is a choice rather than a transcription. Claiming the
+type would mean promising a mandatory property whose shape the adapter would
+have to invent.
 
 ### A standard property's name belongs to the standards body
 
