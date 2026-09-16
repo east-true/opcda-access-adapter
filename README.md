@@ -4,90 +4,71 @@
 [![Real DA validation](https://github.com/east-true/opcda-access-adapter/actions/workflows/real-da-validation.yml/badge.svg)](https://github.com/east-true/opcda-access-adapter/actions/workflows/real-da-validation.yml)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
-DA-native HTTP/JSON, typed gRPC, and OPC UA access to one local OPC DA
-server—without making modern applications speak COM or changing the source
-data model.
+A thin Windows adapter that gives modern applications HTTP/JSON, typed gRPC,
+or OPC UA access to one local OPC DA server—without making DA-native clients
+speak COM or silently rewriting source semantics.
+
+[Quick start](#quick-start) · [Interfaces](#choose-an-interface) ·
+[Compatibility](#compatibility) · [Documentation](docs/README.md) ·
+[Contributing](CONTRIBUTING.md) · [Security](SECURITY.md)
 
 > [!IMPORTANT]
 > This is a Windows-only, pre-1.0 project for controlled local-COM
-> deployments. The scoped v0 is implemented and validated against a pinned
-> OPC Foundation DA 2.05a test server, but it is not broad vendor
-> certification or a production-readiness claim. There is no stable binary
-> release yet; build from source and review the documented limits before use.
+> deployments. The scoped implementation is complete and tested, but there is
+> no stable binary release and no broad vendor or production-readiness claim.
+> Build from source and review the [compatibility evidence](docs/compatibility.md)
+> before deploying it.
 
-## Why this project?
+## What it does
 
-OPC DA applications normally need Windows COM knowledge and direct access to
-the server. This adapter keeps that legacy boundary on the DA machine and
-offers an explicitly selected HTTP/JSON, typed gRPC, or OPC UA frontend for
-Browse, device Read, and strictly typed value Write.
+OPC DA normally requires a Windows process that understands COM and the
+vendor's server registration. This adapter keeps that legacy boundary on the
+DA host and exposes one explicitly selected frontend:
 
 ```text
-HTTP, gRPC, or OPC UA client
-    │
-    │  DA-native transport contract
-    ▼
-explicitly selected bounded frontend
-    │
-    ▼
-dedicated locked DA thread
-    │
-    │  local COM
-    ▼
-one OPC DA server
+HTTP / gRPC / OPC UA client
+            │
+            ▼
+   one bounded frontend
+            │
+            ▼
+ dedicated COM-owning thread
+            │ local COM
+            ▼
+    one OPC DA server
 ```
 
-The adapter preserves exact ItemIDs, canonical and actual VARTYPEs, raw
-Quality, source timestamp presence, HRESULTs, and access rights. It does not
-rename tags, scale values, infer timestamps, return last-good data, or store
+The adapter preserves exact ItemIDs, VARTYPEs, raw Quality, source timestamp
+presence, HRESULTs, access rights, and per-item errors. It does not rename
+tags, scale values, invent timestamps, return cached last-good data, or store
 process values.
 
-## Features
+| | Current scope |
+|---|---|
+| Source | Exactly one local OPC DA 2.05a server per process |
+| Frontend | Exactly one of HTTP/JSON, typed gRPC, or OPC UA |
+| Operations | Browse, device Read, strict typed Write, item properties; Subscribe over gRPC and OPC UA |
+| Platform | Native Windows `386` and `amd64` |
+| Execution | Foreground process or SCM-managed `LocalService` |
+| Safe defaults | Loopback listeners; Write disabled |
+| Distribution | Source only; no stable release or bundled OPC server |
 
-- OPC DA 2.05a baseline over local COM
-- bounded local OPC DA 2.0 registration detection without vendor activation
-- guided source/frontend selection with reviewed configuration output
-- optional SCM-managed Windows Service using the LocalService account
-- `GET /v1/status`
-- typed unary gRPC Status, Browse, Read, and Write
-- gRPC server-streaming `Subscribe`, one stream to one DA group
-- an OPC UA frontend over `SecurityPolicy` `None`, for local interoperability
-  only and explicitly not production ready
-- DA item properties, passed through with the source's own identifiers
-- optional, source-backed DA 2.x Browse
-- ordered batch device Read with per-item failures
-- strict typed value Write, disabled by default and never retried
-- dedicated COM-owning OS thread with bounded command serialization
-- reconnect with connection-generation handle invalidation
-- bounded bodies, batches, Browse results, connections, concurrency, and
-  timeouts
-- native `windows/386` and `windows/amd64` builds and tests
+## Quick start
 
-Remote DCOM, multiple DA servers in one adapter instance, tag mapping,
-normalization, persistence, and plugin systems are deliberately out of the
-current scope. So is any OPC UA `SecurityMode` other than `None`: what is
-implemented is unsigned and unencrypted, and is not a conformance,
-certification, or broad client-compatibility claim.
+You need Windows, an installed local OPC DA server, Git, and the Go version
+declared in [`go.mod`](go.mod). The adapter architecture must match the
+server's COM registration.
 
-## Requirements
+![PowerShell walkthrough of guided setup selecting a local OPC DA server, starting the HTTP frontend, and confirming connected status](docs/assets/setup-demo.gif)
 
-- Windows with an installed local OPC DA server
-- adapter architecture matching the server's COM registration (`386` or
-  `amd64`)
-- Go version declared in [`go.mod`](go.mod) when building from source
+This 12-second demo is a sanitized replay of the executed `windows/386`
+Graybox setup recorded in the [compatibility evidence](docs/compatibility.md).
+It starts a foreground loopback listener with Write disabled; it does not
+install a Windows Service. The same steps are available as copyable text below.
+If your Markdown viewer honors reduced-motion settings and shows a still image,
+[open the animation directly](docs/assets/setup-demo.gif).
 
-The repository does not bundle an OPC DA server or a prebuilt vendor runtime.
-There is no stable binary release yet.
-
-Release-shaped builds expose their exact source revision:
-
-```powershell
-.\opcda-access-adapter.exe --version
-```
-
-## Build
-
-Clone and build on the Windows machine that hosts the DA server:
+### 1. Build
 
 ```powershell
 git clone https://github.com/east-true/opcda-access-adapter.git
@@ -95,7 +76,7 @@ Set-Location opcda-access-adapter
 go build -trimpath -o opcda-access-adapter.exe ./cmd/adapter
 ```
 
-For a 32-bit-only OPC DA registration, build the x86 executable explicitly:
+For a 32-bit-only registration, build the x86 executable instead:
 
 ```powershell
 $env:GOARCH = "386"
@@ -103,132 +84,54 @@ go build -trimpath -o opcda-access-adapter-386.exe ./cmd/adapter
 Remove-Item Env:GOARCH
 ```
 
-The adapter architecture must match the COM registration. A 64-bit build does
-not see a 32-bit-only registration, so run the matching build—or both builds
-when the server bitness is unknown.
+A 64-bit executable cannot see a 32-bit-only COM registration. If the server
+bitness is unknown, run `detect` with both builds.
 
-## Quick start
-
-The recommended first run is the guided setup:
-
-```powershell
-.\opcda-access-adapter.exe setup
-```
-
-It walks through four reviewed decisions:
-
-1. choose one locally registered OPC DA 2.0 server;
-2. choose the frontend (`HTTP/JSON`, typed DA-native gRPC, or OPC UA);
-3. run in the current terminal, install a Windows Service, or save only; and
-4. confirm the exact configuration before anything is written or started.
-
-Even one detected candidate requires an explicit choice. HTTP defaults to
-`127.0.0.1:8080`, gRPC to `127.0.0.1:50051`, OPC UA to `127.0.0.1:4840`, and
-Write is disabled. The OPC UA frontend additionally requires an endpoint URL,
-an application URI, a namespace URI, and the two profile URIs, none of which
-are defaulted—see the [setup guide](docs/setup.md#selecting-opc-ua).
-Setup never silently overwrites an existing file or service and never changes
-COM/DCOM or firewall permissions.
-
-For a Windows Service, use an elevated PowerShell terminal and put the
-executable and configuration in stable paths readable by LocalService:
-
-```powershell
-$installDir = "C:\Program Files\OPCDAAccessAdapter"
-$configDir = "C:\ProgramData\OPCDAAccessAdapter"
-
-New-Item -ItemType Directory -Force -Path $installDir, $configDir | Out-Null
-Copy-Item .\opcda-access-adapter.exe "$installDir\opcda-access-adapter.exe"
-
-& "$installDir\opcda-access-adapter.exe" setup `
-  --config "$configDir\adapter.json"
-```
-
-Select **Windows Service** when prompted. The service runs as
-`NT AUTHORITY\LocalService`, starts automatically with Windows, and does not
-store a password. A vendor that works for an interactive user can still deny
-LocalService through its AppID/RunAs/DCOM policy; the adapter reports the
-failure but does not weaken those permissions. See the
-[setup and service guide](docs/setup.md).
-
-Verify the running adapter:
-
-```powershell
-Invoke-RestMethod http://127.0.0.1:8080/v1/status
-```
-
-For a gRPC selection, call
-`opcda.access.v1.OPCDAAccess/Status` at `127.0.0.1:50051` with a client
-generated from [`api/opcda/v1/opcda_access.proto`](api/opcda/v1/opcda_access.proto).
-
-The status must name the selected source, show the listener, and eventually
-report `connected`. Do not treat a detected registration alone as proof that
-the vendor server can activate or that its permissions are sufficient.
-
-### Manual foreground startup
-
-For the original environment-variable workflow, configure exactly one source
-identifier and start the adapter:
-
-```powershell
-$env:OPCDA_SOURCE_PROG_ID = "Vendor.Server.1"
-# Alternatively: $env:OPCDA_SOURCE_CLSID = "{00000000-0000-0000-0000-000000000000}"
-
-.\opcda-access-adapter.exe
-```
-
-Run `opcda-access-adapter-386.exe` instead when you built the x86 variant.
-
-File-based foreground startup is also available after setup's **save only**
-option:
-
-```powershell
-.\opcda-access-adapter.exe run --config .\opcda-access-adapter.json
-```
-
-File-based execution is strict and does not merge environment variables into
-the reviewed configuration.
-
-## Command reference
-
-| Command | Purpose |
-|---|---|
-| `opcda-access-adapter setup` | Detect, explicitly select, review, save, and optionally start one adapter |
-| `opcda-access-adapter detect` | List bounded local OPC DA 2.0 registrations without activating them |
-| `opcda-access-adapter run --config FILE` | Run the reviewed configuration in the current terminal |
-| `opcda-access-adapter service install --config FILE` | Install and start an SCM-managed LocalService instance |
-| `opcda-access-adapter service uninstall` | Stop and remove the configured Windows Service |
-| `opcda-access-adapter` | Run the original environment-variable workflow in the foreground |
-| `opcda-access-adapter --version` | Print embedded version and source revision metadata |
-
-Use `--help` on the command or subcommand for bounded detection, HTTP, gRPC
-and OPC UA listener, configuration-path, Write, and service-name options.
-
-### Local registration detection
-
-To list locally registered OPC DA 2.0 candidates before choosing a source:
+### 2. Inspect local registrations
 
 ```powershell
 .\opcda-access-adapter.exe detect
 ```
 
-Detection returns bounded JSON containing the exact registered CLSID and the
-ProgID when Windows can resolve it. It does not start a detected vendor server,
-select a source automatically, alter configuration, or search remote hosts.
-An empty list is a successful result. Run the matching 386 and amd64 builds
-when registrations may exist in both Windows architecture views.
-See [local server detection](docs/local-detection.md) for the output contract,
-bounds, and limitations.
+Detection returns a bounded JSON inventory of local OPC DA 2.0 registrations.
+It does not activate a vendor server, select one automatically, change
+configuration, or search remote machines. An empty list is a successful
+result. See [local server detection](docs/local-detection.md).
 
-Read known ItemIDs directly from the device:
+### 3. Configure and run
+
+```powershell
+.\opcda-access-adapter.exe setup
+```
+
+The guided flow requires four explicit decisions:
+
+1. choose one detected source;
+2. choose HTTP, gRPC, or OPC UA;
+3. choose foreground, Windows Service, or save-only execution;
+4. review the exact configuration before it is written or started.
+
+For the shortest first run, choose **HTTP/JSON** and **current terminal**.
+HTTP listens on `127.0.0.1:8080` by default and Write remains disabled. Setup
+never silently overwrites a file or service and never changes COM/DCOM or
+firewall permissions.
+
+### 4. Check status
+
+```powershell
+Invoke-RestMethod http://127.0.0.1:8080/v1/status
+```
+
+The response should name the selected source and eventually report
+`connected`. A registration discovered by `detect` is not proof that the
+vendor server can activate under the current Windows identity.
+
+### 5. Read a known ItemID
 
 ```powershell
 $body = @{
     source = "device"
-    items = @(
-        @{ itemId = "Random.Int2" }
-        @{ itemId = "Random.Real8" }
-    )
+    items  = @(@{ itemId = "Vendor.Example.Item" })
 } | ConvertTo-Json -Depth 4
 
 Invoke-RestMethod `
@@ -238,155 +141,147 @@ Invoke-RestMethod `
     -Body $body
 ```
 
-ItemIDs must be the exact identifiers accepted by the DA server. Browse is an
-optional source capability; known ItemID Read remains available when Browse is
-unsupported.
+Use the exact ItemID accepted by the source. Browse is optional in OPC DA;
+known-ItemID Read remains available when the source does not support Browse.
 
-## HTTP API
+For service installation, saved configurations, OPC UA identity fields, and
+the original environment-variable workflow, continue with the
+[setup and Windows Service guide](docs/setup.md).
 
-| Method | Endpoint | Purpose |
-|---|---|---|
-| `GET` | `/v1/status` | Runtime, source, generation, capability, and listener status |
-| `POST` | `/v1/browse` | Serialized source Browse with exact ItemIDs |
-| `POST` | `/v1/read` | Ordered batch device Read with per-item DA metadata |
-| `POST` | `/v1/write` | Strict typed value Write when explicitly enabled |
-| `POST` | `/v1/properties/available` | DA item properties this source offers for an item |
-| `POST` | `/v1/properties` | Those properties' values, with per-property HRESULTs |
+## Choose an interface
 
-See the [HTTP API reference](docs/http-api.md) for request/response contracts,
-lossless value encodings, error layers, limits, and all configuration
-variables.
+Only one frontend runs in an adapter process.
 
-## gRPC API
+| Frontend | Best fit | Surface | Security boundary |
+|---|---|---|---|
+| [HTTP/JSON](docs/http-api.md) | Scripts and simple integrations | Status, Browse, Read, Write, item properties | Loopback by default; no built-in TLS or authentication |
+| [Typed gRPC](docs/grpc-api.md) | Generated clients and DA-native streaming | HTTP surface plus server-streaming Subscribe | Plaintext loopback by default; no built-in TLS or authentication |
+| [OPC UA](docs/opcua-mapping.md) | Local UA interoperability work | Browse, Read, Write, Subscriptions, DA-to-UA properties | `SecurityPolicy None` only; anonymous, unsigned, unencrypted, not production ready |
 
-The typed service is `opcda.access.v1.OPCDAAccess`:
+The authoritative gRPC contract is
+[`api/opcda/v1/opcda_access.proto`](api/opcda/v1/opcda_access.proto). HTTP does
+not expose Subscribe. OPC UA is a deliberately bounded frontend, not a general
+UA server or a conformance claim.
 
-| RPC | Purpose |
+## Design guarantees
+
+- **DA-native identity.** ItemIDs and source metadata are returned as supplied.
+- **Explicit partial failure.** Batch results remain ordered and carry their
+  own HRESULT or adapter error.
+- **No silent type conversion.** Write is value-only, strictly typed, disabled
+  by default, and never retried or replayed.
+- **No stale fallback.** Disconnect invalidates source handles and pending
+  subscription values; clients must resubscribe explicitly.
+- **COM ownership stays local.** DA pointers and cleanup remain on a dedicated,
+  locked OS thread.
+- **Bounded work.** Request sizes, batches, Browse depth/results, connections,
+  subscriptions, concurrency, and timeouts have explicit ceilings.
+- **No process-value storage.** Values are neither persisted nor logged by
+  default.
+
+The full invariants and rationale live in the
+[design baseline](docs/design.md) and [architecture decisions](docs/adr/).
+
+## Deliberate non-goals
+
+This project is not a general industrial gateway. It does not provide:
+
+- remote DCOM or remote server discovery;
+- aggregation of multiple DA servers in one process;
+- tag mapping, renaming, scaling, normalization, or a common asset model;
+- process-value persistence or historical storage;
+- automatic source selection, transparent resubscription, or last-good data;
+- a plugin framework or non-DA source protocols;
+- production authentication, authorization, TLS, or OPC UA security modes
+  other than `None`.
+
+These boundaries are part of the correctness model, not a feature backlog.
+
+## Safety and deployment
+
+- All listeners bind to loopback by default.
+- HTTP loopback mode rejects non-loopback Host values and direct browser Origin
+  requests; POST endpoints require JSON.
+- External binds require a separate network and authorization boundary.
+- A Windows Service runs as `NT AUTHORITY\LocalService`, not LocalSystem, and
+  does not change DCOM permissions.
+- A vendor that works for an interactive user may still reject LocalService
+  through its own AppID, RunAs, or DCOM policy.
+- Suspected vulnerabilities belong in a private GitHub security advisory, not
+  a public issue. See [SECURITY.md](SECURITY.md).
+
+## Compatibility
+
+The automated real-DA workflow validates the pinned OPC Foundation DA 2.05a
+fixture on both `windows/386` and `windows/amd64`, including Browse, partial
+Read, strict typed and denied Write, Subscribe, reconnect, guided setup,
+Windows Service lifecycle, and bounded stability scenarios.
+
+One operator-supplied x86 Graybox Gray Simulator 1.7.9.701 installation also
+passed a bounded manual run through the DA core, HTTP, gRPC unary/streaming,
+and read-only OPC UA paths. That is evidence for that exact installation, not
+for every Graybox copy or other vendor.
+
+Three third-party UA clients—asyncua, open62541, and the OPC Foundation .NET
+stack—run against the UA frontend in CI. This is interoperability evidence,
+not OPC UA certification or conformance.
+
+See the [compatibility matrix](docs/compatibility.md) for exact workflow runs,
+source pins, observed metadata, resource deltas, and untested conditions.
+
+## Command reference
+
+| Command | Purpose |
 |---|---|
-| `Status` | Runtime, exact source, generation, capability, and listener status |
-| `Browse` | Serialized DA Browse with branch/item distinction and exact ItemIDs |
-| `Read` | Ordered batch device Read with raw DA metadata and partial failures |
-| `Write` | Strict VARTYPE-matched value Write when explicitly enabled |
-| `Subscribe` | Server-streaming change delivery; one stream is one DA group |
-| `AvailableItemProperties` | `IOPCItemProperties::QueryAvailableProperties`, passed through |
-| `ItemProperties` | `::GetItemProperties`, with the source's own HRESULTs |
+| `opcda-access-adapter setup` | Select, review, save, and optionally start one configuration |
+| `opcda-access-adapter detect` | Inventory bounded local OPC DA 2.0 registrations without activation |
+| `opcda-access-adapter run --config FILE` | Run a reviewed configuration in the current terminal |
+| `opcda-access-adapter service install --config FILE` | Install and start an SCM-managed LocalService instance |
+| `opcda-access-adapter service uninstall` | Stop and remove the configured Windows Service |
+| `opcda-access-adapter` | Run the environment-variable workflow in the foreground |
+| `opcda-access-adapter --version` | Print version and source revision metadata |
 
-The authoritative protobuf is
-[`api/opcda/v1/opcda_access.proto`](api/opcda/v1/opcda_access.proto). See the
-[gRPC API reference](docs/grpc-api.md) for scalar `oneof` mappings, typed error
-details, limits, client generation, and plaintext-loopback security boundary.
-HTTP exposes no Subscribe.
-
-## OPC UA
-
-The adapter can serve OPC UA instead of HTTP or gRPC, publishing the DA source
-as an address space per OPC 10000-8 Annex A. Browse, Read, Write, and
-Subscriptions with MonitoredItems are answered by the same DA runtime the other
-frontends use.
-
-Only `SecurityMode` `None` is implemented—no signing, no encryption, anonymous
-users. It is for local interoperability, and it is **not production ready**.
-Three third-party clients (asyncua, open62541, and the OPC Foundation .NET
-stack) run against it in CI, which is not conformance and not a claim that any
-particular client or deployment will work. See the
-[OPC UA mapping](docs/opcua-mapping.md) for the address space, the type and
-quality mappings, and every deliberate departure from Annex A.
-
-## Safety defaults
-
-- HTTP binds to loopback unless an external address is explicitly configured.
-- gRPC is plaintext and binds to loopback unless an external address is
-  explicitly configured; the project currently has no TLS/authentication
-  platform.
-- OPC UA runs unsigned and unencrypted under `SecurityPolicy` `None` with
-  anonymous users, binds to loopback by default, and is not production ready.
-- Loopback mode rejects non-loopback Host values; POST requires JSON and
-  rejects direct browser Origin requests.
-- Request paths, JSON field spelling, nesting, content encoding, and runtime
-  result identity are validated strictly and fail closed.
-- Write returns `403 WRITE_DISABLED` unless it is explicitly enabled with
-  setup's `--enable-write` option or `OPCDA_WRITE_ENABLED=true` in the original
-  environment-variable workflow.
-- The adapter currently has no authentication, authorization, or TLS layer.
-- An in-flight Write is never automatically retried or replayed.
-- A disconnected source never returns a cached last-good value.
-- Process values, including Write values, are not logged or persisted.
-
-Treat an external bind as a deployment security decision and place the adapter
-behind an appropriate network and authorization boundary. Report suspected
-vulnerabilities through the private process in [SECURITY.md](SECURITY.md).
-
-## Compatibility and validation
-
-The pinned OPC Foundation DA 2.05a fixture passes local-COM Connect, root and
-nested Browse, partial Read, typed and denied Write, server outage/reconnect,
-and bounded stability tests on Windows Server 2025 for both x86/386 and
-x64/amd64. The stability profile includes rapid, concurrent, malformed,
-slow-header, overload/backpressure, and repeated source-failure scenarios.
-
-The same fixture also passes the complete guided setup and Windows Service
-lifecycle on both architectures: explicit selection, exact-CLSID configuration,
-LocalService startup, service-mode device Read, bounded Application Event Log
-records, uninstall, and event-source cleanup.
-
-The Phase 6 run additionally passes the selected gRPC frontend on both
-architectures: Status, root/nested Browse, ordered partial Read, disabled and
-strict typed Write, source-denied Write, LocalService execution, and loopback
-listener checks. These are fixture-specific results, not a claim that every DA
-server or external gRPC deployment is compatible.
-
-Three third-party OPC UA clients—asyncua, open62541, and the OPC Foundation
-.NET stack—run 425 checks against the UA frontend in CI. Three clients agreeing
-is not conformance and not certification, and no claim is made that any other
-client or deployment will work. What it establishes is narrower and worth
-having: several defects were found only because a second and third client
-disagreed with a server the first had already passed.
-
-These results apply only to the exact recorded fixture and environment. See
-the [compatibility matrix](docs/compatibility.md) for immutable workflow runs,
-source pins, observed DA metadata, resource deltas, and untested conditions.
+Use `--help` on a command for its complete options and bounds.
 
 ## Documentation
 
-| Document | Contents |
-|---|---|
-| [Setup and Windows Service](docs/setup.md) | Guided selection, strict configuration, service lifecycle, and identity caveats |
-| [Local server detection](docs/local-detection.md) | Registration inventory contract, bounds, architecture views, and limitations |
-| [Design baseline](docs/design.md) | Product boundary, invariants, architecture, and v0 definition |
-| [HTTP API](docs/http-api.md) | Endpoints, JSON contracts, configuration, limits, and errors |
-| [gRPC API](docs/grpc-api.md) | Protobuf service, DA scalar mappings, typed errors, bounds, and client generation |
-| [OPC UA mapping](docs/opcua-mapping.md) | Address space, Annex A mappings, departures, configuration, and UA service coverage |
-| [Compatibility](docs/compatibility.md) | Executed server results and honest compatibility scope |
-| [Windows validation](docs/validation/real-da-windows.md) | Reproducible real-DA VM procedure |
-| [UA client interoperability](docs/validation/ua-client-interop.md) | What the three third-party UA clients check, and the recorded deviations |
-| [Windows COM security](docs/security-windows.md) | Local activation, identity, ACL, and HRESULT guidance |
-| [Local destructive review](docs/validation/local-vm-destructive.md) | Isolated VM attack/failure matrix and evidence gate |
-| [Release procedure](docs/releasing.md) | Dry runs, publication gates, checksums, and attestations |
-| [Implementation status](docs/implementation-status.md) | Completed phases, validation results, risks, and next work |
-| [ADRs](docs/adr/) | Runtime, type, Write, reconnect, bounds, and fixture decisions |
+Start at the [documentation index](docs/README.md), which groups material by
+task:
 
-## Getting help
-
-Start with the API reference and existing issues. For a reproducible defect,
-open a [bug report](https://github.com/east-true/opcda-access-adapter/issues/new?template=bug_report.yml);
-for an in-scope behavior proposal, use the
-[feature request](https://github.com/east-true/opcda-access-adapter/issues/new?template=feature_request.yml).
-This project does not currently provide a dedicated support forum or paid
-support channel.
-
-Security vulnerabilities must not be reported publicly. Follow
-[SECURITY.md](SECURITY.md) to open a private advisory.
+- **Use:** [setup](docs/setup.md),
+  [local detection](docs/local-detection.md)
+- **Integrate:** [HTTP API](docs/http-api.md),
+  [gRPC API](docs/grpc-api.md),
+  [OPC UA mapping](docs/opcua-mapping.md)
+- **Operate safely:** [Windows COM security](docs/security-windows.md),
+  [real-DA validation](docs/validation/real-da-windows.md)
+- **Understand the project:** [design](docs/design.md),
+  [ADRs](docs/adr/), [implementation status](docs/implementation-status.md)
+- **Evaluate evidence:** [compatibility](docs/compatibility.md),
+  [benchmarks](docs/validation/benchmarks.md),
+  [UA client interoperability](docs/validation/ua-client-interop.md)
 
 ## Contributing
 
-Issues and pull requests are welcome when they stay within the OPC DA access
-boundary. Start with [CONTRIBUTING.md](CONTRIBUTING.md) and the authoritative
-[design baseline](docs/design.md). `main` is protected and changes require the
-documented Linux and native Windows checks.
+Issues, documentation improvements, tests, and focused pull requests are
+welcome when they preserve the project's DA-only boundary. Read
+[CONTRIBUTING.md](CONTRIBUTING.md) for the development workflow and
+[docs/design.md](docs/design.md) for the invariants that changes must keep.
 
-Please use public issues only for actionable bugs and in-scope proposals. Do
-not include process values, credentials, or proprietary server data.
+For reproducible bugs, use the
+[bug report form](https://github.com/east-true/opcda-access-adapter/issues/new?template=bug_report.yml).
+For an in-scope proposal, use the
+[feature request form](https://github.com/east-true/opcda-access-adapter/issues/new?template=feature_request.yml).
+Do not include process values, credentials, or proprietary server data.
+
+## Support and security
+
+Use existing documentation and issues for public support. The project does
+not currently offer a dedicated forum or paid support channel.
+
+Report vulnerabilities privately as described in [SECURITY.md](SECURITY.md).
 
 ## License
 
-Licensed under the [Apache License 2.0](LICENSE).
+Licensed under the [Apache License 2.0](LICENSE). Third-party notices are in
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
