@@ -23,7 +23,7 @@ func TestEncodeWriteVariantPreservesScalarWidths(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			value, err := encodeWriteVariant(test.vt, test.value, 1024)
+			value, err := encodeWriteVariant(test.vt, test.value, testArrayLimits(1024))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -49,11 +49,11 @@ func TestEncodeWriteVariantPreservesScalarWidths(t *testing.T) {
 }
 
 func TestEncodeWriteBSTRPreservesEmbeddedNULAndClearsOwnership(t *testing.T) {
-	value, err := encodeWriteVariant(VTBSTR, "A\x00😀", 16)
+	value, err := encodeWriteVariant(VTBSTR, "A\x00😀", testArrayLimits(16))
 	if err != nil {
 		t.Fatal(err)
 	}
-	decoded, err := decodeVariant(&value, 16)
+	decoded, err := decodeVariant(&value, testArrayLimits(16))
 	if err != nil || decoded != "A\x00😀" {
 		t.Fatalf("decode = %q, %v", decoded, err)
 	}

@@ -261,6 +261,31 @@ faces now, which is the same reason no SHA is pinned above.
   `EnumStrings` from an array-valued DA property the DA layer does not carry.
   [ADR-0018](adr/0018-da-item-properties.md) records both.
 
+- SAFEARRAY values are carried by the DA layer and published by no frontend
+  yet. [ADR-0019](adr/0019-safearray-representation.md) decides the
+  representation: element VARTYPE, dimension count, per-dimension lower bound
+  and length, and the element values all survive, which is what design.md §20.4
+  requires of any implementation.
+
+  **It is implemented and not validated against any real source.** The Windows
+  unit cases build arrays with `SafeArrayCreate` and read them back through
+  `SafeArrayGetElement`, so the index vector and the bounds are checked against
+  the real oleaut32 implementation rather than against this adapter's own
+  assumptions -- which is the difference between agreeing with Windows and
+  agreeing with itself. What that cannot show is how a real DA server fills an
+  array: element order as a vendor produces it, and whether non-zero lower
+  bounds appear in practice, are exactly the properties a round trip through
+  the adapter's own encoder cannot check. [ADR-0017](adr/0017-third-party-vendor-da-fixture.md)
+  is still `Proposed`, so neither has been seen.
+
+  Until a frontend publishes them, a Read of an array-valued item answers
+  `UNSUPPORTED_VARTYPE` naming the frontend rather than the adapter -- the
+  refusal moved, but a client sees the same outcome it did before.
+
+  Two consequences recorded elsewhere in this file become reachable once the
+  frontends carry arrays, and not before: A.3.1.4's array-valued property rule,
+  and `MultiStateDiscreteType`, whose `EnumStrings` is one.
+
 - The local KVM/libvirt destructive-validation gate is paused. The dedicated
   `opcda-destructive-review` VM and all of its dedicated host resources were
   removed on 2026-08-24 because this host could not run it alongside another

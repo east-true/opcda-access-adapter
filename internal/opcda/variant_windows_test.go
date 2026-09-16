@@ -70,7 +70,7 @@ func TestVariantScalarWidths(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			got, err := decodeVariant(&test.value, 1024)
+			got, err := decodeVariant(&test.value, testArrayLimits(1024))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -84,13 +84,13 @@ func TestVariantScalarWidths(t *testing.T) {
 func TestVariantFloatWidthsAndSpecialValues(t *testing.T) {
 	r4 := variant{VT: uint16(VTR4)}
 	binary.LittleEndian.PutUint32(r4.Data[:], math.Float32bits(float32(1.25)))
-	if got, err := decodeVariant(&r4, 1024); err != nil || got != float32(1.25) {
+	if got, err := decodeVariant(&r4, testArrayLimits(1024)); err != nil || got != float32(1.25) {
 		t.Fatalf("R4 = %#v, %v", got, err)
 	}
 
 	r8 := variant{VT: uint16(VTR8)}
 	binary.LittleEndian.PutUint64(r8.Data[:], math.Float64bits(math.Inf(1)))
-	got, err := decodeVariant(&r8, 1024)
+	got, err := decodeVariant(&r8, testArrayLimits(1024))
 	if err != nil || !math.IsInf(got.(float64), 1) {
 		t.Fatalf("R8 = %#v, %v", got, err)
 	}
@@ -107,7 +107,7 @@ func TestBSTRPreservesEmbeddedNULAndIsCleared(t *testing.T) {
 	} else {
 		binary.LittleEndian.PutUint64(value.Data[:], uint64(bstr))
 	}
-	got, err := decodeVariant(&value, 3)
+	got, err := decodeVariant(&value, testArrayLimits(3))
 	if err != nil {
 		t.Fatal(err)
 	}

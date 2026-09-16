@@ -22,6 +22,7 @@
 > | gRPC server streaming `Subscribe` (§34) | 구현됨 | [gRPC API](grpc-api.md#subscribe) |
 > | OPC UA Frontend (§35) | 구현됨, `SecurityPolicy None` 한정. production ready가 아니며 conformance 주장도 아니다 | [OPC UA mapping](opcua-mapping.md), ADR-0016 |
 > | UA Subscription / MonitoredItem / Publish (§5.2 부근) | 구현됨 | [OPC UA mapping](opcua-mapping.md#subscriptions-and-monitoreditems) |
+> | SAFEARRAY (§20.4) | DA 계층은 §20.4가 요구하는 다섯 가지를 모두 보존해 읽고 쓴다. 어떤 실제 소스로도 아직 검증되지 않았고, frontend는 아직 공개하지 않는다 | [ADR-0019](adr/0019-safearray-representation.md) |
 >
 > 나머지 "향후" 항목(HTTP streaming frontend, MTA/복수 worker, subprocess
 > isolation, remote network)은 여전히 미구현이며 v0 범위 밖이다.
@@ -1370,6 +1371,12 @@ SAFEARRAY를 구현할 때 다음 정보를 잃지 않아야 한다.
 따라서 “JSON array로 flat하게 만들기”는 허용되지 않는다.
 
 v0에서 완전한 SAFEARRAY support가 없다면 명시적으로 unsupported 처리한다.
+
+DA 계층은 이제 위 다섯 가지를 모두 보존한다. 표현과 그 근거는
+[ADR-0019](adr/0019-safearray-representation.md)가 정하고, element 순서·lower
+bound·frontend별 표현을 포함한다. 검증 상태는
+[implementation status](implementation-status.md)가 따로 기록한다 — 구현했다는
+것이 검증했다는 뜻은 아니며, 검증 전 지원 약속은 이 문서의 non-goal이다.
 
 ---
 

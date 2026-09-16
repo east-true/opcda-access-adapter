@@ -305,7 +305,7 @@ func dataCallbackOnDataChange(
 			HRESULTPresent: true,
 		}
 		if itemHR.Succeeded() {
-			decoded, decodeErr := decodeVariant(&variants[index], subscription.maxBSTRCodeUnits)
+			decoded, decodeErr := decodeVariant(&variants[index], subscription.arrayLimits)
 			if decodeErr != nil {
 				if adapterErr, ok := AsAdapterError(decodeErr); ok {
 					entry.ErrorCode = string(adapterErr.Code)
@@ -359,6 +359,7 @@ type daSubscription struct {
 	registrations    map[uint32]itemRegistration
 	itemCount        int
 	maxBSTRCodeUnits int
+	arrayLimits      ArrayLimits
 
 	pending  *pendingUpdates
 	rejected atomic.Uint64
@@ -602,7 +603,7 @@ func unadviseDataCallback(point *iconnectionPoint, cookie uint32) error {
 // createSubscription runs on the DA thread. It creates one DA group, registers
 // the items as active, and advises the callback. Any failure after AddGroup
 // releases everything it created before returning.
-func (session *daThreadSession) createSubscription(id SubscriptionID, request SubscribeRequest, maxBSTRCodeUnits int) (*daSubscription, error) {
+func (session *daThreadSession) createSubscription(id SubscriptionID, request SubscribeRequest, limits ArrayLimits) (*daSubscription, error) {
 	session.nextGroupClientHandle++
 	groupClientHandle := session.nextGroupClientHandle
 
@@ -622,7 +623,8 @@ func (session *daThreadSession) createSubscription(id SubscriptionID, request Su
 		itemMgt:           itemMgt,
 		registrations:     make(map[uint32]itemRegistration, len(request.Items)),
 		itemCount:         len(request.Items),
-		maxBSTRCodeUnits:  maxBSTRCodeUnits,
+		maxBSTRCodeUnits:  limits.MaxBSTRCodeUnits,
+		arrayLimits:       limits,
 	}
 
 	clientHandles, attempts, err := addActiveItems(itemMgt, request.Items, session.generation)

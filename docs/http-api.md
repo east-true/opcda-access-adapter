@@ -91,6 +91,9 @@ configuration version 3; versions 1 and 2 remain readable.
 | `OPCDA_MAX_ITEM_ID_BYTES` | `1024` | exact ItemID UTF-8 byte bound |
 | `OPCDA_MAX_BSTR_CODE_UNITS` | `65536` | source/request BSTR UTF-16 bound |
 | `OPCDA_MAX_ITEM_PROPERTIES` | `64` | DA item properties per item bound |
+| `OPCDA_MAX_ARRAY_ELEMENTS` | `1024` | elements one SAFEARRAY value may carry |
+| `OPCDA_MAX_ARRAY_DIMENSIONS` | `4` | dimensions one SAFEARRAY value may have |
+| `OPCDA_MAX_ARRAY_BSTR_CODE_UNITS` | `65536` | UTF-16 code units all of one array's string elements carry together |
 
 gRPC-specific listener and transport bounds are documented in the
 [gRPC API reference](grpc-api.md), and the OPC UA endpoint settings in the
@@ -188,6 +191,7 @@ failing; a `source` error is the vendor's, and carries its raw HRESULT.
 | `INVALID_VALUE` | 400 | adapter | a Write value does not fit the VARTYPE it was given |
 | `ITEM_ID_TOO_LONG` | 400 | adapter | an ItemID exceeds `OPCDA_MAX_ITEM_ID_BYTES` |
 | `BSTR_TOO_LONG` | 400 | adapter | a string exceeds `OPCDA_MAX_BSTR_CODE_UNITS` |
+| `ARRAY_TOO_LARGE` | 422 | adapter | an array exceeds `OPCDA_MAX_ARRAY_ELEMENTS` or `OPCDA_MAX_ARRAY_DIMENSIONS` |
 | `REQUEST_LIMIT_EXCEEDED` | 400 | adapter | a batch exceeds its per-request bound. A properties response carrying more properties than the bound is the one place this is 422: the request was fine and the source overran |
 | `JSON_DEPTH_LIMIT_EXCEEDED` | 400 | frontend | nesting exceeds `OPCDA_MAX_JSON_DEPTH` |
 | `DUPLICATE_JSON_FIELD` | 400 | frontend | an object repeats a field, which is ambiguous |

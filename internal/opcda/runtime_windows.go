@@ -519,7 +519,7 @@ func (r *windowsRuntime) ReadBatch(ctx context.Context, request ReadRequest) ([]
 				responses <- response{err: NewAdapterError(CodeRuntimeUnavailable, "OPC DA runtime is not connected")}
 				return
 			}
-			results, err := session.readDevice(request.Items, r.config.Limits.MaxBSTRCodeUnits)
+			results, err := session.readDevice(request.Items, r.config.Limits.ArrayLimits())
 			r.handleOperationFailure(session, err)
 			responses <- response{results: results, err: err}
 		},
@@ -557,7 +557,7 @@ func (r *windowsRuntime) WriteBatch(ctx context.Context, items []WriteItem) ([]W
 		if len([]byte(item.ItemID)) > r.config.Limits.MaxItemIDBytes {
 			return nil, NewAdapterError(CodeItemIDTooLong, "itemId exceeds configured limit")
 		}
-		if err := validateWriteValue(item.VarType, item.Value, r.config.Limits.MaxBSTRCodeUnits); err != nil {
+		if err := validateWriteValue(item.VarType, item.Value, r.config.Limits.ArrayLimits()); err != nil {
 			return nil, err
 		}
 	}
@@ -575,7 +575,7 @@ func (r *windowsRuntime) WriteBatch(ctx context.Context, items []WriteItem) ([]W
 				responses <- response{err: NewAdapterError(CodeRuntimeUnavailable, "OPC DA runtime is not connected")}
 				return
 			}
-			results, err := session.writeValues(items, r.config.Limits.MaxBSTRCodeUnits)
+			results, err := session.writeValues(items, r.config.Limits.ArrayLimits())
 			r.handleOperationFailure(session, err)
 			responses <- response{results: results, err: err}
 		},
@@ -633,7 +633,7 @@ func (r *windowsRuntime) Subscribe(ctx context.Context, request SubscribeRequest
 			}
 			session.nextSubscriptionSequence++
 			id := subscriptionIDFor(session.generation, session.nextSubscriptionSequence)
-			subscription, err := session.createSubscription(id, request, r.config.Limits.MaxBSTRCodeUnits)
+			subscription, err := session.createSubscription(id, request, r.config.Limits.ArrayLimits())
 			if err != nil {
 				r.handleOperationFailure(session, err)
 				responses <- response{err: err}

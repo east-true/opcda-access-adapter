@@ -42,6 +42,15 @@ var (
 	procVariantClear      = oleaut32.NewProc("VariantClear")
 	procSysAllocStringLen = oleaut32.NewProc("SysAllocStringLen")
 	procSysStringLen      = oleaut32.NewProc("SysStringLen")
+	procSysFreeString     = oleaut32.NewProc("SysFreeString")
+
+	procSafeArrayCreate     = oleaut32.NewProc("SafeArrayCreate")
+	procSafeArrayDestroy    = oleaut32.NewProc("SafeArrayDestroy")
+	procSafeArrayGetDim     = oleaut32.NewProc("SafeArrayGetDim")
+	procSafeArrayGetLBound  = oleaut32.NewProc("SafeArrayGetLBound")
+	procSafeArrayGetUBound  = oleaut32.NewProc("SafeArrayGetUBound")
+	procSafeArrayGetElement = oleaut32.NewProc("SafeArrayGetElement")
+	procSafeArrayPutElement = oleaut32.NewProc("SafeArrayPutElement")
 
 	procCreateEventW = kernel32.NewProc("CreateEventW")
 	procSetEvent     = kernel32.NewProc("SetEvent")

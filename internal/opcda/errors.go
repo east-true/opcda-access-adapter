@@ -36,6 +36,7 @@ const (
 	CodeInvalidValue                 ErrorCode = "INVALID_VALUE"
 	CodeItemIDTooLong                ErrorCode = "ITEM_ID_TOO_LONG"
 	CodeBSTRTooLong                  ErrorCode = "BSTR_TOO_LONG"
+	CodeArrayTooLarge                ErrorCode = "ARRAY_TOO_LARGE"
 	CodeRegisteredItemLimit          ErrorCode = "REGISTERED_ITEM_LIMIT_EXCEEDED"
 	CodeInternalResultMismatch       ErrorCode = "INTERNAL_RESULT_MISMATCH"
 	CodeSubscriptionLimit            ErrorCode = "SUBSCRIPTION_LIMIT_EXCEEDED"
