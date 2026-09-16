@@ -169,15 +169,29 @@ func TestEveryAggregateBudgetAcceptsItsCeilingAndRefusesOneMore(t *testing.T) {
 		},
 		{
 			// MaxReadItems * MaxArrayElements == 1 Mi elements.
-			name: "batch array element budget",
+			name: "batch array element budget, from the Read side",
 			at:   func(l *Limits) { l.MaxReadItems = 1024; l.MaxArrayElements = 1024 },
 			over: func(l *Limits) { l.MaxReadItems = 1024; l.MaxArrayElements = 1025 },
 		},
 		{
+			// Each budget is a disjunction over both batch bounds, so the other
+			// arm needs a case of its own: one that moves only the Read side
+			// proves nothing about the Write side, and a disjunction turned
+			// into a conjunction still fails it for the wrong reason.
+			name: "batch array element budget, from the Write side",
+			at:   func(l *Limits) { l.MaxWriteItems = 1024; l.MaxArrayElements = 1024 },
+			over: func(l *Limits) { l.MaxWriteItems = 1024; l.MaxArrayElements = 1025 },
+		},
+		{
 			// MaxWriteItems * MaxArrayBSTRCodeUnits == 8 MiB.
-			name: "batch array string budget",
+			name: "batch array string budget, from the Write side",
 			at:   func(l *Limits) { l.MaxWriteItems = 1024; l.MaxArrayBSTRCodeUnits = 8192 },
 			over: func(l *Limits) { l.MaxWriteItems = 1024; l.MaxArrayBSTRCodeUnits = 8193 },
+		},
+		{
+			name: "batch array string budget, from the Read side",
+			at:   func(l *Limits) { l.MaxReadItems = 1024; l.MaxArrayBSTRCodeUnits = 8192 },
+			over: func(l *Limits) { l.MaxReadItems = 1024; l.MaxArrayBSTRCodeUnits = 8193 },
 		},
 		{
 			// MaxSubscriptions * MaxSubscriptionItems * MaxItemIDBytes == 64 MiB.
