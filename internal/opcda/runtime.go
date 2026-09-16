@@ -55,6 +55,8 @@ const (
 	maximumCacheItemIDBytes        = uint64(128 << 20)
 	maximumSubscriptionBSTRUnits   = uint64(128 << 20)
 	maximumSubscriptionItemIDBytes = uint64(64 << 20)
+	maximumBatchArrayElements      = uint64(1 << 20)
+	maximumBatchArrayBSTRUnits     = uint64(8 << 20)
 )
 
 func (config Config) withDefaults() Config {
@@ -104,6 +106,15 @@ type Limits struct {
 	MaxSubscriptions     int
 	MaxSubscriptionItems int
 	MaxItemProperties    int
+	// MaxArrayElements bounds the elements one SAFEARRAY value may carry,
+	// MaxArrayDimensions its dimension count, and MaxArrayBSTRCodeUnits the
+	// UTF-16 code units all of one array's string elements carry together.
+	// The last is separate because element count and per-element length do not
+	// bound a string array between them: an array at both of those limits is
+	// orders of magnitude more memory than the same count of numbers.
+	MaxArrayElements      int
+	MaxArrayDimensions    int
+	MaxArrayBSTRCodeUnits int
 }
 
 func DefaultLimits() Limits {
@@ -119,6 +130,10 @@ func DefaultLimits() Limits {
 		MaxSubscriptions:     16,
 		MaxSubscriptionItems: 100,
 		MaxItemProperties:    64,
+
+		MaxArrayElements:      1024,
+		MaxArrayDimensions:    4,
+		MaxArrayBSTRCodeUnits: 65536,
 	}
 }
 
@@ -133,7 +148,10 @@ func (limits Limits) validate() error {
 		limits.MaxBSTRCodeUnits <= 0 ||
 		limits.MaxSubscriptions <= 0 ||
 		limits.MaxSubscriptionItems <= 0 ||
-		limits.MaxItemProperties <= 0 {
+		limits.MaxItemProperties <= 0 ||
+		limits.MaxArrayElements <= 0 ||
+		limits.MaxArrayDimensions <= 0 ||
+		limits.MaxArrayBSTRCodeUnits <= 0 {
 		return fmt.Errorf("all DA runtime limits must be positive")
 	}
 	if limits.CommandQueue > 4096 ||
@@ -146,7 +164,10 @@ func (limits Limits) validate() error {
 		limits.MaxBSTRCodeUnits > 1048576 ||
 		limits.MaxSubscriptions > 256 ||
 		limits.MaxSubscriptionItems > 10000 ||
-		limits.MaxItemProperties > 1024 {
+		limits.MaxItemProperties > 1024 ||
+		limits.MaxArrayElements > 65536 ||
+		limits.MaxArrayDimensions > 16 ||
+		limits.MaxArrayBSTRCodeUnits > 1048576 {
 		return fmt.Errorf("one or more DA runtime limits exceed the v0 hard ceiling")
 	}
 	if uint64(limits.MaxReadItems)*uint64(limits.MaxBSTRCodeUnits) > maximumBatchBSTRUnits ||
@@ -160,6 +181,16 @@ func (limits Limits) validate() error {
 	if uint64(limits.MaxReadItems)*uint64(limits.MaxItemIDBytes) > maximumBatchItemIDBytes ||
 		uint64(limits.MaxWriteItems)*uint64(limits.MaxItemIDBytes) > maximumBatchItemIDBytes {
 		return fmt.Errorf("configured batch ItemID budget exceeds the v0 hard ceiling")
+	}
+	// One batch may answer every item with an array, so the element and string
+	// budgets are the batch's rather than one value's.
+	if uint64(limits.MaxReadItems)*uint64(limits.MaxArrayElements) > maximumBatchArrayElements ||
+		uint64(limits.MaxWriteItems)*uint64(limits.MaxArrayElements) > maximumBatchArrayElements {
+		return fmt.Errorf("configured batch array element budget exceeds the v0 hard ceiling")
+	}
+	if uint64(limits.MaxReadItems)*uint64(limits.MaxArrayBSTRCodeUnits) > maximumBatchArrayBSTRUnits ||
+		uint64(limits.MaxWriteItems)*uint64(limits.MaxArrayBSTRCodeUnits) > maximumBatchArrayBSTRUnits {
+		return fmt.Errorf("configured batch array string budget exceeds the v0 hard ceiling")
 	}
 	if uint64(limits.MaxRegisteredItems)*uint64(limits.MaxItemIDBytes) > maximumCacheItemIDBytes {
 		return fmt.Errorf("configured registration-cache ItemID budget exceeds the v0 hard ceiling")

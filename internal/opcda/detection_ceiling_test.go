@@ -66,11 +66,11 @@ func TestDetectionLimitsReachTheirCeilings(t *testing.T) {
 func TestAnEmptyWriteValueIsTheAbsenceOfOne(t *testing.T) {
 	for _, varType := range []DAVarType{VTEmpty, VTNull} {
 		t.Run(varType.String(), func(t *testing.T) {
-			if err := validateWriteValue(varType, nil, 64); err != nil {
+			if err := validateWriteValue(varType, nil, testArrayLimits(64)); err != nil {
 				t.Errorf("a %s Write carrying nothing was refused: %v", varType, err)
 			}
 			for _, value := range []any{int32(0), "", false, []byte{}, 0.0} {
-				if err := validateWriteValue(varType, value, 64); err == nil {
+				if err := validateWriteValue(varType, value, testArrayLimits(64)); err == nil {
 					t.Errorf("a %s Write carrying %#v was accepted", varType, value)
 				}
 			}
@@ -80,10 +80,10 @@ func TestAnEmptyWriteValueIsTheAbsenceOfOne(t *testing.T) {
 	// The control: a type that does carry a value still requires the right
 	// one, so the case above is about absence rather than about everything
 	// being refused.
-	if err := validateWriteValue(VTI4, int32(1), 64); err != nil {
+	if err := validateWriteValue(VTI4, int32(1), testArrayLimits(64)); err != nil {
 		t.Errorf("a VT_I4 Write carrying an int32 was refused: %v", err)
 	}
-	if err := validateWriteValue(VTI4, nil, 64); err == nil {
+	if err := validateWriteValue(VTI4, nil, testArrayLimits(64)); err == nil {
 		t.Error("a VT_I4 Write carrying nothing was accepted")
 	}
 }

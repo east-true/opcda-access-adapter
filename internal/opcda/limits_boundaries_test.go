@@ -1,6 +1,9 @@
 package opcda
 
-import "testing"
+import (
+	"reflect"
+	"testing"
+)
 
 // Limits.validate is what stands between a misconfiguration and a runtime that
 // will accept work it cannot bound. ADR-0001 records every ceiling in it, and
@@ -36,6 +39,30 @@ var limitFields = []limitField{
 	{"MaxSubscriptions", 256, func(l *Limits, v int) { l.MaxSubscriptions = v }},
 	{"MaxSubscriptionItems", 10000, func(l *Limits, v int) { l.MaxSubscriptionItems = v }},
 	{"MaxItemProperties", 1024, func(l *Limits, v int) { l.MaxItemProperties = v }},
+	{"MaxArrayElements", 65536, func(l *Limits, v int) { l.MaxArrayElements = v }},
+	{"MaxArrayDimensions", 16, func(l *Limits, v int) { l.MaxArrayDimensions = v }},
+	{"MaxArrayBSTRCodeUnits", 1048576, func(l *Limits, v int) { l.MaxArrayBSTRCodeUnits = v }},
+}
+
+// The table above is what makes "every limit" checkable, and nothing checked
+// the table itself. A field added to Limits without a row here would be
+// unbounded and untested at once, and the omission would be invisible --
+// exactly the shape of gap a table-driven test is supposed to close.
+func TestEveryLimitFieldHasARow(t *testing.T) {
+	listed := make(map[string]bool, len(limitFields))
+	for _, field := range limitFields {
+		listed[field.name] = true
+	}
+	structType := reflect.TypeOf(Limits{})
+	for index := 0; index < structType.NumField(); index++ {
+		name := structType.Field(index).Name
+		if !listed[name] {
+			t.Errorf("Limits.%s has no row in limitFields, so no ceiling of its own is checked", name)
+		}
+	}
+	if len(listed) != structType.NumField() {
+		t.Errorf("limitFields names %d fields and Limits has %d", len(listed), structType.NumField())
+	}
 }
 
 // minimalLimits is every field at one: valid, and small enough that no
@@ -139,6 +166,18 @@ func TestEveryAggregateBudgetAcceptsItsCeilingAndRefusesOneMore(t *testing.T) {
 			name: "subscription pending-value budget",
 			at:   func(l *Limits) { l.MaxBSTRCodeUnits = 1024; l.MaxSubscriptions = 128; l.MaxSubscriptionItems = 1024 },
 			over: func(l *Limits) { l.MaxBSTRCodeUnits = 1024; l.MaxSubscriptions = 128; l.MaxSubscriptionItems = 1025 },
+		},
+		{
+			// MaxReadItems * MaxArrayElements == 1 Mi elements.
+			name: "batch array element budget",
+			at:   func(l *Limits) { l.MaxReadItems = 1024; l.MaxArrayElements = 1024 },
+			over: func(l *Limits) { l.MaxReadItems = 1024; l.MaxArrayElements = 1025 },
+		},
+		{
+			// MaxWriteItems * MaxArrayBSTRCodeUnits == 8 MiB.
+			name: "batch array string budget",
+			at:   func(l *Limits) { l.MaxWriteItems = 1024; l.MaxArrayBSTRCodeUnits = 8192 },
+			over: func(l *Limits) { l.MaxWriteItems = 1024; l.MaxArrayBSTRCodeUnits = 8193 },
 		},
 		{
 			// MaxSubscriptions * MaxSubscriptionItems * MaxItemIDBytes == 64 MiB.

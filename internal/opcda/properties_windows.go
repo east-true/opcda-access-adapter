@@ -211,7 +211,7 @@ func (session *daThreadSession) getItemProperties(request ItemPropertiesRequest,
 			varType := DAVarType(value.VT)
 			values[index].VarType = varType
 			values[index].VarTypePresent = true
-			decoded, decodeErr := decodeVariant(value, limits.MaxBSTRCodeUnits)
+			decoded, decodeErr := decodeVariant(value, limits.ArrayLimits())
 			if decodeErr != nil {
 				// A property the adapter cannot represent is reported as such
 				// for that property alone. The rest of the batch is unaffected,

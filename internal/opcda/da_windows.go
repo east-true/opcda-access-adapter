@@ -351,7 +351,7 @@ func (session *daThreadSession) addItems(itemIDs []DAItemID) ([]registrationAtte
 	return attempts, nil
 }
 
-func (session *daThreadSession) readDevice(itemIDs []DAItemID, maxBSTRCodeUnits int) ([]ReadResult, error) {
+func (session *daThreadSession) readDevice(itemIDs []DAItemID, limits ArrayLimits) ([]ReadResult, error) {
 	registrations, registered, results, err := session.resolveRegistrations(itemIDs)
 	if err != nil {
 		return nil, err
@@ -403,7 +403,7 @@ func (session *daThreadSession) readDevice(itemIDs []DAItemID, maxBSTRCodeUnits 
 		results[resultIndex].CanonicalType = &canonicalType
 		results[resultIndex].AccessRights = &rights
 		if itemHR.Succeeded() {
-			value, decodeErr := decodeVariant(&states[readIndex].Value, maxBSTRCodeUnits)
+			value, decodeErr := decodeVariant(&states[readIndex].Value, limits)
 			if decodeErr != nil {
 				if adapterErr, ok := AsAdapterError(decodeErr); ok {
 					results[resultIndex].ErrorCode = string(adapterErr.Code)
@@ -434,10 +434,13 @@ func (session *daThreadSession) readDevice(itemIDs []DAItemID, maxBSTRCodeUnits 
 	return results, nil
 }
 
-func decodeVariant(value *variant, maxBSTRCodeUnits int) (any, error) {
+func decodeVariant(value *variant, limits ArrayLimits) (any, error) {
 	varType := DAVarType(value.VT)
-	if varType.IsArray() || varType.IsByRef() {
-		return nil, NewAdapterError(CodeUnsupportedVarType, "array and byref VARIANT values are unsupported")
+	if varType.IsByRef() {
+		return nil, NewAdapterError(CodeUnsupportedVarType, "byref VARIANT values are unsupported")
+	}
+	if varType.IsArray() {
+		return decodeSafeArray(uintptr(variantDataPointer(value.Data[:])), varType, limits)
 	}
 	data := value.Data[:]
 	switch varType.Base() {
@@ -466,7 +469,7 @@ func decodeVariant(value *variant, maxBSTRCodeUnits int) (any, error) {
 	case VTBool:
 		return int16(binary.LittleEndian.Uint16(data)) != 0, nil
 	case VTBSTR:
-		return decodeBSTR(variantDataPointer(data), maxBSTRCodeUnits)
+		return decodeBSTR(variantDataPointer(data), limits.MaxBSTRCodeUnits)
 	default:
 		return nil, NewAdapterError(CodeUnsupportedVarType, fmt.Sprintf("unsupported VARTYPE %s", varType))
 	}

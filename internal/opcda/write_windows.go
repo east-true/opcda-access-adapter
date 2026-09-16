@@ -12,7 +12,7 @@ import (
 	"unsafe"
 )
 
-func (session *daThreadSession) writeValues(items []WriteItem, maxBSTRCodeUnits int) (resultsOut []WriteResult, errOut error) {
+func (session *daThreadSession) writeValues(items []WriteItem, limits ArrayLimits) (resultsOut []WriteResult, errOut error) {
 	itemIDs := make([]DAItemID, len(items))
 	for index := range items {
 		itemIDs[index] = items[index].ItemID
@@ -42,7 +42,7 @@ func (session *daThreadSession) writeValues(items []WriteItem, maxBSTRCodeUnits 
 			results[index].ErrorCode = string(CodeTypeMismatch)
 			continue
 		}
-		encoded, encodeErr := encodeWriteVariant(items[index].VarType, items[index].Value, maxBSTRCodeUnits)
+		encoded, encodeErr := encodeWriteVariant(items[index].VarType, items[index].Value, limits)
 		if encodeErr != nil {
 			if clearErr := clearWriteVariants(values); clearErr != nil {
 				return nil, fmt.Errorf("encode Write value: %v; clear prior values: %w", encodeErr, clearErr)
@@ -91,11 +91,21 @@ func (session *daThreadSession) writeValues(items []WriteItem, maxBSTRCodeUnits 
 	return results, nil
 }
 
-func encodeWriteVariant(varType DAVarType, value any, maxBSTRCodeUnits int) (variant, error) {
-	if err := validateWriteValue(varType, value, maxBSTRCodeUnits); err != nil {
+func encodeWriteVariant(varType DAVarType, value any, limits ArrayLimits) (variant, error) {
+	if err := validateWriteValue(varType, value, limits); err != nil {
 		return variant{}, err
 	}
 	encoded := variant{VT: uint16(varType)}
+	if varType.IsArray() {
+		// The SAFEARRAY belongs to the VARIANT from here on, so VariantClear
+		// releases it along with everything else the batch allocated.
+		array, err := encodeSafeArray(value.(DAArray))
+		if err != nil {
+			return variant{}, err
+		}
+		putVariantPointer(encoded.Data[:], array)
+		return encoded, nil
+	}
 	switch varType.Base() {
 	case VTEmpty, VTNull:
 	case VTI1:

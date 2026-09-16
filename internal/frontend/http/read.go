@@ -259,7 +259,14 @@ func encodeReadResult(result opcda.ReadResult) readHTTPResult {
 
 	value, encoding, err := encodeDAValue(result.Value.VarType, result.Value.Value)
 	if err != nil {
+		// A value this frontend cannot carry is a limit of the frontend rather
+		// than a malformed one, and the two codes send a client to different
+		// places: one to check what it sent, the other to check what this
+		// adapter supports.
 		encoded.ErrorCode = string(opcda.CodeInvalidValue)
+		if adapterErr, ok := opcda.AsAdapterError(err); ok {
+			encoded.ErrorCode = string(adapterErr.Code)
+		}
 		return encoded
 	}
 	var timestamp *string
@@ -284,7 +291,11 @@ func encodeReadResult(result opcda.ReadResult) readHTTPResult {
 
 func encodeDAValue(varType opcda.DAVarType, value any) (json.RawMessage, string, error) {
 	if varType.IsArray() || varType.IsByRef() {
-		return nil, "", fmt.Errorf("unsupported array or byref VARTYPE %s", varType)
+		// The DA layer carries arrays; this frontend does not publish them yet,
+		// and says which of the two it is rather than reporting the value as
+		// malformed.
+		return nil, "", opcda.NewAdapterError(opcda.CodeUnsupportedVarType,
+			fmt.Sprintf("this frontend does not publish %s values", varType))
 	}
 	encoding := "json"
 	var transportValue any
@@ -372,7 +383,8 @@ func writeOperationError(w stdhttp.ResponseWriter, err error) {
 		case opcda.CodeRuntimeDeadline:
 			status = stdhttp.StatusGatewayTimeout
 		case opcda.CodeBrowseUnsupported, opcda.CodePropertiesUnsupported,
-			opcda.CodeBrowseResultLimitExceeded, opcda.CodeUnsupportedVarType:
+			opcda.CodeBrowseResultLimitExceeded, opcda.CodeUnsupportedVarType,
+			opcda.CodeArrayTooLarge:
 			status = stdhttp.StatusUnprocessableEntity
 		}
 		writeLayerError(w, status, "adapter", adapterError.Code, adapterError.Message, nil)
