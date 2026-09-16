@@ -8,6 +8,14 @@
 OPC Foundation DA 2.05a test server on both x86/386 and x64/amd64. This is not
 a claim of broad vendor compatibility or production readiness.
 
+**ONE THIRD-PARTY DA INSTALLATION MANUALLY VALIDATED** — an operator-approved
+one-off run against the x86 Graybox Gray Simulator 1.7.9.701 passed Connect,
+Browse, Read, strict typed Write with restoration, Item Properties, Subscribe,
+and reconnect through the DA core plus HTTP, gRPC unary/streaming, and
+read-only OPC UA paths on a local Windows host. ADR-0017 records the choice and
+`docs/compatibility.md` records the exact observations and provenance limits.
+This is not a repeatable CI gate or a claim about other copies or vendors.
+
 **PHASE 6 gRPC IMPLEMENTATION COMPLETE AND FIXTURE-VALIDATED** — the DA-native
 unary Status/Browse/Read/Write frontend passed PR CI and the source-built OPC
 Foundation fixture on both supported architectures. This is not a broad
@@ -121,7 +129,8 @@ faces now, which is the same reason no SHA is pinned above.
   probing the group's `IOPCDataCallback` connection point, and a source without
   one is refused as `SUBSCRIBE_UNSUPPORTED` instead of failing late. ADR-0015
   records the decision, and `docs/compatibility.md` records the vendor
-  variations a third-party run must observe. No third-party server was tested.
+  variations a third-party run must observe. The later manual Graybox run
+  observed a supported connection point and is recorded there separately.
 
 - The DA-native Subscribe core was merged in PR #31 after all eight checks
   passed: one DA group per subscription advised through `IOPCDataCallback`,
@@ -276,8 +285,9 @@ faces now, which is the same reason no SHA is pinned above.
   agreeing with itself. What that cannot show is how a real DA server fills an
   array: element order as a vendor produces it, and whether non-zero lower
   bounds appear in practice, are exactly the properties a round trip through
-  the adapter's own encoder cannot check. [ADR-0017](adr/0017-third-party-vendor-da-fixture.md)
-  is still `Proposed`, so neither has been seen.
+  the adapter's own encoder cannot check. The accepted one-off run under
+  [ADR-0017](adr/0017-third-party-vendor-da-fixture.md) found only scalar items,
+  so neither has been seen from a real source.
 
   All three frontends publish them. HTTP carries the shape as an object under
   `valueEncoding: array`; gRPC carries it in `array_value`, a field beside the
@@ -305,6 +315,41 @@ faces now, which is the same reason no SHA is pinned above.
 
 ## Validation results
 
+- On 2026-09-16, current `main` at
+  `c6738571b5bce613c0d1579fb97f6bca23fc3892` passed native
+  `go test -count=1 ./...` and `go vet ./...` on a local Windows
+  10.0.26200.9168 amd64 host for both `GOARCH=386` and `GOARCH=amd64` with
+  the repository-pinned Go 1.26.0 toolchain. Both adapter executables also
+  built and reported the intended Windows architecture in their embedded Go
+  build metadata. Bounded registration-only `detect` runs succeeded without
+  activating a source: the 32-bit registry view contained
+  `Graybox.Simulator.1` at CLSID
+  `{2C2E36B7-FE45-4A29-BF89-9BFBA6A40857}`, while the 64-bit view contained
+  no `OPC_DA_20` registration. The server was not selected or activated, so
+  this is Windows unit/build and local-detection evidence, not a real-DA or
+  third-party compatibility result.
+- A follow-up forward-toolchain check on the same host passed `go mod verify`
+  and `go test -shuffle=on -count=3 ./...` under Go 1.27.1 for both
+  `GOARCH=amd64` and `GOARCH=386`. This added test-order and short repeated-run
+  coverage without changing the pinned Go 1.26.0 validation result above.
+- Later on 2026-09-16, the operator explicitly selected that installed x86
+  Graybox Gray Simulator for ADR-0017 option C. The 386 adapter at the same head
+  connected and completed a 15-branch/146-leaf Browse; ordered partial Read;
+  disabled, mismatched, successful-and-restored, and source-denied Write paths;
+  Item Properties; real `IOPCDataCallback` snapshots and change callbacks; 24
+  group/advise cleanup cycles; and invalidation, generation advance, and
+  explicit resubscription after terminating the server. It also completed the
+  gRPC unary and server-streaming path, including stream-close cleanup and an
+  `Aborted` invalidation error, plus the read-only OPC UA
+  connection/session/Browse/Read/property path and 200 bounded three-item
+  Device Reads with zero errors. Device Read supplied raw Quality `32`, absent
+  timestamps, successful per-item HRESULT `0x00000001`, eleven decoded scalar
+  VARTYPEs, and explicit unsupported `VT_DATE`. Callback metadata varied from
+  Quality `216` with timestamps present before the induced outage to Quality
+  `32` with timestamps absent after reconnect; both were preserved. Exact
+  versions, digest, resource deltas, and caveats are in
+  `docs/compatibility.md`; the binary was operator-supplied and did not enter
+  the repository or CI.
 - On 2026-08-25, the Phase 7 Subscribe branch passed `gofmt -l .`,
   `go vet ./...`, `go test ./...` (207 tests in 8 packages), and
   `go test -race ./...` with Go 1.26.0 on Linux. `go vet` was additionally run
@@ -690,10 +735,13 @@ and a default build collects no timings at all.
   VM capacity that does not contend with the other project currently using
   this machine. The prior dedicated VM was intentionally deleted before the
   scenario matrix ran.
-- Compatibility with third-party/vendor DA servers remains untested and must
-  not be inferred from the OPC Foundation fixture; validating one requires an
-  authorized Windows installation and safe test ItemIDs.
-- No proprietary simulator or license-restricted binary is authorized or used.
+- Broad third-party/vendor DA compatibility remains untested. One authorized,
+  operator-supplied Graybox installation now has the bounded manual result in
+  `docs/compatibility.md`; it must not be generalized to another version, copy,
+  or vendor.
+- No proprietary or provenance-weak simulator binary is stored, downloaded, or
+  used by CI. The one-off Graybox run used an installation already supplied and
+  authorized by the operator.
 
 ## Next exact tasks
 
@@ -704,22 +752,26 @@ and a default build collects no timings at all.
 2. Record exact VM, Defender, x86/x64, load, resource, reboot, DCOM event, and
    cleanup results before proposing a public release.
 3. Continue to treat the existing Apache-2.0 license as authoritative.
-4. Add third-party compatibility rows only from authorized, executed tests;
-   do not infer vendor-wide compatibility from the official fixture.
-5. When an authorized server exposes non-Good Quality, an absent timestamp, or
-   additional supported scalar types, add exact observations without changing
-   source semantics. `docs/compatibility.md` lists the vendor variations to
-   record, including a source without an `IOPCDataCallback` connection point and
-   an unrecognized vendor disconnect HRESULT.
+4. Add or update third-party compatibility rows only from authorized, executed
+   tests; do not infer vendor-wide compatibility from either the official
+   fixture or the one Graybox installation.
+5. Graybox supplied the first real observations of non-Good Quality, absent
+   timestamps, and additional supported scalar types; keep their exact values
+   without changing source semantics. Continue to record new variations,
+   especially a source without an `IOPCDataCallback` connection point or an
+   unrecognized vendor disconnect HRESULT.
 6. Phases 7 and 8 are both complete, so the ordering this item used to
    prescribe -- the DA callback core before any gRPC stream, and before OPC UA
    -- has been carried out. What survives it is the reason it was written: a
    streaming contract is not to be inferred from the unary frontend, and the DA
    sampling model is carried rather than re-sampled.
-7. The Subscribe core is validated against the OPC Foundation fixture only.
-   Treat vendor callback behavior as untested: a server may refuse connection
-   points, revise update rates differently, or report Quality and timestamps
-   differently. Record any such observation before changing source semantics.
+7. The Subscribe core is validated against the OPC Foundation fixture and one
+   installed Graybox copy. Graybox accepted the connection point, revised
+   `250ms` to `250ms`, and varied its callback metadata from Quality `216` with
+   timestamps present to Quality `32` with timestamps absent after reconnect.
+   Both DA core and gRPC streaming paths preserved those observations. Treat
+   every other vendor's callback behavior as untested and record it before
+   changing source semantics.
 8. Three third-party UA clients are not conformance. CI runs
    `scripts/interop/run.sh` on every pull request now, because asking for it to
    be run by hand did not work: the suite failed for nineteen pull requests on
@@ -754,4 +806,4 @@ and a default build collects no timings at all.
 - [ADR-0014: gRPC Subscribe server streaming](adr/0014-grpc-subscribe-streaming.md)
 - [ADR-0015: probe the Subscribe capability](adr/0015-subscribe-capability-probe.md)
 - [ADR-0016: OPC UA frontend scope and the DA mapping foundation](adr/0016-opcua-frontend-scope-and-mapping.md)
-- [ADR-0017: a third-party vendor DA server for validation](adr/0017-third-party-vendor-da-fixture.md) — **proposed, undecided**
+- [ADR-0017: a third-party vendor DA server for validation](adr/0017-third-party-vendor-da-fixture.md) — **accepted, option C executed once**

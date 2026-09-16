@@ -9,6 +9,87 @@ cross-builds, and Windows ABI tests are not interoperability results.
 |---|---|---|---|---|---|---|---|---|---|---|---|
 | OPC Foundation OPC Classic Core Components TestServer | source commit `efe0d1d1` | Server 2025 | x86 | 386 | PASS | PASS | PASS | PASS | PASS | PASS | DA 2.05a fixture; [HTTP/reconnect evidence](https://github.com/east-true/opcda-access-adapter/actions/runs/32632091320), [gRPC evidence](https://github.com/east-true/opcda-access-adapter/actions/runs/32752269529), [Subscribe evidence](https://github.com/east-true/opcda-access-adapter/actions/runs/32803232555) |
 | OPC Foundation OPC Classic Core Components TestServer | source commit `efe0d1d1` | Server 2025 | x64 | amd64 | PASS | PASS | PASS | PASS | PASS | PASS | DA 2.05a fixture; [HTTP/reconnect evidence](https://github.com/east-true/opcda-access-adapter/actions/runs/32632091320), [gRPC evidence](https://github.com/east-true/opcda-access-adapter/actions/runs/32752269529), [Subscribe evidence](https://github.com/east-true/opcda-access-adapter/actions/runs/32803232555) |
+| Graybox Software Gray Simulator | file `1.7.9.701`, product `1.7.0.0` | build 10.0.26200.9168 | x86 | 386 | PASS | PASS | PASS | PASS | PASS | PASS | One operator-supplied installation, manual run on 2026-09-16; provenance is not independently established; HTTP, gRPC unary/streaming, DA Subscribe core, and read-only OPC UA exercised |
+
+## Recorded result: Graybox Gray Simulator
+
+- Executed: 2026-09-16 on one local Windows build 10.0.26200.9168 host.
+  Adapter head: `c6738571b5bce613c0d1579fb97f6bca23fc3892`; the 386
+  validation binaries were built with Go 1.27.1. This was the operator-approved
+  one-off manual run in ADR-0017 option C, not a new CI fixture.
+- Server: machine-wide x86 registration `Graybox.Simulator.1`, CLSID
+  `{2C2E36B7-FE45-4A29-BF89-9BFBA6A40857}`. File version `1.7.9.701`, product
+  version `1.7.0.0`, SHA-256
+  `D300C7BFE3B8F01A6ADDF08EC821D7626F75E792A7A50F6AF64CC35B030BC76B`.
+  The installed binary was supplied by the operator; no first-party download,
+  signature, or vendor checksum was available to establish its provenance, and
+  neither the binary nor an installer entered this repository.
+- Registration-only detection found that exact server in the 32-bit registry
+  view and no `OPC_DA_20` server in the 64-bit view. The 386 adapter then
+  connected through local COM at generation 1 and reported Browse, Read, Write,
+  Subscribe, and Item Properties supported.
+- A complete bounded Browse walk returned 15 branches and 146 leaves. Every
+  branch supplied an ItemID and every leaf kept the exact ItemID returned by
+  the source.
+- One ordered Device Read covered 19 real items and one unknown ItemID. Graybox
+  returned successful per-item HRESULT `0x00000001`, raw Quality `32`, no source
+  timestamp, and access rights raw `1` or `3`. Successfully decoded source
+  types included `VT_UI1`, `VT_UI2`, `VT_UI4`, `VT_UI8`, `VT_I2`, `VT_I4`,
+  `VT_I8`, `VT_R4`, `VT_R8`, `VT_BOOL`, and `VT_BSTR`. `VT_DATE` was preserved
+  as both actual and canonical type and failed explicitly as
+  `UNSUPPORTED_VARTYPE`; it was not converted. The unknown ItemID remained in
+  request order with `OPC_E_UNKNOWNITEMID` (`0xC0040007`).
+- `IOPCItemProperties` offered identifiers 1 through 7 and 101 on the sampled
+  writable numeric item. Values for 1, 5, 6, 7, and 101 preserved the source's
+  VARTYPE and successful HRESULT; properties 2, 3, and 4 were deliberately not
+  requested through the property-value endpoint.
+- HTTP Write was first refused with `WRITE_DISABLED`. With Write explicitly
+  enabled, a `VT_R4` request against a `VT_R8` item failed as
+  `TYPE_MISMATCH`; one ordered batch then wrote and read back writable
+  `VT_R8`, `VT_BOOL`, and `VT_BSTR` storage items and restored all three
+  original values. A same-value `VT_R4` Write to a read-only item preserved
+  `OPC_E_BADRIGHTS` (`0xC0040006`).
+- One DA Subscription requested `250ms` and the source revised it to `250ms`.
+  All three items arrived through real `IOPCDataCallback::OnDataChange`
+  callbacks; three typed writes produced three change callbacks. Twenty-four
+  subscribe/unsubscribe cycles exceeded the configured maximum concurrent
+  subscription count without leaking a DA group, advise cookie, or identifier.
+- The gRPC frontend separately preserved the same exact source CLSID,
+  capabilities, six named root branches, nested ItemID, ordered partial Read,
+  Item Properties, default-disabled Write, strict typed Write, source-denied
+  Write, and restored three-type batch Write. Its server-streaming Subscribe
+  reported the `250ms` revised rate, carried a change-driven callback, and
+  released the DA group when the client ended the stream. On server termination
+  the stream ended with `Aborted`, restored no subscription implicitly, and
+  delivered again only after an explicit generation-2 resubscribe.
+- Graybox's callback metadata varied without an adapter semantic change. Before
+  the induced termination its initial callbacks reported raw Quality `216` and
+  source timestamps present for all three sampled items. The initial callbacks
+  after reconnect reported raw Quality `32` and timestamps absent. Device Read
+  also reported Quality `32` and timestamps absent. Every form was carried
+  exactly as supplied rather than normalised to one of the others.
+- Terminating `gb_opcsim.exe` invalidated the active subscription and discarded
+  its pending set. Reconnect advanced the connection generation from 1 to 2,
+  restored zero subscriptions, rejected the old identifier, and delivered a
+  new initial callback only after explicit resubscribe. The changed storage
+  value was restored after reconnect.
+- The read-only OPC UA frontend completed Hello/Acknowledge, SecureChannel,
+  endpoint verification, session activation, Browse, Item Properties handling,
+  and Read. It published all 15 branches and 146 leaves. The sampled source
+  item produced `Bad_WaitingForInitialData` (`0x80320000`) from raw Quality 32
+  with no synthesized source timestamp. The property walk reported two
+  unnamed/unmapped properties and one item description, with no named Table A.1
+  property variable (`tableA1=none`).
+- A bounded soak completed 200 three-item Device Reads with zero errors in
+  407ms. Observed deltas were adapter handles `+16`, adapter private bytes
+  `+2,842,624`, server handles `0`, and server private bytes `+98,304`; the
+  server process count stayed at one. Adapter logs contained listener lifecycle
+  records only and no ItemID or process-value field.
+
+This result establishes behavior for one installed x86 copy only. It does not
+establish the binary's provenance, other Graybox versions, x64 behavior, broad
+vendor compatibility, or OPC certification. The server exposed scalar items
+only, so it added no real-source SAFEARRAY evidence.
 
 ## Recorded result: OPC Foundation DA 2.05a fixture
 
@@ -71,14 +152,10 @@ runtime directly. Each architecture passed:
 - no process value written to any probe output.
 
 This is fixture evidence for the OPC Foundation DA 2.05a test server, not a
-broad vendor-compatibility claim. Whether to test a second, third-party server
-at all is an open decision recorded in
-[ADR-0017](adr/0017-third-party-vendor-da-fixture.md): the licence of the
-candidate examined permits it, but the vendor's own distribution no longer
-exists and the surviving copy is behind an account, so obtaining one is a
-supply-chain choice rather than a technical step. A vendor server that rejects connection
-points, revises rates differently, or reports Quality or timestamps
-differently has not been tested.
+broad vendor-compatibility claim. ADR-0017 subsequently chose one manual run of
+an operator-supplied Graybox installation; that separate result is recorded
+above and does not broaden either server's evidence to other vendors or
+versions.
 
 ### Phase 8 OPC UA frontend result
 
@@ -309,9 +386,12 @@ the configuration ADR-0006 pins for validation, and swapping it would mean
 running against something other than the audited upstream artifact, so it has
 not been swapped.
 
-**Validating Table A.1 against a real source therefore needs a second server**,
-which is what [ADR-0017](adr/0017-third-party-vendor-da-fixture.md) is about.
-Until then the mapping rests on unit tests and on the specification.
+The manual Graybox result above supplied a second server and exercised real
+`IOPCItemProperties` responses through the UA address-space path. It verified
+the item-description path and the omission of unnamed or unmapped properties,
+but that installation produced no named Table A.1 property variable
+(`tableA1=none`). `EURange`, `EnumStrings`, and the other named mappings
+therefore still rest on unit tests and the specification.
 
 ### Third-party OPC UA client interoperability
 
