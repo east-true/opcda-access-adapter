@@ -5,6 +5,8 @@ import (
 	"math"
 	"testing"
 
+	"google.golang.org/protobuf/proto"
+
 	opcdav1 "github.com/east-true/opcda-access-adapter/api/opcda/v1"
 	"github.com/east-true/opcda-access-adapter/internal/opcda"
 )
@@ -270,6 +272,104 @@ func TestAWrittenArrayOverGRPCMustAgreeWithItself(t *testing.T) {
 		t.Run(testCase.name, func(t *testing.T) {
 			if _, err := decodeArray(opcda.VTI4|opcda.VTArray, testCase.array); err == nil {
 				t.Error("a contradictory array was accepted")
+			}
+		})
+	}
+}
+
+// The array encoder fills its elements from backing slices rather than
+// allocating a message and a wrapper each, which is what turns a
+// thousand-element array from two thousand allocations into a fixed few. It is
+// a second encoder for values the scalar one already knows how to write, and
+// two encoders that drift are two wire formats -- so it is held to answering
+// exactly what encodeScalar answers for the same element.
+func TestTheArrayEncoderWritesWhatTheScalarEncoderWrites(t *testing.T) {
+	for _, testCase := range []struct {
+		elementType opcda.DAVarType
+		elements    []any
+	}{
+		{opcda.VTEmpty, []any{nil, nil}},
+		{opcda.VTNull, []any{nil}},
+		{opcda.VTI1, []any{int8(-128), int8(0), int8(127)}},
+		{opcda.VTUI1, []any{uint8(0), uint8(255)}},
+		{opcda.VTI2, []any{int16(-32768), int16(32767)}},
+		{opcda.VTUI2, []any{uint16(0), uint16(65535)}},
+		{opcda.VTI4, []any{int32(-2147483648), int32(2147483647)}},
+		{opcda.VTUI4, []any{uint32(0), uint32(4294967295)}},
+		{opcda.VTI8, []any{int64(-9223372036854775808), int64(9223372036854775807)}},
+		{opcda.VTUI8, []any{uint64(0), uint64(18446744073709551615)}},
+		{opcda.VTR4, []any{float32(1.5), float32(math.Inf(-1)), float32(math.NaN())}},
+		{opcda.VTR8, []any{1.5, math.Inf(1), math.NaN()}},
+		{opcda.VTBool, []any{true, false}},
+		{opcda.VTBSTR, []any{"", "a", "온도", "😀"}},
+		{opcda.VTError, []any{int32(-2147024891)}},
+		{opcda.VTInt, []any{int32(7)}},
+		{opcda.VTUInt, []any{uint32(7)}},
+	} {
+		t.Run(testCase.elementType.String(), func(t *testing.T) {
+			array := opcda.DAArray{
+				ElementType: testCase.elementType,
+				Dimensions:  []opcda.DADimension{{Length: uint32(len(testCase.elements))}},
+				Elements:    testCase.elements,
+			}
+			encoded, err := encodeArray(array)
+			if err != nil {
+				t.Fatalf("encodeArray: %v", err)
+			}
+			if len(encoded.GetElements()) != len(testCase.elements) {
+				t.Fatalf("%d elements encoded, want %d",
+					len(encoded.GetElements()), len(testCase.elements))
+			}
+			for index, element := range testCase.elements {
+				want, err := encodeScalar(testCase.elementType, element)
+				if err != nil {
+					t.Fatalf("encodeScalar(%#v): %v", element, err)
+				}
+				if !proto.Equal(encoded.GetElements()[index], want) {
+					t.Errorf("element %d encoded as %v, the scalar encoder writes %v",
+						index, encoded.GetElements()[index], want)
+				}
+			}
+		})
+	}
+}
+
+// The two also have to refuse the same things. An element of the wrong Go type
+// is the case that matters: the batch encoder asserts a type per element, and
+// one that let a mismatch through would write a zero where a value belongs.
+func TestTheArrayEncoderRefusesWhatTheScalarEncoderRefuses(t *testing.T) {
+	for _, testCase := range []struct {
+		name        string
+		elementType opcda.DAVarType
+		elements    []any
+	}{
+		{"an int16 where an int32 belongs", opcda.VTI4, []any{int32(1), int16(2)}},
+		{"a float64 where a float32 belongs", opcda.VTR4, []any{float32(1), 2.0}},
+		{"a string where a number belongs", opcda.VTI4, []any{"1"}},
+		{"nothing where a number belongs", opcda.VTI4, []any{nil}},
+		{"a number where nothing belongs", opcda.VTEmpty, []any{int32(1)}},
+		{"invalid UTF-8 in a string", opcda.VTBSTR, []any{string([]byte{0xff})}},
+		{"an element type the encoder has no field for", opcda.VTDate, []any{1.0}},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			array := opcda.DAArray{
+				ElementType: testCase.elementType,
+				Dimensions:  []opcda.DADimension{{Length: uint32(len(testCase.elements))}},
+				Elements:    testCase.elements,
+			}
+			if _, err := encodeArray(array); err == nil {
+				t.Error("the array encoder accepted it")
+			}
+			// The scalar encoder refuses at least one of the same elements,
+			// which is what makes this the same rule rather than a new one.
+			refused := false
+			for _, element := range testCase.elements {
+				if _, err := encodeScalar(testCase.elementType, element); err != nil {
+					refused = true
+				}
+			}
+			if !refused {
+				t.Error("the scalar encoder accepted every element, so the two disagree")
 			}
 		})
 	}
