@@ -26,7 +26,7 @@ suits their source should not have to find them scattered through the document.
 | A.3.1.2 | the root branch's BrowseName "should" be the Server ProgId | named from `OPCDA_OPCUA_SOURCE_FOLDER`, default `Source` — a source may be configured by CLSID, where there is no ProgID, and an operator who wants the clause's behaviour can configure it |
 | A.3.1.3 | `AnalogItemType` if the item has High and Low EU **or** an Analog EU Type | the EU Type alone does not promote, because 5.3.2.3 makes `EURange` mandatory and there would be no range to publish |
 | A.3.1.3 | `MultiStateDiscreteType` for an enumerated EU Type | never claimed: its mandatory `EnumStrings` comes from EU Info, an array, and the DA layer carries no array VARIANTs |
-| A.3.1.4 | an array-valued property is exposed with `ValueRank` `OneOrMoreDimensions` | not exposed at all — it could be browsed and never read, and a property that cannot answer is worse than one that is absent |
+| A.3.1.4 | an array-valued property is exposed with `ValueRank` `OneOrMoreDimensions` | not exposed as a node — the value path carries arrays now, but Table A.2 gives no `DataType` for an array VARTYPE, so the node has no type to declare |
 | Table A.3 | DA `LAST_KNOWN` → `Bad_OutOfService` | `Uncertain_NoCommunicationLastUsableValue`, because Table 61 says so and explains why: a Bad severity must return a Null value, which discards the last known value the quality exists to carry |
 | 5.2 | the `SemanticsChanged` bit is set when a semantic property changes | set when the adapter **observes** a change, which is when a property is read; a change nobody reads is not detected, and detecting every one means polling the source |
 | OPC 10000-5 Table 9 | `ServerType` makes `ServerDiagnostics` a mandatory component of the Server Object | not published. Its mandatory children are counters, session and subscription diagnostics arrays this server does not collect, and publishing them as zeros would report a diagnostic answer rather than the absence of one. The other eight mandatory components are carried |
@@ -65,10 +65,34 @@ specification.
 Two points are easy to get wrong and are called out deliberately:
 
 - **`VT_DATE` maps to `Double`, not `DateTime`.** Table A.2 says `Double`.
-- **`VT_ARRAY` has a Table A.2 row** (array of the mapped element type), but the
-  DA core decodes no arrays, so the mapping reports arrays and by-reference
-  variants as unmapped. Claiming the row would overstate what the adapter can
-  carry.
+- **`VT_ARRAY` has a Table A.2 row** (array of the mapped element type). The DA
+  core decodes arrays now ([ADR-0019](adr/0019-safearray-representation.md)) and
+  a Read carries one as a UA array Variant, with one refusal described below.
+  `DataTypeFor` still reports an array VARTYPE as unmapped, because what it
+  answers is a node's `DataType` attribute and Table A.2's array row is a
+  `ValueRank`, not a type id. By-reference variants remain unmapped outright.
+
+### Arrays
+
+A Read of an array item answers a Variant with the array bit set, a length
+prefix, and — for more than one dimension — an ArrayDimensions field, which is
+what Tables 25 and 26 describe. A single dimension carries no dimensions field:
+the length prefix already states it, and repeating it would give a decoder a
+second statement to disagree with.
+
+**An array whose lower bound is not zero answers `Bad_NotSupported`.** A UA
+Variant carries array *lengths* and no lower bound anywhere in it, so such an
+array has no lossless UA representation. Re-basing it to zero was rejected: a UA
+client cannot tell a re-based array from one that was always zero-based, which
+would leave this adapter the only party knowing the value it published is not
+the value the source holds — the same defect as serving last-good data, reached
+through the encoder instead of through a cache. One dimension out of zero is
+enough to refuse the whole value, because publishing the others and silently
+re-basing that one is the same loss in a smaller place.
+
+How often real sources use non-zero lower bounds is not something this adapter
+can assert. Array support is **not validated against any real OPC DA source**;
+see [implementation status](implementation-status.md).
 
 `VT_EMPTY` and `VT_NULL` have no row. The adapter maps them to a DataValue with
 no value; this is an adapter decision recorded in ADR-0016.
@@ -396,14 +420,17 @@ for a client to learn the underlying ItemID would be a half-measure.
 **One of A.3.1.4's rules remains unapplied, and it is a limit of this adapter,
 not of the source.**
 
-An **array-valued property is not exposed at all**. A.3.1.4 would have it
-carried with `ValueRank` `OneOrMoreDimensions`. The DA layer does not carry
-array VARIANTs at all, so such a node could be browsed and never read, and a
-property that exists and cannot answer is worse than one that is absent. That is
-the honest handling of the limitation, not a reading of the clause: **a source
-whose items carry array properties gets less than A.3.1.4 describes.** EU Info
-is the property this excludes on a real source, and closing it means array
-support in the DA layer, not a change here.
+An **array-valued property is not exposed as a node**. A.3.1.4 would have it
+carried with `ValueRank` `OneOrMoreDimensions`.
+
+The reason has narrowed rather than gone. The DA layer now carries array
+VARIANTs ([ADR-0019](adr/0019-safearray-representation.md)) and the value path
+converts one to a UA array, so a node like this would no longer be unreadable.
+What is missing is the node: Table A.2 gives no row for an array VARTYPE, so
+there is nothing to put in its `DataType` attribute, and exposing one means
+giving it an element `DataType` and a `ValueRank` of its own. Until that is
+built, **a source whose items carry array properties still gets less than
+A.3.1.4 describes** — EU Info is the property this excludes on a real source.
 
 **A property belongs to the type its item was given.** `EngineeringUnits` and
 `InstrumentRange` exist on an analog item; `TrueState` and `FalseState` on a

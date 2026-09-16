@@ -621,10 +621,14 @@ func OtherPropertyForNode(id NodeID) (opcda.DAItemID, opcda.PropertyID, bool) {
 // VariableType does not already carry, and that the adapter can represent.
 //
 // A property whose DA VARTYPE has no Table A.2 row, or whose value is an array,
-// is left out. A.3.1.4 would have it exposed with ValueRank
-// OneOrMoreDimensions, but the DA layer does not carry array VARIANTs, so such
-// a node could be browsed and never read -- a property that exists and cannot
-// answer is worse than one that is absent.
+// is left out. A.3.1.4 would have an array exposed with ValueRank
+// OneOrMoreDimensions, and the DA layer now carries array VARIANTs (ADR-0019),
+// so the reason has narrowed: Table A.2 gives no row for an array VARTYPE, so
+// the node has no DataType to declare. Exposing one means giving it an element
+// DataType and a ValueRank of its own, which is a change to the node rather
+// than to the value path. Until then such a node could be browsed and never
+// declared, and a property that exists without a type is worse than one that
+// is absent.
 func otherPropertiesFor(available []opcda.AvailableProperty, claimed []itemPropertyBinding) []opcda.AvailableProperty {
 	used := map[opcda.PropertyID]struct{}{
 		// These map onto attributes rather than properties, so they are not
@@ -649,11 +653,12 @@ func otherPropertiesFor(available []opcda.AvailableProperty, claimed []itemPrope
 		if _, taken := used[property.ID]; taken {
 			continue
 		}
-		// DataTypeFor refuses an array or byref VARTYPE, which is the filter
-		// that matters twice over: Table A.2 gives no scalar type for one, and
-		// the DA layer does not carry one either. A.3.1.4 would expose an array
-		// property with ValueRank OneOrMoreDimensions; a node that could be
-		// browsed and never read is worse than one that is absent.
+		// DataTypeFor refuses an array or byref VARTYPE: Table A.2 gives no
+		// scalar type for one, so there is nothing to put in the node's
+		// DataType attribute. The value path can carry an array now, so what
+		// remains is the node -- an element DataType and a ValueRank of
+		// OneOrMoreDimensions, which A.3.1.4 describes and this does not yet
+		// build.
 		if _, ok := DataTypeFor(property.VarType); !ok {
 			continue
 		}
@@ -748,9 +753,12 @@ func buildRawProperty(_ *AddressSpace, values []opcda.ItemPropertyValue) (Varian
 	if status := propertyStatus(values[0]); status != StatusGood {
 		return NullVariant(), status
 	}
-	variant, ok := variantForDAValue(opcda.DAValue{Value: values[0].Value})
-	if !ok {
-		return NullVariant(), StatusBadTypeMismatch
+	// A property may itself be array-valued -- A.3.1.4 has EnumStrings among
+	// them -- so the conversion answers with the status that says why it could
+	// not be expressed, rather than with one status for every reason.
+	variant, conversion := variantForDAValue(opcda.DAValue{Value: values[0].Value})
+	if conversion.IsBad() {
+		return NullVariant(), conversion
 	}
 	return variant, StatusGood
 }

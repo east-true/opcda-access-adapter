@@ -278,13 +278,20 @@ faces now, which is the same reason no SHA is pinned above.
   the adapter's own encoder cannot check. [ADR-0017](adr/0017-third-party-vendor-da-fixture.md)
   is still `Proposed`, so neither has been seen.
 
-  Until a frontend publishes them, a Read of an array-valued item answers
-  `UNSUPPORTED_VARTYPE` naming the frontend rather than the adapter -- the
-  refusal moved, but a client sees the same outcome it did before.
+  All three frontends publish them. HTTP carries the shape as an object under
+  `valueEncoding: array`; gRPC carries it in `array_value`, a field beside the
+  scalar one; OPC UA carries it as a Variant with the array bit, and answers
+  `Bad_NotSupported` for an array whose lower bound is not zero, because a UA
+  Variant has nowhere to put one and re-basing would be a value the source does
+  not hold.
 
-  Two consequences recorded elsewhere in this file become reachable once the
-  frontends carry arrays, and not before: A.3.1.4's array-valued property rule,
-  and `MultiStateDiscreteType`, whose `EnumStrings` is one.
+  Two consequences recorded elsewhere in this file are now partly reachable.
+  A.3.1.4's array-valued property can be *read* where its lower bounds allow,
+  but is still not exposed as a node: Table A.2 gives no `DataType` for an array
+  VARTYPE, so the node has no type to declare, and giving it an element
+  `DataType` and a `ValueRank` is the step that remains. `MultiStateDiscreteType`
+  waits on the same step, and on a real source, since its `EnumStrings` is one
+  of those properties.
 
 - The local KVM/libvirt destructive-validation gate is paused. The dedicated
   `opcda-destructive-review` VM and all of its dedicated host resources were

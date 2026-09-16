@@ -52,11 +52,18 @@ const (
 // never constructed.
 type Variant struct {
 	Type BuiltInTypeID
-	// Value holds the scalar. It is nil for a null Variant.
+	// Value holds the scalar, or the element slice when IsArray is set. It is
+	// nil for a null Variant.
 	Value any
-	// IsArray reports that the stream carried an array. The elements are not
-	// decoded, since nothing in this adapter consumes them.
+	// IsArray reports that the Variant carries an array. A decoded one does not
+	// carry its elements: nothing in this adapter consumes an array a client
+	// sent. An encoded one does.
 	IsArray bool
+	// ArrayDimensions is written for an array of more than one dimension.
+	// Table 26 requires all of them to be specified, each greater than zero,
+	// and their product consistent with the array length; readArrayDimensions
+	// holds an incoming Variant to the same rules.
+	ArrayDimensions []int32
 }
 
 // NullVariant is the value a DataValue carries when there is nothing to report.
@@ -138,18 +145,127 @@ func (e *Encoder) writeVariantScalar(value Variant) {
 // scalar, because the DA core decodes no VT_ARRAY variant. An unsupported
 // element type fails loudly rather than being written as something it is not.
 func (e *Encoder) writeVariantArray(value Variant) {
-	elements, ok := value.Value.([]string)
-	if !ok || value.Type != BuiltInString {
-		e.fail(encodingError("this adapter encodes only String array Variants"))
+	length, ok := variantArrayLength(value)
+	if !ok {
+		e.fail(encodingError("variant array value does not match built-in type %d", value.Type))
 		return
 	}
 	// Table 25: the array bit is set in the encoding mask alongside the type
-	// id, and the elements follow a length prefix. No ArrayDimensions are
-	// written, because the array is one dimensional.
-	e.WriteByteValue(byte(value.Type) | variantArrayValues)
-	e.WriteInt32(int32(len(elements)))
-	for _, element := range elements {
-		e.WriteString(element)
+	// id, and the elements follow a length prefix. The dimensions bit joins it
+	// only when there is more than one dimension to describe -- a single
+	// dimension is the length prefix, and repeating it would be a second
+	// statement of the same fact for a decoder to disagree with.
+	mask := byte(value.Type) | variantArrayValues
+	multidimensional := len(value.ArrayDimensions) > 1
+	if multidimensional {
+		mask |= variantArrayDimensions
+	}
+	e.WriteByteValue(mask)
+	e.WriteInt32(int32(length))
+	e.writeVariantArrayElements(value)
+	if multidimensional {
+		e.WriteInt32(int32(len(value.ArrayDimensions)))
+		for _, dimension := range value.ArrayDimensions {
+			e.WriteInt32(dimension)
+		}
+	}
+}
+
+// variantArrayLength reports the element count of an array Variant, and whether
+// the Go slice matches the built-in type it declares.
+func variantArrayLength(value Variant) (int, bool) {
+	switch value.Type {
+	case BuiltInBoolean:
+		elements, ok := value.Value.([]bool)
+		return len(elements), ok
+	case BuiltInSByte:
+		elements, ok := value.Value.([]int8)
+		return len(elements), ok
+	case BuiltInByte:
+		elements, ok := value.Value.([]byte)
+		return len(elements), ok
+	case BuiltInInt16:
+		elements, ok := value.Value.([]int16)
+		return len(elements), ok
+	case BuiltInUInt16:
+		elements, ok := value.Value.([]uint16)
+		return len(elements), ok
+	case BuiltInInt32:
+		elements, ok := value.Value.([]int32)
+		return len(elements), ok
+	case BuiltInUInt32:
+		elements, ok := value.Value.([]uint32)
+		return len(elements), ok
+	case BuiltInInt64:
+		elements, ok := value.Value.([]int64)
+		return len(elements), ok
+	case BuiltInUInt64:
+		elements, ok := value.Value.([]uint64)
+		return len(elements), ok
+	case BuiltInFloat:
+		elements, ok := value.Value.([]float32)
+		return len(elements), ok
+	case BuiltInDouble:
+		elements, ok := value.Value.([]float64)
+		return len(elements), ok
+	case BuiltInString:
+		elements, ok := value.Value.([]string)
+		return len(elements), ok
+	default:
+		return 0, false
+	}
+}
+
+func (e *Encoder) writeVariantArrayElements(value Variant) {
+	switch elements := value.Value.(type) {
+	case []bool:
+		for _, element := range elements {
+			e.WriteBoolean(element)
+		}
+	case []int8:
+		for _, element := range elements {
+			e.WriteSByte(element)
+		}
+	case []byte:
+		for _, element := range elements {
+			e.WriteByteValue(element)
+		}
+	case []int16:
+		for _, element := range elements {
+			e.WriteInt16(element)
+		}
+	case []uint16:
+		for _, element := range elements {
+			e.WriteUInt16(element)
+		}
+	case []int32:
+		for _, element := range elements {
+			e.WriteInt32(element)
+		}
+	case []uint32:
+		for _, element := range elements {
+			e.WriteUInt32(element)
+		}
+	case []int64:
+		for _, element := range elements {
+			e.WriteInt64(element)
+		}
+	case []uint64:
+		for _, element := range elements {
+			e.WriteUInt64(element)
+		}
+	case []float32:
+		for _, element := range elements {
+			e.WriteFloat(element)
+		}
+	case []float64:
+		for _, element := range elements {
+			e.WriteDouble(element)
+		}
+	case []string:
+		for _, element := range elements {
+			e.WriteString(element)
+		}
 	}
 }
 
