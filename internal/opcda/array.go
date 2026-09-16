@@ -2,7 +2,6 @@ package opcda
 
 import (
 	"fmt"
-	"unicode/utf16"
 	"unicode/utf8"
 )
 
@@ -217,7 +216,7 @@ func validateScalarValue(varType DAVarType, value any, maxBSTRCodeUnits int) (in
 		if !utf8.ValidString(stringValue) {
 			return 0, NewAdapterError(CodeInvalidValue, "VT_BSTR value must be valid UTF-8")
 		}
-		units := len(utf16.Encode([]rune(stringValue)))
+		units := utf16CodeUnits(stringValue)
 		if units > maxBSTRCodeUnits {
 			return 0, NewAdapterError(CodeBSTRTooLong, "VT_BSTR value exceeds configured limit")
 		}
@@ -231,4 +230,25 @@ func validateScalarValue(varType DAVarType, value any, maxBSTRCodeUnits int) (in
 			fmt.Sprintf("value does not exactly match %s", varType))
 	}
 	return 0, nil
+}
+
+// utf16CodeUnits counts what utf16.Encode would produce without producing it.
+//
+// The count is the bound a BSTR is held to, and it is taken per element of
+// every written array on the runtime's owning thread. Encoding to count
+// allocated a rune slice and a code-unit slice per element -- a thousand
+// strings meant two thousand allocations to learn two thousand lengths.
+//
+// A rune outside the basic plane is the pair that makes this more than the
+// rune count. Valid UTF-8 cannot carry a surrogate, and the callers check that
+// first, so nothing here has to account for one.
+func utf16CodeUnits(value string) int {
+	units := 0
+	for _, character := range value {
+		units++
+		if character > 0xFFFF {
+			units++
+		}
+	}
+	return units
 }
