@@ -290,12 +290,21 @@ func encodeReadResult(result opcda.ReadResult) readHTTPResult {
 }
 
 func encodeDAValue(varType opcda.DAVarType, value any) (json.RawMessage, string, error) {
-	if varType.IsArray() || varType.IsByRef() {
-		// The DA layer carries arrays; this frontend does not publish them yet,
-		// and says which of the two it is rather than reporting the value as
-		// malformed.
+	if varType.IsByRef() {
 		return nil, "", opcda.NewAdapterError(opcda.CodeUnsupportedVarType,
 			fmt.Sprintf("this frontend does not publish %s values", varType))
+	}
+	if varType.IsArray() {
+		array, ok := value.(opcda.DAArray)
+		if !ok {
+			return nil, "", opcda.NewAdapterError(opcda.CodeInvalidValue,
+				fmt.Sprintf("a %s value did not carry an array", varType))
+		}
+		encoded, err := encodeDAArray(array)
+		if err != nil {
+			return nil, "", err
+		}
+		return encoded, arrayValueEncoding, nil
 	}
 	encoding := "json"
 	var transportValue any
@@ -395,4 +404,70 @@ func writeOperationError(w stdhttp.ResponseWriter, err error) {
 		return
 	}
 	writeLayerError(w, stdhttp.StatusInternalServerError, "adapter", opcda.CodeInternalError, "internal adapter error", nil)
+}
+
+// arrayValueEncoding names the encoding an array value travels under. It is a
+// value of its own rather than "json" because what follows is an object
+// describing a shape, not the value itself, and a client that does not know
+// arrays must not read it as one.
+const arrayValueEncoding = "array"
+
+// jsonArrayDimension is one dimension as a client sees it.
+type jsonArrayDimension struct {
+	LowerBound int32  `json:"lowerBound"`
+	Length     uint32 `json:"length"`
+}
+
+// jsonArrayValue is the shape ADR-0019 decision 5 publishes. The elements are
+// flat and the dimensions are beside them, which is what separates this from
+// the flattening design.md §20.4 forbids: that one discards the shape, and this
+// one carries it.
+type jsonArrayValue struct {
+	ElementDataType opcda.DAVarTypeInfo  `json:"elementDataType"`
+	Dimensions      []jsonArrayDimension `json:"dimensions"`
+	Elements        []json.RawMessage    `json:"elements"`
+}
+
+// encodeDAArray writes an array as its description plus its elements in the
+// published order: the last dimension varies fastest.
+//
+// Elements use the same per-type rules a scalar uses, so nothing new has to be
+// learned to read one. The exception is a non-finite float, which a scalar
+// names through a sibling valueEncoding field that an element does not have:
+// inside an array it is spelled in place, which keeps the array
+// self-describing because a string in a float array is exactly one of the
+// three names and a number is a number.
+func encodeDAArray(array opcda.DAArray) (json.RawMessage, error) {
+	dimensions := make([]jsonArrayDimension, len(array.Dimensions))
+	for index, dimension := range array.Dimensions {
+		dimensions[index] = jsonArrayDimension{
+			LowerBound: dimension.LowerBound,
+			Length:     dimension.Length,
+		}
+	}
+	elements := make([]json.RawMessage, len(array.Elements))
+	for index, element := range array.Elements {
+		encoded, _, err := encodeDAValue(array.ElementType, element)
+		if err != nil {
+			return nil, arrayElementError(index, err)
+		}
+		elements[index] = encoded
+	}
+	return json.Marshal(jsonArrayValue{
+		ElementDataType: array.ElementType.Information(),
+		Dimensions:      dimensions,
+		Elements:        elements,
+	})
+}
+
+// arrayElementError says which element was wrong while keeping the reason. A
+// client told only that an element is invalid has to guess which of a thousand
+// it was.
+func arrayElementError(index int, err error) error {
+	adapterErr, ok := opcda.AsAdapterError(err)
+	if !ok {
+		return fmt.Errorf("array element %d: %w", index, err)
+	}
+	return opcda.NewAdapterError(adapterErr.Code,
+		fmt.Sprintf("array element %d: %s", index, adapterErr.Message))
 }

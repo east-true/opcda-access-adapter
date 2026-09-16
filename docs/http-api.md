@@ -347,6 +347,46 @@ v0 Write representations are:
 | `VT_I8/UI8` | in-range decimal JSON string |
 | finite `VT_R4/R8` | JSON number |
 | non-finite `VT_R4/R8` | `"NaN"`, `"+Infinity"`, or `"-Infinity"` with `valueEncoding: float-special` |
+| `VT_ARRAY` | an object carrying the shape and the elements, with `valueEncoding: array` |
+
+### Array values
+
+An array travels as its shape beside its elements, under `valueEncoding: array`:
+
+```json
+{
+  "valueEncoding": "array",
+  "value": {
+    "elementDataType": {"code": 3, "name": "VT_I4"},
+    "dimensions": [
+      {"lowerBound": 1, "length": 3},
+      {"lowerBound": 0, "length": 2}
+    ],
+    "elements": [10, 11, 12, 13, 14, 15]
+  }
+}
+```
+
+`elements` is flat and ordered so the **last dimension varies fastest**, so a
+client can rebuild the array from the description alone. The lower bound is the
+one the source reported: it is never normalised to zero, because a client
+writing back to an index it read must reach the element it read.
+
+Elements follow the same per-type rules a scalar does — `VT_I8`/`VT_UI8` as
+decimal strings, `VT_BSTR` as JSON strings. A non-finite float is the one
+exception: a scalar names it through the sibling `valueEncoding` field, which an
+element does not have, so inside an array it is spelled in place as `"NaN"`,
+`"+Infinity"` or `"-Infinity"` where a number would go.
+
+A Write supplies the same object, with `dataType` naming the array type
+(`"VT_I4|VT_ARRAY"`) and `valueEncoding: "array"`. `elementDataType` may be
+given as a symbolic name and must then agree with `dataType`; leaving it out is
+not a disagreement. A body whose elements and dimensions do not describe each
+other is refused rather than reshaped.
+
+[ADR-0019](adr/0019-safearray-representation.md) records why the shape is
+carried rather than flattened. Array support is **not validated against any
+real OPC DA source**; see [implementation status](implementation-status.md).
 | `VT_BOOL` | JSON boolean |
 | `VT_BSTR` | bounded JSON string |
 

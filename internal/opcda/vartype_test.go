@@ -15,12 +15,33 @@ func TestDAVarTypePreservesFlagsAndBaseType(t *testing.T) {
 	}
 }
 
-func TestParseDAVarTypeRejectsFlagsAndUnknowns(t *testing.T) {
-	if got, err := ParseDAVarType("VT_I2"); err != nil || got != VTI2 {
-		t.Fatalf("ParseDAVarType(VT_I2) = %v, %v", got, err)
+// Parse accepts what String writes, which is what lets a client send back the
+// type it was told an item has. The flags are carried rather than refused
+// here; byref is refused by the value rules, where the message can say so.
+func TestParseDAVarTypeReadsWhatStringWrites(t *testing.T) {
+	for _, varType := range []DAVarType{
+		VTI2, VTBSTR, VTR8,
+		VTI2 | VTArray,
+		VTBSTR | VTArray,
+		VTI2 | VTByRef,
+		VTI2 | VTArray | VTByRef,
+	} {
+		t.Run(varType.String(), func(t *testing.T) {
+			got, err := ParseDAVarType(varType.String())
+			if err != nil {
+				t.Fatalf("ParseDAVarType(%q) = %v", varType.String(), err)
+			}
+			if got != varType {
+				t.Errorf("ParseDAVarType(%q) = %s", varType.String(), got)
+			}
+		})
 	}
-	if _, err := ParseDAVarType("VT_I2|VT_ARRAY"); err == nil {
-		t.Fatal("expected array type to be rejected")
+	for _, name := range []string{
+		"", "VT_NOPE", "VT_I2|", "|VT_ARRAY", "VT_I2|VT_NOPE", "vt_i2", "VT_I2|VT_ARRAY|",
+	} {
+		if _, err := ParseDAVarType(name); err == nil {
+			t.Errorf("ParseDAVarType(%q) was accepted", name)
+		}
 	}
 }
 

@@ -131,20 +131,13 @@ func TestEachTypedWriteDecodeSaysWhatItWanted(t *testing.T) {
 	}
 }
 
-// An array or byref VARTYPE is refused before any value is looked at, because
-// the adapter carries scalars only. The HTTP surface names VARTYPEs
-// symbolically and accepts only scalar names, so a request cannot reach this
-// guard -- it is what keeps the decoder honest if a second caller ever hands
-// it a VARTYPE from somewhere else, and it is exercised directly for that
-// reason.
-func TestAnArrayWriteValueIsRefusedBeforeItIsRead(t *testing.T) {
+// byref is still refused before any value is looked at: the adapter carries
+// scalars and arrays, and a pointer to either is neither.
+func TestAByRefWriteValueIsRefusedBeforeItIsRead(t *testing.T) {
 	for _, varType := range []opcda.DAVarType{
-		opcda.VTI4 | opcda.VTArray,
 		opcda.VTI4 | opcda.VTByRef,
 		opcda.VTBSTR | opcda.VTArray | opcda.VTByRef,
 	} {
-		// The value is one the scalar branch would have accepted, so what
-		// refuses it is the VARTYPE rather than the value.
 		_, err := decodeWriteValue(varType, "json", json.RawMessage(`1`))
 		if err == nil {
 			t.Errorf("%s was accepted", varType)

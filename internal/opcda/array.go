@@ -86,6 +86,42 @@ func (array DAArray) ElementCount(maximum int) (int, error) {
 	return int(count), nil
 }
 
+// MatchesItsShape reports whether the dimensions and the elements describe
+// each other. It needs no configured bound, so a frontend can refuse a body
+// that contradicts itself without knowing what the runtime is willing to
+// carry: the two are different questions, and answering them in one place
+// would make a client's mistake look like an operator's limit.
+func (array DAArray) MatchesItsShape() error {
+	if len(array.Dimensions) == 0 {
+		return NewAdapterError(CodeInvalidValue, "an array describes no dimensions")
+	}
+	described := uint64(1)
+	carried := uint64(len(array.Elements))
+	for index, dimension := range array.Dimensions {
+		if dimension.Length == 0 {
+			return NewAdapterError(CodeInvalidValue,
+				fmt.Sprintf("array dimension %d has no length", index))
+		}
+		described *= uint64(dimension.Length)
+		// Bailing the moment the product passes what is carried is also what
+		// keeps it inside a uint64: no further multiplication happens once it
+		// is already too large.
+		if described > carried {
+			return arrayShapeMismatch(carried, described)
+		}
+	}
+	if described != carried {
+		return arrayShapeMismatch(carried, described)
+	}
+	return nil
+}
+
+func arrayShapeMismatch(carried, described uint64) error {
+	return NewAdapterError(CodeInvalidValue,
+		fmt.Sprintf("array carries %d elements but its dimensions describe %d",
+			carried, described))
+}
+
 // Validate holds an array to its own description and to the configured bounds.
 // A shape that does not describe the elements beside it is not an array this
 // adapter can publish: a client reading it would index into something other
@@ -108,14 +144,11 @@ func (array DAArray) Validate(limits ArrayLimits) error {
 			fmt.Sprintf("array of %d dimensions exceeds the %d dimension limit",
 				len(array.Dimensions), limits.MaxDimensions))
 	}
-	count, err := array.ElementCount(limits.MaxElements)
-	if err != nil {
+	if _, err := array.ElementCount(limits.MaxElements); err != nil {
 		return err
 	}
-	if len(array.Elements) != count {
-		return NewAdapterError(CodeInvalidValue,
-			fmt.Sprintf("array carries %d elements but its dimensions describe %d",
-				len(array.Elements), count))
+	if err := array.MatchesItsShape(); err != nil {
+		return err
 	}
 
 	bstrUnits := 0

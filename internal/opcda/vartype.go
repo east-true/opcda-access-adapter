@@ -1,6 +1,9 @@
 package opcda
 
-import "fmt"
+import (
+	"fmt"
+	"strings"
+)
 
 // DAVarType is the unmodified COM VARTYPE bitfield received from or supplied
 // to OPC DA. The scalar base type must never be inferred from a Go value.
@@ -123,13 +126,46 @@ var varTypesByName = func() map[string]DAVarType {
 	return values
 }()
 
-// ParseDAVarType accepts only a symbolic scalar VARTYPE. Array and byref
-// request types are intentionally excluded from v0 typed Write.
+// ParseDAVarType accepts a symbolic VARTYPE, optionally with the VT_ARRAY
+// suffix String writes. Parsing what String produces is what lets a client send
+// back the type it was told an item has.
+//
+// A byref suffix parses too, and is refused later by the value rules rather
+// than here: "byref values are unsupported" tells an operator something, and
+// "unknown VARTYPE" sends them looking for a spelling mistake that is not
+// there.
 func ParseDAVarType(name string) (DAVarType, error) {
-	if vt, ok := varTypesByName[name]; ok {
-		return vt, nil
+	base := name
+	var flags DAVarType
+	for {
+		remaining, suffix, found := cutLastVarTypeSuffix(base)
+		if !found {
+			break
+		}
+		switch suffix {
+		case "VT_ARRAY":
+			flags |= VTArray
+		case "VT_BYREF":
+			flags |= VTByRef
+		default:
+			return 0, fmt.Errorf("unknown VARTYPE %q", name)
+		}
+		base = remaining
 	}
-	return 0, fmt.Errorf("unknown VARTYPE %q", name)
+	vt, ok := varTypesByName[base]
+	if !ok {
+		return 0, fmt.Errorf("unknown VARTYPE %q", name)
+	}
+	return vt | flags, nil
+}
+
+// cutLastVarTypeSuffix splits one trailing "|VT_..." flag off a VARTYPE name.
+func cutLastVarTypeSuffix(name string) (string, string, bool) {
+	index := strings.LastIndex(name, "|")
+	if index < 0 {
+		return name, "", false
+	}
+	return name[:index], name[index+1:], true
 }
 
 type DAVarTypeInfo struct {
