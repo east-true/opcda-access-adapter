@@ -219,9 +219,22 @@ func encodeSafeArray(array DAArray) (uintptr, error) {
 	return created, nil
 }
 
+// putSafeArrayElement writes one element.
+//
+// The two SAFEARRAY element calls are not symmetric about strings, and the
+// asymmetry is easy to write as if it were. SafeArrayGetElement must be told
+// where to put its copy, so for a BSTR element it takes a BSTR* -- a pointer
+// to the variable that receives it. SafeArrayPutElement takes the value, and a
+// BSTR is already a pointer, so for a BSTR element it takes the BSTR itself.
+// Passing a BSTR* to the second stores the address of the caller's own
+// variable as the element, and reading it back yields whatever that address
+// now points at.
 func putSafeArrayElement(array uintptr, indices []int32, elementType DAVarType, element any) error {
 	var storage [16]byte
 	data := storage[:]
+	// value is what SafeArrayPutElement is handed: a pointer to the element for
+	// everything with a fixed layout, and the BSTR itself for a string.
+	var value uintptr
 	var allocated uintptr
 	switch elementType {
 	case VTI1:
@@ -254,20 +267,24 @@ func putSafeArrayElement(array uintptr, indices []int32, elementType DAVarType, 
 		if err != nil {
 			return err
 		}
-		// SafeArrayPutElement copies a BSTR rather than taking it, so this one
-		// is freed whether the call succeeds or not.
+		// SafeArrayPutElement copies the string rather than taking this one,
+		// so it is freed whether the call succeeds or not.
 		allocated = bstr
-		putVariantPointer(data, bstr)
+		value = bstr
 	default:
 		return NewAdapterError(CodeUnsupportedVarType,
 			fmt.Sprintf("unsupported array element VARTYPE %s", elementType))
 	}
+	if value == 0 {
+		value = uintptr(unsafe.Pointer(&storage[0]))
+	}
 	result, _, _ := procSafeArrayPutElement.Call(
 		array,
 		uintptr(unsafe.Pointer(&indices[0])),
-		uintptr(unsafe.Pointer(&storage[0])),
+		value,
 	)
 	runtime.KeepAlive(indices)
+	runtime.KeepAlive(storage)
 	if allocated != 0 {
 		freeBSTR(allocated)
 	}
