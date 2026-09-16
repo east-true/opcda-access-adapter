@@ -436,7 +436,12 @@ type DAItemPropertyResult struct {
 	// and give nothing -- an empty VARIANT is an answer. Presence is its own bit
 	// for the same reason a Read timestamp's is: absence is absence, and it must
 	// not be reported as a failure the source did not report.
-	ValuePresent  bool `protobuf:"varint,7,opt,name=value_present,json=valuePresent,proto3" json:"value_present,omitempty"`
+	ValuePresent bool `protobuf:"varint,7,opt,name=value_present,json=valuePresent,proto3" json:"value_present,omitempty"`
+	// An array-valued property carries its shape here instead. Exactly one of
+	// value and array_value is set; data_type's array bit says which, so a
+	// client that only understands scalars can tell an array apart from a
+	// property that answered with nothing.
+	ArrayValue    *DAArrayValue `protobuf:"bytes,8,opt,name=array_value,json=arrayValue,proto3" json:"array_value,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -518,6 +523,13 @@ func (x *DAItemPropertyResult) GetValuePresent() bool {
 		return x.ValuePresent
 	}
 	return false
+}
+
+func (x *DAItemPropertyResult) GetArrayValue() *DAArrayValue {
+	if x != nil {
+		return x.ArrayValue
+	}
+	return nil
 }
 
 type DAStatusRequest struct {
@@ -1296,8 +1308,11 @@ type DAReadResult struct {
 	Hresult              *DAHRESULT             `protobuf:"bytes,11,opt,name=hresult,proto3" json:"hresult,omitempty"`
 	AccessRights         *DAAccessRights        `protobuf:"bytes,12,opt,name=access_rights,json=accessRights,proto3" json:"access_rights,omitempty"`
 	ErrorCode            string                 `protobuf:"bytes,13,opt,name=error_code,json=errorCode,proto3" json:"error_code,omitempty"`
-	unknownFields        protoimpl.UnknownFields
-	sizeCache            protoimpl.SizeCache
+	// An array value carries its shape here instead of in value. Exactly one of
+	// the two is set, and data_type's array bit says which.
+	ArrayValue    *DAArrayValue `protobuf:"bytes,14,opt,name=array_value,json=arrayValue,proto3" json:"array_value,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *DAReadResult) Reset() {
@@ -1421,6 +1436,13 @@ func (x *DAReadResult) GetErrorCode() string {
 	return ""
 }
 
+func (x *DAReadResult) GetArrayValue() *DAArrayValue {
+	if x != nil {
+		return x.ArrayValue
+	}
+	return nil
+}
+
 type DAWriteRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Items         []*DAWriteItem         `protobuf:"bytes,1,rep,name=items,proto3" json:"items,omitempty"`
@@ -1466,10 +1488,13 @@ func (x *DAWriteRequest) GetItems() []*DAWriteItem {
 }
 
 type DAWriteItem struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	ItemId        string                 `protobuf:"bytes,1,opt,name=item_id,json=itemId,proto3" json:"item_id,omitempty"`
-	DataType      *DAVarType             `protobuf:"bytes,2,opt,name=data_type,json=dataType,proto3" json:"data_type,omitempty"`
-	Value         *DAScalarValue         `protobuf:"bytes,3,opt,name=value,proto3" json:"value,omitempty"`
+	state    protoimpl.MessageState `protogen:"open.v1"`
+	ItemId   string                 `protobuf:"bytes,1,opt,name=item_id,json=itemId,proto3" json:"item_id,omitempty"`
+	DataType *DAVarType             `protobuf:"bytes,2,opt,name=data_type,json=dataType,proto3" json:"data_type,omitempty"`
+	Value    *DAScalarValue         `protobuf:"bytes,3,opt,name=value,proto3" json:"value,omitempty"`
+	// An array Write supplies its shape here instead of in value. Exactly one of
+	// the two is set, and data_type's array bit says which.
+	ArrayValue    *DAArrayValue `protobuf:"bytes,4,opt,name=array_value,json=arrayValue,proto3" json:"array_value,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1521,6 +1546,13 @@ func (x *DAWriteItem) GetDataType() *DAVarType {
 func (x *DAWriteItem) GetValue() *DAScalarValue {
 	if x != nil {
 		return x.Value
+	}
+	return nil
+}
+
+func (x *DAWriteItem) GetArrayValue() *DAArrayValue {
+	if x != nil {
+		return x.ArrayValue
 	}
 	return nil
 }
@@ -2243,6 +2275,128 @@ func (x *DAHRESULT) GetHex() string {
 	return ""
 }
 
+// DADimension is one dimension of a DA array: the index it starts at and how
+// many elements it holds. The lower bound is the one the source reported and is
+// never normalised, because a client writing back to an index it read must
+// reach the element it read.
+type DADimension struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	LowerBound    int32                  `protobuf:"zigzag32,1,opt,name=lower_bound,json=lowerBound,proto3" json:"lower_bound,omitempty"`
+	Length        uint32                 `protobuf:"varint,2,opt,name=length,proto3" json:"length,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *DADimension) Reset() {
+	*x = DADimension{}
+	mi := &file_api_opcda_v1_opcda_access_proto_msgTypes[33]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *DADimension) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DADimension) ProtoMessage() {}
+
+func (x *DADimension) ProtoReflect() protoreflect.Message {
+	mi := &file_api_opcda_v1_opcda_access_proto_msgTypes[33]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use DADimension.ProtoReflect.Descriptor instead.
+func (*DADimension) Descriptor() ([]byte, []int) {
+	return file_api_opcda_v1_opcda_access_proto_rawDescGZIP(), []int{33}
+}
+
+func (x *DADimension) GetLowerBound() int32 {
+	if x != nil {
+		return x.LowerBound
+	}
+	return 0
+}
+
+func (x *DADimension) GetLength() uint32 {
+	if x != nil {
+		return x.Length
+	}
+	return 0
+}
+
+// DAArrayValue is a SAFEARRAY with its shape beside it, which OPC DA Access
+// Adapter ADR-0019 requires: element VARTYPE, dimension count, lower bound and
+// length per dimension, and the element values all survive.
+//
+// elements is flat and ordered so the last dimension varies fastest, so a
+// client can rebuild the array from the description alone.
+type DAArrayValue struct {
+	state           protoimpl.MessageState `protogen:"open.v1"`
+	ElementDataType *DAVarType             `protobuf:"bytes,1,opt,name=element_data_type,json=elementDataType,proto3" json:"element_data_type,omitempty"`
+	Dimensions      []*DADimension         `protobuf:"bytes,2,rep,name=dimensions,proto3" json:"dimensions,omitempty"`
+	Elements        []*DAScalarValue       `protobuf:"bytes,3,rep,name=elements,proto3" json:"elements,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
+}
+
+func (x *DAArrayValue) Reset() {
+	*x = DAArrayValue{}
+	mi := &file_api_opcda_v1_opcda_access_proto_msgTypes[34]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *DAArrayValue) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DAArrayValue) ProtoMessage() {}
+
+func (x *DAArrayValue) ProtoReflect() protoreflect.Message {
+	mi := &file_api_opcda_v1_opcda_access_proto_msgTypes[34]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use DAArrayValue.ProtoReflect.Descriptor instead.
+func (*DAArrayValue) Descriptor() ([]byte, []int) {
+	return file_api_opcda_v1_opcda_access_proto_rawDescGZIP(), []int{34}
+}
+
+func (x *DAArrayValue) GetElementDataType() *DAVarType {
+	if x != nil {
+		return x.ElementDataType
+	}
+	return nil
+}
+
+func (x *DAArrayValue) GetDimensions() []*DADimension {
+	if x != nil {
+		return x.Dimensions
+	}
+	return nil
+}
+
+func (x *DAArrayValue) GetElements() []*DAScalarValue {
+	if x != nil {
+		return x.Elements
+	}
+	return nil
+}
+
 type DAScalarValue struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// Types that are valid to be assigned to Value:
@@ -2270,7 +2424,7 @@ type DAScalarValue struct {
 
 func (x *DAScalarValue) Reset() {
 	*x = DAScalarValue{}
-	mi := &file_api_opcda_v1_opcda_access_proto_msgTypes[33]
+	mi := &file_api_opcda_v1_opcda_access_proto_msgTypes[35]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2282,7 +2436,7 @@ func (x *DAScalarValue) String() string {
 func (*DAScalarValue) ProtoMessage() {}
 
 func (x *DAScalarValue) ProtoReflect() protoreflect.Message {
-	mi := &file_api_opcda_v1_opcda_access_proto_msgTypes[33]
+	mi := &file_api_opcda_v1_opcda_access_proto_msgTypes[35]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2295,7 +2449,7 @@ func (x *DAScalarValue) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DAScalarValue.ProtoReflect.Descriptor instead.
 func (*DAScalarValue) Descriptor() ([]byte, []int) {
-	return file_api_opcda_v1_opcda_access_proto_rawDescGZIP(), []int{33}
+	return file_api_opcda_v1_opcda_access_proto_rawDescGZIP(), []int{35}
 }
 
 func (x *DAScalarValue) GetValue() isDAScalarValue_Value {
@@ -2564,7 +2718,7 @@ type DAOperationError struct {
 
 func (x *DAOperationError) Reset() {
 	*x = DAOperationError{}
-	mi := &file_api_opcda_v1_opcda_access_proto_msgTypes[34]
+	mi := &file_api_opcda_v1_opcda_access_proto_msgTypes[36]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2576,7 +2730,7 @@ func (x *DAOperationError) String() string {
 func (*DAOperationError) ProtoMessage() {}
 
 func (x *DAOperationError) ProtoReflect() protoreflect.Message {
-	mi := &file_api_opcda_v1_opcda_access_proto_msgTypes[34]
+	mi := &file_api_opcda_v1_opcda_access_proto_msgTypes[36]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2589,7 +2743,7 @@ func (x *DAOperationError) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DAOperationError.ProtoReflect.Descriptor instead.
 func (*DAOperationError) Descriptor() ([]byte, []int) {
-	return file_api_opcda_v1_opcda_access_proto_rawDescGZIP(), []int{34}
+	return file_api_opcda_v1_opcda_access_proto_rawDescGZIP(), []int{36}
 }
 
 func (x *DAOperationError) GetLayer() string {
@@ -2649,7 +2803,7 @@ const file_api_opcda_v1_opcda_access_proto_rawDesc = "" +
 	"\fproperty_ids\x18\x02 \x03(\rR\vpropertyIds\"t\n" +
 	"\x18DAItemPropertiesResponse\x12\x17\n" +
 	"\aitem_id\x18\x01 \x01(\tR\x06itemId\x12?\n" +
-	"\aresults\x18\x02 \x03(\v2%.opcda.access.v1.DAItemPropertyResultR\aresults\"\xb0\x02\n" +
+	"\aresults\x18\x02 \x03(\v2%.opcda.access.v1.DAItemPropertyResultR\aresults\"\xf0\x02\n" +
 	"\x14DAItemPropertyResult\x12\x1f\n" +
 	"\vproperty_id\x18\x01 \x01(\rR\n" +
 	"propertyId\x12\x0e\n" +
@@ -2659,7 +2813,9 @@ const file_api_opcda_v1_opcda_access_proto_rawDesc = "" +
 	"\ahresult\x18\x05 \x01(\v2\x1a.opcda.access.v1.DAHRESULTR\ahresult\x12\x1d\n" +
 	"\n" +
 	"error_code\x18\x06 \x01(\tR\terrorCode\x12#\n" +
-	"\rvalue_present\x18\a \x01(\bR\fvaluePresent\"\x11\n" +
+	"\rvalue_present\x18\a \x01(\bR\fvaluePresent\x12>\n" +
+	"\varray_value\x18\b \x01(\v2\x1d.opcda.access.v1.DAArrayValueR\n" +
+	"arrayValue\"\x11\n" +
 	"\x0fDAStatusRequest\"\xd3\x02\n" +
 	"\x10DAStatusResponse\x12#\n" +
 	"\rruntime_state\x18\x01 \x01(\tR\fruntimeState\x121\n" +
@@ -2713,7 +2869,7 @@ const file_api_opcda_v1_opcda_access_proto_rawDesc = "" +
 	"DAReadItem\x12\x17\n" +
 	"\aitem_id\x18\x01 \x01(\tR\x06itemId\"I\n" +
 	"\x0eDAReadResponse\x127\n" +
-	"\aresults\x18\x01 \x03(\v2\x1d.opcda.access.v1.DAReadResultR\aresults\"\xe3\x04\n" +
+	"\aresults\x18\x01 \x03(\v2\x1d.opcda.access.v1.DAReadResultR\aresults\"\xa3\x05\n" +
 	"\fDAReadResult\x12\x17\n" +
 	"\aitem_id\x18\x01 \x01(\tR\x06itemId\x12\x0e\n" +
 	"\x02ok\x18\x02 \x01(\bR\x02ok\x127\n" +
@@ -2730,13 +2886,17 @@ const file_api_opcda_v1_opcda_access_proto_rawDesc = "" +
 	"\ahresult\x18\v \x01(\v2\x1a.opcda.access.v1.DAHRESULTR\ahresult\x12D\n" +
 	"\raccess_rights\x18\f \x01(\v2\x1f.opcda.access.v1.DAAccessRightsR\faccessRights\x12\x1d\n" +
 	"\n" +
-	"error_code\x18\r \x01(\tR\terrorCode\"D\n" +
+	"error_code\x18\r \x01(\tR\terrorCode\x12>\n" +
+	"\varray_value\x18\x0e \x01(\v2\x1d.opcda.access.v1.DAArrayValueR\n" +
+	"arrayValue\"D\n" +
 	"\x0eDAWriteRequest\x122\n" +
-	"\x05items\x18\x01 \x03(\v2\x1c.opcda.access.v1.DAWriteItemR\x05items\"\x95\x01\n" +
+	"\x05items\x18\x01 \x03(\v2\x1c.opcda.access.v1.DAWriteItemR\x05items\"\xd5\x01\n" +
 	"\vDAWriteItem\x12\x17\n" +
 	"\aitem_id\x18\x01 \x01(\tR\x06itemId\x127\n" +
 	"\tdata_type\x18\x02 \x01(\v2\x1a.opcda.access.v1.DAVarTypeR\bdataType\x124\n" +
-	"\x05value\x18\x03 \x01(\v2\x1e.opcda.access.v1.DAScalarValueR\x05value\"K\n" +
+	"\x05value\x18\x03 \x01(\v2\x1e.opcda.access.v1.DAScalarValueR\x05value\x12>\n" +
+	"\varray_value\x18\x04 \x01(\v2\x1d.opcda.access.v1.DAArrayValueR\n" +
+	"arrayValue\"K\n" +
 	"\x0fDAWriteResponse\x128\n" +
 	"\aresults\x18\x01 \x03(\v2\x1e.opcda.access.v1.DAWriteResultR\aresults\"\x8d\x01\n" +
 	"\rDAWriteResult\x12\x17\n" +
@@ -2785,7 +2945,17 @@ const file_api_opcda_v1_opcda_access_proto_rawDesc = "" +
 	"\tDAHRESULT\x12\x14\n" +
 	"\x05value\x18\x01 \x01(\x11R\x05value\x12\x10\n" +
 	"\x03raw\x18\x02 \x01(\aR\x03raw\x12\x10\n" +
-	"\x03hex\x18\x03 \x01(\tR\x03hex\"\x8d\x04\n" +
+	"\x03hex\x18\x03 \x01(\tR\x03hex\"F\n" +
+	"\vDADimension\x12\x1f\n" +
+	"\vlower_bound\x18\x01 \x01(\x11R\n" +
+	"lowerBound\x12\x16\n" +
+	"\x06length\x18\x02 \x01(\rR\x06length\"\xd0\x01\n" +
+	"\fDAArrayValue\x12F\n" +
+	"\x11element_data_type\x18\x01 \x01(\v2\x1a.opcda.access.v1.DAVarTypeR\x0felementDataType\x12<\n" +
+	"\n" +
+	"dimensions\x18\x02 \x03(\v2\x1c.opcda.access.v1.DADimensionR\n" +
+	"dimensions\x12:\n" +
+	"\belements\x18\x03 \x03(\v2\x1e.opcda.access.v1.DAScalarValueR\belements\"\x8d\x04\n" +
 	"\rDAScalarValue\x12$\n" +
 	"\rempty_or_null\x18\x01 \x01(\bH\x00R\vemptyOrNull\x12\x1b\n" +
 	"\bi1_value\x18\x02 \x01(\x11H\x00R\ai1Value\x12\x1d\n" +
@@ -2847,7 +3017,7 @@ func file_api_opcda_v1_opcda_access_proto_rawDescGZIP() []byte {
 }
 
 var file_api_opcda_v1_opcda_access_proto_enumTypes = make([]protoimpl.EnumInfo, 3)
-var file_api_opcda_v1_opcda_access_proto_msgTypes = make([]protoimpl.MessageInfo, 35)
+var file_api_opcda_v1_opcda_access_proto_msgTypes = make([]protoimpl.MessageInfo, 37)
 var file_api_opcda_v1_opcda_access_proto_goTypes = []any{
 	(DABrowseFilter)(0),                       // 0: opcda.access.v1.DABrowseFilter
 	(DABrowseEntryKind)(0),                    // 1: opcda.access.v1.DABrowseEntryKind
@@ -2885,68 +3055,76 @@ var file_api_opcda_v1_opcda_access_proto_goTypes = []any{
 	(*DAVarType)(nil),                         // 33: opcda.access.v1.DAVarType
 	(*DAAccessRights)(nil),                    // 34: opcda.access.v1.DAAccessRights
 	(*DAHRESULT)(nil),                         // 35: opcda.access.v1.DAHRESULT
-	(*DAScalarValue)(nil),                     // 36: opcda.access.v1.DAScalarValue
-	(*DAOperationError)(nil),                  // 37: opcda.access.v1.DAOperationError
+	(*DADimension)(nil),                       // 36: opcda.access.v1.DADimension
+	(*DAArrayValue)(nil),                      // 37: opcda.access.v1.DAArrayValue
+	(*DAScalarValue)(nil),                     // 38: opcda.access.v1.DAScalarValue
+	(*DAOperationError)(nil),                  // 39: opcda.access.v1.DAOperationError
 }
 var file_api_opcda_v1_opcda_access_proto_depIdxs = []int32{
 	5,  // 0: opcda.access.v1.DAAvailableItemPropertiesResponse.properties:type_name -> opcda.access.v1.DAAvailableProperty
 	33, // 1: opcda.access.v1.DAAvailableProperty.data_type:type_name -> opcda.access.v1.DAVarType
 	8,  // 2: opcda.access.v1.DAItemPropertiesResponse.results:type_name -> opcda.access.v1.DAItemPropertyResult
 	33, // 3: opcda.access.v1.DAItemPropertyResult.data_type:type_name -> opcda.access.v1.DAVarType
-	36, // 4: opcda.access.v1.DAItemPropertyResult.value:type_name -> opcda.access.v1.DAScalarValue
+	38, // 4: opcda.access.v1.DAItemPropertyResult.value:type_name -> opcda.access.v1.DAScalarValue
 	35, // 5: opcda.access.v1.DAItemPropertyResult.hresult:type_name -> opcda.access.v1.DAHRESULT
-	11, // 6: opcda.access.v1.DAStatusResponse.source:type_name -> opcda.access.v1.DASource
-	13, // 7: opcda.access.v1.DAStatusResponse.capabilities:type_name -> opcda.access.v1.DACapabilities
-	14, // 8: opcda.access.v1.DAStatusResponse.runtime:type_name -> opcda.access.v1.DARuntimeStatus
-	15, // 9: opcda.access.v1.DAStatusResponse.frontend:type_name -> opcda.access.v1.DAGRPCFrontendStatus
-	12, // 10: opcda.access.v1.DASource.last_error:type_name -> opcda.access.v1.DASourceError
-	35, // 11: opcda.access.v1.DASourceError.hresult:type_name -> opcda.access.v1.DAHRESULT
-	0,  // 12: opcda.access.v1.DABrowseRequest.filter:type_name -> opcda.access.v1.DABrowseFilter
-	18, // 13: opcda.access.v1.DABrowseResponse.entries:type_name -> opcda.access.v1.DABrowseEntry
-	1,  // 14: opcda.access.v1.DABrowseEntry.kind:type_name -> opcda.access.v1.DABrowseEntryKind
-	33, // 15: opcda.access.v1.DABrowseEntry.canonical_data_type:type_name -> opcda.access.v1.DAVarType
-	34, // 16: opcda.access.v1.DABrowseEntry.access_rights:type_name -> opcda.access.v1.DAAccessRights
-	2,  // 17: opcda.access.v1.DAReadRequest.source:type_name -> opcda.access.v1.DADataSource
-	20, // 18: opcda.access.v1.DAReadRequest.items:type_name -> opcda.access.v1.DAReadItem
-	22, // 19: opcda.access.v1.DAReadResponse.results:type_name -> opcda.access.v1.DAReadResult
-	33, // 20: opcda.access.v1.DAReadResult.data_type:type_name -> opcda.access.v1.DAVarType
-	33, // 21: opcda.access.v1.DAReadResult.canonical_data_type:type_name -> opcda.access.v1.DAVarType
-	36, // 22: opcda.access.v1.DAReadResult.value:type_name -> opcda.access.v1.DAScalarValue
-	35, // 23: opcda.access.v1.DAReadResult.hresult:type_name -> opcda.access.v1.DAHRESULT
-	34, // 24: opcda.access.v1.DAReadResult.access_rights:type_name -> opcda.access.v1.DAAccessRights
-	24, // 25: opcda.access.v1.DAWriteRequest.items:type_name -> opcda.access.v1.DAWriteItem
-	33, // 26: opcda.access.v1.DAWriteItem.data_type:type_name -> opcda.access.v1.DAVarType
-	36, // 27: opcda.access.v1.DAWriteItem.value:type_name -> opcda.access.v1.DAScalarValue
-	26, // 28: opcda.access.v1.DAWriteResponse.results:type_name -> opcda.access.v1.DAWriteResult
-	35, // 29: opcda.access.v1.DAWriteResult.hresult:type_name -> opcda.access.v1.DAHRESULT
-	28, // 30: opcda.access.v1.DASubscribeRequest.items:type_name -> opcda.access.v1.DASubscribeItem
-	30, // 31: opcda.access.v1.DASubscribeResponse.created:type_name -> opcda.access.v1.DASubscriptionCreated
-	32, // 32: opcda.access.v1.DASubscribeResponse.update:type_name -> opcda.access.v1.DASubscriptionUpdate
-	31, // 33: opcda.access.v1.DASubscriptionCreated.items:type_name -> opcda.access.v1.DASubscriptionItemStatus
-	33, // 34: opcda.access.v1.DASubscriptionItemStatus.canonical_data_type:type_name -> opcda.access.v1.DAVarType
-	34, // 35: opcda.access.v1.DASubscriptionItemStatus.access_rights:type_name -> opcda.access.v1.DAAccessRights
-	35, // 36: opcda.access.v1.DASubscriptionItemStatus.hresult:type_name -> opcda.access.v1.DAHRESULT
-	22, // 37: opcda.access.v1.DASubscriptionUpdate.values:type_name -> opcda.access.v1.DAReadResult
-	35, // 38: opcda.access.v1.DAOperationError.hresult:type_name -> opcda.access.v1.DAHRESULT
-	9,  // 39: opcda.access.v1.OPCDAAccess.Status:input_type -> opcda.access.v1.DAStatusRequest
-	16, // 40: opcda.access.v1.OPCDAAccess.Browse:input_type -> opcda.access.v1.DABrowseRequest
-	19, // 41: opcda.access.v1.OPCDAAccess.Read:input_type -> opcda.access.v1.DAReadRequest
-	23, // 42: opcda.access.v1.OPCDAAccess.Write:input_type -> opcda.access.v1.DAWriteRequest
-	27, // 43: opcda.access.v1.OPCDAAccess.Subscribe:input_type -> opcda.access.v1.DASubscribeRequest
-	3,  // 44: opcda.access.v1.OPCDAAccess.AvailableItemProperties:input_type -> opcda.access.v1.DAAvailableItemPropertiesRequest
-	6,  // 45: opcda.access.v1.OPCDAAccess.ItemProperties:input_type -> opcda.access.v1.DAItemPropertiesRequest
-	10, // 46: opcda.access.v1.OPCDAAccess.Status:output_type -> opcda.access.v1.DAStatusResponse
-	17, // 47: opcda.access.v1.OPCDAAccess.Browse:output_type -> opcda.access.v1.DABrowseResponse
-	21, // 48: opcda.access.v1.OPCDAAccess.Read:output_type -> opcda.access.v1.DAReadResponse
-	25, // 49: opcda.access.v1.OPCDAAccess.Write:output_type -> opcda.access.v1.DAWriteResponse
-	29, // 50: opcda.access.v1.OPCDAAccess.Subscribe:output_type -> opcda.access.v1.DASubscribeResponse
-	4,  // 51: opcda.access.v1.OPCDAAccess.AvailableItemProperties:output_type -> opcda.access.v1.DAAvailableItemPropertiesResponse
-	7,  // 52: opcda.access.v1.OPCDAAccess.ItemProperties:output_type -> opcda.access.v1.DAItemPropertiesResponse
-	46, // [46:53] is the sub-list for method output_type
-	39, // [39:46] is the sub-list for method input_type
-	39, // [39:39] is the sub-list for extension type_name
-	39, // [39:39] is the sub-list for extension extendee
-	0,  // [0:39] is the sub-list for field type_name
+	37, // 6: opcda.access.v1.DAItemPropertyResult.array_value:type_name -> opcda.access.v1.DAArrayValue
+	11, // 7: opcda.access.v1.DAStatusResponse.source:type_name -> opcda.access.v1.DASource
+	13, // 8: opcda.access.v1.DAStatusResponse.capabilities:type_name -> opcda.access.v1.DACapabilities
+	14, // 9: opcda.access.v1.DAStatusResponse.runtime:type_name -> opcda.access.v1.DARuntimeStatus
+	15, // 10: opcda.access.v1.DAStatusResponse.frontend:type_name -> opcda.access.v1.DAGRPCFrontendStatus
+	12, // 11: opcda.access.v1.DASource.last_error:type_name -> opcda.access.v1.DASourceError
+	35, // 12: opcda.access.v1.DASourceError.hresult:type_name -> opcda.access.v1.DAHRESULT
+	0,  // 13: opcda.access.v1.DABrowseRequest.filter:type_name -> opcda.access.v1.DABrowseFilter
+	18, // 14: opcda.access.v1.DABrowseResponse.entries:type_name -> opcda.access.v1.DABrowseEntry
+	1,  // 15: opcda.access.v1.DABrowseEntry.kind:type_name -> opcda.access.v1.DABrowseEntryKind
+	33, // 16: opcda.access.v1.DABrowseEntry.canonical_data_type:type_name -> opcda.access.v1.DAVarType
+	34, // 17: opcda.access.v1.DABrowseEntry.access_rights:type_name -> opcda.access.v1.DAAccessRights
+	2,  // 18: opcda.access.v1.DAReadRequest.source:type_name -> opcda.access.v1.DADataSource
+	20, // 19: opcda.access.v1.DAReadRequest.items:type_name -> opcda.access.v1.DAReadItem
+	22, // 20: opcda.access.v1.DAReadResponse.results:type_name -> opcda.access.v1.DAReadResult
+	33, // 21: opcda.access.v1.DAReadResult.data_type:type_name -> opcda.access.v1.DAVarType
+	33, // 22: opcda.access.v1.DAReadResult.canonical_data_type:type_name -> opcda.access.v1.DAVarType
+	38, // 23: opcda.access.v1.DAReadResult.value:type_name -> opcda.access.v1.DAScalarValue
+	35, // 24: opcda.access.v1.DAReadResult.hresult:type_name -> opcda.access.v1.DAHRESULT
+	34, // 25: opcda.access.v1.DAReadResult.access_rights:type_name -> opcda.access.v1.DAAccessRights
+	37, // 26: opcda.access.v1.DAReadResult.array_value:type_name -> opcda.access.v1.DAArrayValue
+	24, // 27: opcda.access.v1.DAWriteRequest.items:type_name -> opcda.access.v1.DAWriteItem
+	33, // 28: opcda.access.v1.DAWriteItem.data_type:type_name -> opcda.access.v1.DAVarType
+	38, // 29: opcda.access.v1.DAWriteItem.value:type_name -> opcda.access.v1.DAScalarValue
+	37, // 30: opcda.access.v1.DAWriteItem.array_value:type_name -> opcda.access.v1.DAArrayValue
+	26, // 31: opcda.access.v1.DAWriteResponse.results:type_name -> opcda.access.v1.DAWriteResult
+	35, // 32: opcda.access.v1.DAWriteResult.hresult:type_name -> opcda.access.v1.DAHRESULT
+	28, // 33: opcda.access.v1.DASubscribeRequest.items:type_name -> opcda.access.v1.DASubscribeItem
+	30, // 34: opcda.access.v1.DASubscribeResponse.created:type_name -> opcda.access.v1.DASubscriptionCreated
+	32, // 35: opcda.access.v1.DASubscribeResponse.update:type_name -> opcda.access.v1.DASubscriptionUpdate
+	31, // 36: opcda.access.v1.DASubscriptionCreated.items:type_name -> opcda.access.v1.DASubscriptionItemStatus
+	33, // 37: opcda.access.v1.DASubscriptionItemStatus.canonical_data_type:type_name -> opcda.access.v1.DAVarType
+	34, // 38: opcda.access.v1.DASubscriptionItemStatus.access_rights:type_name -> opcda.access.v1.DAAccessRights
+	35, // 39: opcda.access.v1.DASubscriptionItemStatus.hresult:type_name -> opcda.access.v1.DAHRESULT
+	22, // 40: opcda.access.v1.DASubscriptionUpdate.values:type_name -> opcda.access.v1.DAReadResult
+	33, // 41: opcda.access.v1.DAArrayValue.element_data_type:type_name -> opcda.access.v1.DAVarType
+	36, // 42: opcda.access.v1.DAArrayValue.dimensions:type_name -> opcda.access.v1.DADimension
+	38, // 43: opcda.access.v1.DAArrayValue.elements:type_name -> opcda.access.v1.DAScalarValue
+	35, // 44: opcda.access.v1.DAOperationError.hresult:type_name -> opcda.access.v1.DAHRESULT
+	9,  // 45: opcda.access.v1.OPCDAAccess.Status:input_type -> opcda.access.v1.DAStatusRequest
+	16, // 46: opcda.access.v1.OPCDAAccess.Browse:input_type -> opcda.access.v1.DABrowseRequest
+	19, // 47: opcda.access.v1.OPCDAAccess.Read:input_type -> opcda.access.v1.DAReadRequest
+	23, // 48: opcda.access.v1.OPCDAAccess.Write:input_type -> opcda.access.v1.DAWriteRequest
+	27, // 49: opcda.access.v1.OPCDAAccess.Subscribe:input_type -> opcda.access.v1.DASubscribeRequest
+	3,  // 50: opcda.access.v1.OPCDAAccess.AvailableItemProperties:input_type -> opcda.access.v1.DAAvailableItemPropertiesRequest
+	6,  // 51: opcda.access.v1.OPCDAAccess.ItemProperties:input_type -> opcda.access.v1.DAItemPropertiesRequest
+	10, // 52: opcda.access.v1.OPCDAAccess.Status:output_type -> opcda.access.v1.DAStatusResponse
+	17, // 53: opcda.access.v1.OPCDAAccess.Browse:output_type -> opcda.access.v1.DABrowseResponse
+	21, // 54: opcda.access.v1.OPCDAAccess.Read:output_type -> opcda.access.v1.DAReadResponse
+	25, // 55: opcda.access.v1.OPCDAAccess.Write:output_type -> opcda.access.v1.DAWriteResponse
+	29, // 56: opcda.access.v1.OPCDAAccess.Subscribe:output_type -> opcda.access.v1.DASubscribeResponse
+	4,  // 57: opcda.access.v1.OPCDAAccess.AvailableItemProperties:output_type -> opcda.access.v1.DAAvailableItemPropertiesResponse
+	7,  // 58: opcda.access.v1.OPCDAAccess.ItemProperties:output_type -> opcda.access.v1.DAItemPropertiesResponse
+	52, // [52:59] is the sub-list for method output_type
+	45, // [45:52] is the sub-list for method input_type
+	45, // [45:45] is the sub-list for extension type_name
+	45, // [45:45] is the sub-list for extension extendee
+	0,  // [0:45] is the sub-list for field type_name
 }
 
 func init() { file_api_opcda_v1_opcda_access_proto_init() }
@@ -2958,7 +3136,7 @@ func file_api_opcda_v1_opcda_access_proto_init() {
 		(*DASubscribeResponse_Created)(nil),
 		(*DASubscribeResponse_Update)(nil),
 	}
-	file_api_opcda_v1_opcda_access_proto_msgTypes[33].OneofWrappers = []any{
+	file_api_opcda_v1_opcda_access_proto_msgTypes[35].OneofWrappers = []any{
 		(*DAScalarValue_EmptyOrNull)(nil),
 		(*DAScalarValue_I1Value)(nil),
 		(*DAScalarValue_Ui1Value)(nil),
@@ -2982,7 +3160,7 @@ func file_api_opcda_v1_opcda_access_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_api_opcda_v1_opcda_access_proto_rawDesc), len(file_api_opcda_v1_opcda_access_proto_rawDesc)),
 			NumEnums:      3,
-			NumMessages:   35,
+			NumMessages:   37,
 			NumExtensions: 0,
 			NumServices:   1,
 		},
