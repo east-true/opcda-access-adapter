@@ -26,14 +26,14 @@ func TestJSONStructureRejectsDuplicateEscapedKeysAndExcessDepth(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			err := validateJSONStructure([]byte(test.body), test.depth)
+			err := scanJSONStructure([]byte(test.body), test.depth)
 			var bodyError *requestBodyError
 			if !errors.As(err, &bodyError) || bodyError.code != test.code {
 				t.Fatalf("error = %#v, want %s", err, test.code)
 			}
 		})
 	}
-	if err := validateJSONStructure([]byte(`{"items":[{"itemId":"A"}]}`), 3); err != nil {
+	if err := scanJSONStructure([]byte(`{"items":[{"itemId":"A"}]}`), 3); err != nil {
 		t.Fatalf("valid request rejected: %v", err)
 	}
 }
