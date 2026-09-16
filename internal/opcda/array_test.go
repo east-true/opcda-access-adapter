@@ -232,3 +232,67 @@ func assertArrayError(t *testing.T, err error, want ErrorCode) {
 		t.Fatalf("error = %v, want %s", err, want)
 	}
 }
+
+// The array checks are given bounds by their caller, and a bound that is not
+// positive is a caller that has not been configured rather than an array that
+// is wrong. Each of the four is checked on its own, because one disjunction
+// covering all of them would pass a test that set several at once while any
+// single arm could still be removed.
+func TestArrayBoundsMustThemselvesBePositive(t *testing.T) {
+	valid := int32Array([]DADimension{{Length: 1}}, 1)
+	if err := valid.Validate(testArrayBounds()); err != nil {
+		t.Fatalf("a valid array under valid bounds was refused: %v", err)
+	}
+
+	for _, testCase := range []struct {
+		name   string
+		break_ func(*ArrayLimits)
+	}{
+		{"no elements allowed", func(l *ArrayLimits) { l.MaxElements = 0 }},
+		{"no dimensions allowed", func(l *ArrayLimits) { l.MaxDimensions = 0 }},
+		{"no string length allowed", func(l *ArrayLimits) { l.MaxBSTRCodeUnits = 0 }},
+		{"no array string budget", func(l *ArrayLimits) { l.MaxArrayBSTRCodeUnits = 0 }},
+		{"a negative element bound", func(l *ArrayLimits) { l.MaxElements = -1 }},
+		{"a negative dimension bound", func(l *ArrayLimits) { l.MaxDimensions = -1 }},
+		{"a negative string length", func(l *ArrayLimits) { l.MaxBSTRCodeUnits = -1 }},
+		{"a negative array string budget", func(l *ArrayLimits) { l.MaxArrayBSTRCodeUnits = -1 }},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			limits := testArrayBounds()
+			testCase.break_(&limits)
+			err := valid.Validate(limits)
+			if err == nil {
+				t.Fatal("an array was validated against a bound that is not positive")
+			}
+			// The reason is the whole of it. A bound that is not positive is a
+			// configuration that never took, and reporting it as an array that
+			// is too large sends whoever reads the message to the array.
+			adapterErr, ok := AsAdapterError(err)
+			if !ok || adapterErr.Code != CodeInvalidValue {
+				t.Errorf("refused as %v, which blames the array rather than the bound", err)
+			}
+		})
+	}
+}
+
+// ElementCount takes the bound it counts against, and the same rule applies:
+// counting against nothing would report every array as too large or none of
+// them, depending on which way the comparison fell.
+func TestAnElementCountNeedsAPositiveBound(t *testing.T) {
+	array := int32Array([]DADimension{{Length: 2}}, 1, 2)
+	if count, err := array.ElementCount(2); err != nil || count != 2 {
+		t.Fatalf("ElementCount(2) = %d, %v", count, err)
+	}
+	for _, maximum := range []int{0, -1} {
+		if _, err := array.ElementCount(maximum); err == nil {
+			t.Errorf("ElementCount(%d) was answered rather than refused", maximum)
+		}
+		// An array with no dimensions never enters the loop, so the guard is
+		// the only thing that can refuse it: without one, counting against
+		// nothing answers "one element" for an array that describes none.
+		empty := DAArray{ElementType: VTI4}
+		if count, err := empty.ElementCount(maximum); err == nil {
+			t.Errorf("ElementCount(%d) on a dimensionless array answered %d", maximum, count)
+		}
+	}
+}
