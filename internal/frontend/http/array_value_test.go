@@ -305,3 +305,62 @@ func TestAnArrayWrittenBackIsTheArrayThatWasRead(t *testing.T) {
 		t.Errorf("element 2 = %#v, want NaN", array.Elements[2])
 	}
 }
+
+// The special-float rule inside an array has an arm per float width, and only
+// the VT_R8 one had been exercised -- the same gap the scalar encoding had
+// before #202. A VT_R4 element that is not a number travels the same way a
+// VT_R8 one does.
+//
+// The other half is that the rule belongs to floats alone: a VT_BSTR element
+// is a JSON string because a string is what it is, and reading one as a
+// float-special name would refuse every ordinary string an array carries.
+func TestTheSpecialFloatRuleInsideAnArrayBelongsToFloatsAlone(t *testing.T) {
+	decodeElements := func(t *testing.T, elementType opcda.DAVarType, elements string) (any, error) {
+		t.Helper()
+		body := `{"dimensions":[{"length":1}],"elements":[` + elements + `]}`
+		return decodeWriteValue(elementType|opcda.VTArray, arrayValueEncoding, json.RawMessage(body))
+	}
+
+	for _, elementType := range []opcda.DAVarType{opcda.VTR4, opcda.VTR8} {
+		t.Run(elementType.String(), func(t *testing.T) {
+			decoded, err := decodeElements(t, elementType, `"NaN"`)
+			if err != nil {
+				t.Fatalf("a NaN element was refused: %v", err)
+			}
+			array := decoded.(opcda.DAArray)
+			switch typed := array.Elements[0].(type) {
+			case float32:
+				if !math.IsNaN(float64(typed)) {
+					t.Errorf("element = %v, want NaN", typed)
+				}
+			case float64:
+				if !math.IsNaN(typed) {
+					t.Errorf("element = %v, want NaN", typed)
+				}
+			default:
+				t.Errorf("element decoded as %#v", array.Elements[0])
+			}
+
+			// An ordinary number still decodes as a number, so the rule is
+			// about the spelling rather than about the type.
+			if _, err := decodeElements(t, elementType, `1.5`); err != nil {
+				t.Errorf("an ordinary float element was refused: %v", err)
+			}
+			// And a string that is not one of the three names is not a value.
+			if _, err := decodeElements(t, elementType, `"almost"`); err == nil {
+				t.Error("a string that names no special float was accepted")
+			}
+		})
+	}
+
+	t.Run("a string element is a string", func(t *testing.T) {
+		decoded, err := decodeElements(t, opcda.VTBSTR, `"NaN"`)
+		if err != nil {
+			t.Fatalf("a VT_BSTR element spelled like a special float was refused: %v", err)
+		}
+		array := decoded.(opcda.DAArray)
+		if array.Elements[0] != "NaN" {
+			t.Errorf("a VT_BSTR element decoded as %#v, want the string", array.Elements[0])
+		}
+	})
+}
