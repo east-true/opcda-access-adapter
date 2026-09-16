@@ -163,10 +163,15 @@ func (value *exactJSONString) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-// unquotedJSONString reports the value of a JSON string literal that carries no
-// escape, and whether it was one. A literal containing a backslash has
-// something to unescape; one containing a byte below 0x20 is malformed, and
-// saying so is the decoder's job rather than this one's.
+// unquotedJSONString reports the value of a JSON string literal that is its own
+// value, and whether it was one.
+//
+// Three things disqualify a literal from the fast path, and the third is easy
+// to miss. A backslash has something to unescape. A byte below 0x20 is
+// malformed, which is the decoder's answer to give. And invalid UTF-8 is not
+// passed through by the decoder either -- it replaces each bad byte with
+// U+FFFD, so returning the bytes unchanged would be a different value under the
+// same name. The repository's own fuzz target caught exactly that.
 func unquotedJSONString(data []byte) (string, bool) {
 	if len(data) < 2 || data[0] != '"' || data[len(data)-1] != '"' {
 		return "", false
@@ -176,6 +181,9 @@ func unquotedJSONString(data []byte) (string, bool) {
 		if character == '\\' || character == '"' || character < 0x20 {
 			return "", false
 		}
+	}
+	if !utf8.Valid(body) {
+		return "", false
 	}
 	return string(body), true
 }

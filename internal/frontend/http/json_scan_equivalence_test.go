@@ -180,6 +180,13 @@ func TestTheScannerAgreesWithTheDecoderItReplaced(t *testing.T) {
 		`{"a":"unterminated}`, `tru`, `nul`, `fals`, `TRUE`, `None`,
 		`{"a":"\x"}`, `{"a":"\u00"}`, `{"a":"\uZZZZ"}`,
 		"{\"a\":\"raw\tcontrol\"}",
+		// Keys whose bytes are not valid UTF-8. The decoder replaces each bad
+		// byte with U+FFFD, so two keys that differ in their bytes can be the
+		// same field -- which is a duplicate a scanner that passed the bytes
+		// through would not see.
+		"{\"\xff\":1}",
+		"{\"\xff\":1,\"\ufffd\":2}",
+		"{\"a\xffb\":1,\"a\ufffdb\":2}",
 		// More than one value, which is its own rule.
 		`{} {}`, `{}{}`, `1 2`, `"a" "b"`, `{} `, ` {} `, `{}` + "\n",
 		`[] []`,
@@ -208,6 +215,7 @@ func FuzzScannerAgreesWithTheDecoder(f *testing.F) {
 		`[1,2,3]`,
 		`{} {}`,
 		`{"a":01}`,
+		"{\"\xff\":1,\"\ufffd\":2}",
 		``,
 	} {
 		f.Add(seed, 4)

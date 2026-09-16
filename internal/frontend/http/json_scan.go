@@ -1,9 +1,9 @@
 package http
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
-	"unicode/utf16"
 	"unicode/utf8"
 
 	"github.com/east-true/opcda-access-adapter/internal/opcda"
@@ -319,77 +319,28 @@ func isHexDigit(character byte) bool {
 }
 
 // jsonKeyValue is the key as a client meant it. Keys are compared after
-// unescaping, so "a" and "a" are the same field and one cannot be used to
-// smuggle a duplicate past the other. A key with nothing to unescape is its own
-// value, which is the case that never allocates.
+// unescaping, so "a" and an escaped spelling of it are the same field and one
+// cannot be used to smuggle a duplicate past the other.
+//
+// A plain key of valid UTF-8 is its own value, and that is the case worth not
+// allocating for. Everything else goes to the decoder rather than to a second
+// unescaping written here: an escape has surrogate pairs and lone halves to get
+// right, and invalid UTF-8 is replaced byte by byte rather than passed through.
+// Both are easy to write differently by accident, and a key that decodes
+// differently is a duplicate that stops being one.
 func jsonKeyValue(raw []byte, escaped bool) (string, error) {
-	if !escaped {
+	if !escaped && utf8.Valid(raw) {
 		return string(raw), nil
 	}
-	decoded := make([]byte, 0, len(raw))
-	for index := 0; index < len(raw); {
-		if raw[index] != '\\' {
-			decoded = append(decoded, raw[index])
-			index++
-			continue
-		}
-		index++
-		switch raw[index] {
-		case '"':
-			decoded = append(decoded, '"')
-			index++
-		case '\\':
-			decoded = append(decoded, '\\')
-			index++
-		case '/':
-			decoded = append(decoded, '/')
-			index++
-		case 'b':
-			decoded = append(decoded, '\b')
-			index++
-		case 'f':
-			decoded = append(decoded, '\f')
-			index++
-		case 'n':
-			decoded = append(decoded, '\n')
-			index++
-		case 'r':
-			decoded = append(decoded, '\r')
-			index++
-		case 't':
-			decoded = append(decoded, '\t')
-			index++
-		case 'u':
-			code, ok := parseHexQuad(raw[index+1:])
-			if !ok {
-				return "", fmt.Errorf("invalid JSON escape in object key")
-			}
-			index += 5
-			if !utf16.IsSurrogate(rune(code)) {
-				// An ordinary code unit is the rune it names. DecodeRune is
-				// for pairs and answers U+FFFD for anything else, which would
-				// turn every escaped character into a replacement.
-				decoded = utf8.AppendRune(decoded, rune(code))
-				continue
-			}
-			// A surrogate is half a rune. Its partner is the next escape, and
-			// an unpaired one becomes U+FFFD -- which is what the decoder this
-			// agrees with does.
-			if index+1 < len(raw) && raw[index] == '\\' && raw[index+1] == 'u' {
-				if low, lowOK := parseHexQuad(raw[index+2:]); lowOK {
-					if combined := utf16.DecodeRune(rune(code), rune(low)); combined != utf8.RuneError {
-						decoded = utf8.AppendRune(decoded, combined)
-						index += 6
-						continue
-					}
-				}
-			}
-			decoded = utf8.AppendRune(decoded, utf8.RuneError)
-		default:
-			return "", fmt.Errorf("invalid JSON escape in object key")
-		}
+	quoted := make([]byte, 0, len(raw)+2)
+	quoted = append(quoted, '"')
+	quoted = append(quoted, raw...)
+	quoted = append(quoted, '"')
+	var decoded string
+	if err := json.Unmarshal(quoted, &decoded); err != nil {
+		return "", fmt.Errorf("invalid JSON object key")
 	}
-	return string(decoded), nil
+	return decoded, nil
 }
 
 // checkCanonicalSpelling refuses a field spelled like a documented one but
