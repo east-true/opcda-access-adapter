@@ -549,11 +549,11 @@ func dataValueForRead(result opcda.ReadResult, timestamps TimestampsToReturn, no
 		value.Status = StatusBadInternalError
 	} else {
 		value.Status = StatusCodeForQuality(result.Value.QualityRaw)
-		variant, ok := variantForDAValue(*result.Value)
-		if !ok {
-			// A VARTYPE the mapping cannot express is reported rather than
-			// coerced into a type it is not.
-			value.Status = StatusBadTypeMismatch
+		variant, conversion := variantForDAValue(*result.Value)
+		if conversion.IsBad() {
+			// A value the mapping cannot express is reported rather than
+			// coerced into something it is not.
+			value.Status = conversion
 		} else if !value.Status.IsBad() {
 			value.Value = variant
 		}
@@ -571,40 +571,127 @@ func dataValueForRead(result opcda.ReadResult, timestamps TimestampsToReturn, no
 	return value
 }
 
-// variantForDAValue converts a decoded DA scalar into a Variant. The Go type
-// the DA core produced decides the built-in type, so a width is never widened
-// or narrowed on the way out.
-func variantForDAValue(value opcda.DAValue) (Variant, bool) {
+// variantForDAValue converts a decoded DA value into a Variant, or reports the
+// status that says why it cannot. The Go type the DA core produced decides the
+// built-in type, so a width is never widened or narrowed on the way out.
+func variantForDAValue(value opcda.DAValue) (Variant, StatusCode) {
+	if array, ok := value.Value.(opcda.DAArray); ok {
+		return variantForDAArray(array)
+	}
 	switch typed := value.Value.(type) {
 	case nil:
-		return NullVariant(), true
+		return NullVariant(), StatusGood
 	case bool:
-		return Variant{Type: BuiltInBoolean, Value: typed}, true
+		return Variant{Type: BuiltInBoolean, Value: typed}, StatusGood
 	case int8:
-		return Variant{Type: BuiltInSByte, Value: typed}, true
+		return Variant{Type: BuiltInSByte, Value: typed}, StatusGood
 	case uint8:
-		return Variant{Type: BuiltInByte, Value: typed}, true
+		return Variant{Type: BuiltInByte, Value: typed}, StatusGood
 	case int16:
-		return Variant{Type: BuiltInInt16, Value: typed}, true
+		return Variant{Type: BuiltInInt16, Value: typed}, StatusGood
 	case uint16:
-		return Variant{Type: BuiltInUInt16, Value: typed}, true
+		return Variant{Type: BuiltInUInt16, Value: typed}, StatusGood
 	case int32:
-		return Variant{Type: BuiltInInt32, Value: typed}, true
+		return Variant{Type: BuiltInInt32, Value: typed}, StatusGood
 	case uint32:
-		return Variant{Type: BuiltInUInt32, Value: typed}, true
+		return Variant{Type: BuiltInUInt32, Value: typed}, StatusGood
 	case int64:
-		return Variant{Type: BuiltInInt64, Value: typed}, true
+		return Variant{Type: BuiltInInt64, Value: typed}, StatusGood
 	case uint64:
-		return Variant{Type: BuiltInUInt64, Value: typed}, true
+		return Variant{Type: BuiltInUInt64, Value: typed}, StatusGood
 	case float32:
-		return Variant{Type: BuiltInFloat, Value: typed}, true
+		return Variant{Type: BuiltInFloat, Value: typed}, StatusGood
 	case float64:
-		return Variant{Type: BuiltInDouble, Value: typed}, true
+		return Variant{Type: BuiltInDouble, Value: typed}, StatusGood
 	case string:
-		return Variant{Type: BuiltInString, Value: typed}, true
+		return Variant{Type: BuiltInString, Value: typed}, StatusGood
 	default:
-		return Variant{}, false
+		return Variant{}, StatusBadTypeMismatch
 	}
+}
+
+// variantForDAArray converts a DA array into a Variant, or says why it cannot.
+//
+// A UA Variant carries an array as the array bit, a length prefix and an
+// optional ArrayDimensions field of lengths (OPC 10000-6 Tables 25 and 26).
+// There is no lower bound anywhere in it, so an array that does not start at
+// zero has no lossless UA representation.
+//
+// ADR-0019 decision 7 refuses that rather than re-basing it. A UA client cannot
+// tell a re-based array from one that was always zero-based, which would leave
+// this adapter the only party knowing the value it published is not the value
+// the source holds -- the same defect as returning last-good data, reached
+// through the encoder instead of through a cache.
+func variantForDAArray(array opcda.DAArray) (Variant, StatusCode) {
+	for _, dimension := range array.Dimensions {
+		if dimension.LowerBound != 0 {
+			return Variant{}, StatusBadNotSupported
+		}
+	}
+	if len(array.Dimensions) == 0 {
+		return Variant{}, StatusBadTypeMismatch
+	}
+	elements, builtIn, ok := uaArrayElements(array)
+	if !ok {
+		return Variant{}, StatusBadTypeMismatch
+	}
+	variant := Variant{Type: builtIn, Value: elements, IsArray: true}
+	// Table 26 wants every dimension when the field is present, and a single
+	// dimension is already the length prefix, so only a multidimensional array
+	// carries one.
+	if len(array.Dimensions) > 1 {
+		variant.ArrayDimensions = make([]int32, len(array.Dimensions))
+		for index, dimension := range array.Dimensions {
+			variant.ArrayDimensions[index] = int32(dimension.Length)
+		}
+	}
+	return variant, StatusGood
+}
+
+// uaArrayElements collects the elements into the typed slice the encoder
+// writes, refusing an element whose Go type is not the one its element VARTYPE
+// produces rather than coercing it.
+func uaArrayElements(array opcda.DAArray) (any, BuiltInTypeID, bool) {
+	switch array.ElementType {
+	case opcda.VTBool:
+		return collectArrayElements[bool](array, BuiltInBoolean)
+	case opcda.VTI1:
+		return collectArrayElements[int8](array, BuiltInSByte)
+	case opcda.VTUI1:
+		return collectArrayElements[byte](array, BuiltInByte)
+	case opcda.VTI2:
+		return collectArrayElements[int16](array, BuiltInInt16)
+	case opcda.VTUI2:
+		return collectArrayElements[uint16](array, BuiltInUInt16)
+	case opcda.VTI4, opcda.VTInt, opcda.VTError:
+		return collectArrayElements[int32](array, BuiltInInt32)
+	case opcda.VTUI4, opcda.VTUInt:
+		return collectArrayElements[uint32](array, BuiltInUInt32)
+	case opcda.VTI8:
+		return collectArrayElements[int64](array, BuiltInInt64)
+	case opcda.VTUI8:
+		return collectArrayElements[uint64](array, BuiltInUInt64)
+	case opcda.VTR4:
+		return collectArrayElements[float32](array, BuiltInFloat)
+	case opcda.VTR8:
+		return collectArrayElements[float64](array, BuiltInDouble)
+	case opcda.VTBSTR:
+		return collectArrayElements[string](array, BuiltInString)
+	default:
+		return nil, 0, false
+	}
+}
+
+func collectArrayElements[T any](array opcda.DAArray, builtIn BuiltInTypeID) (any, BuiltInTypeID, bool) {
+	elements := make([]T, len(array.Elements))
+	for index, element := range array.Elements {
+		typed, ok := element.(T)
+		if !ok {
+			return nil, 0, false
+		}
+		elements[index] = typed
+	}
+	return elements, builtIn, true
 }
 
 // readAttribute answers a non-Value attribute from the address space.
