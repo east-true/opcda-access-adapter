@@ -65,6 +65,8 @@ This 12-second demo is a sanitized replay of the executed `windows/386`
 Graybox setup recorded in the [compatibility evidence](docs/compatibility.md).
 It starts a foreground loopback listener with Write disabled; it does not
 install a Windows Service. The same steps are available as copyable text below.
+If your Markdown viewer honors reduced-motion settings and shows a still image,
+[open the animation directly](docs/assets/setup-demo.gif).
 
 ### 1. Build
 
