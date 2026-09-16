@@ -58,8 +58,14 @@ const (
 	AccessLevelCurrentWrite byte = 1 << 1
 )
 
-// ValueRank values. A scalar is -1; the DA core decodes no arrays.
-const ValueRankScalar int32 = -1
+// ValueRank values. A scalar is -1, and zero is the rank for a value that is
+// an array of one or more dimensions without saying how many -- which is what
+// A.3.1.4 gives an array-valued DA property, because a DA source does not
+// declare an array property's dimension count ahead of reading it.
+const (
+	ValueRankScalar              int32 = -1
+	ValueRankOneOrMoreDimensions int32 = 0
+)
 
 // Standard node identifiers from the OPC Foundation NodeIds table.
 const (
@@ -86,8 +92,10 @@ const (
 	NodeIDNamespaceArray       uint32 = 2255
 )
 
-// ValueRankOneDimension is the ValueRank of the standard Server properties.
-// Nothing the DA source supplies is an array.
+// ValueRankOneDimension is the ValueRank of the standard Server properties,
+// which are arrays of a known single dimension. A DA source's own arrays get
+// ValueRankOneOrMoreDimensions instead, because their dimension count is not
+// known until one is read.
 const ValueRankOneDimension int32 = 1
 
 // Built-in DataType identifiers from the same table.

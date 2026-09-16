@@ -246,11 +246,10 @@ faces now, which is the same reason no SHA is pinned above.
   `LookupItemIDs` answers; the write reaches that item rather than the one the
   property describes.
 
-  One of A.3.1.4's rules remains unapplied, and it is a limit of this adapter
-  rather than of the source: an array-valued property is not exposed at all,
-  because the DA layer carries no array VARIANTs. **The row is implemented for
-  scalar properties**; a source whose items carry array properties gets less
-  than A.3.1.4 describes. `docs/opcua-mapping.md` carries both.
+  A.3.1.4's array-valued property rule was unapplied while the DA layer carried
+  no array VARIANTs. It carries them now, and the rule is applied: such a
+  property is exposed with `ValueRank` `OneOrMoreDimensions`.
+  `docs/opcua-mapping.md` carries the detail.
 
   This is also the part of Table A.1 the OPC Foundation fixture exercises: it
   offers exactly these properties and none of the nine named ones.
@@ -258,11 +257,13 @@ faces now, which is the same reason no SHA is pinned above.
   Two types are deliberately not claimed, because a claimed type is a promise:
   an item whose EU Type is Analog but which offers neither EU bound has no
   mandatory `EURange` to publish, and `MultiStateDiscreteType` needs
-  `EnumStrings` from an array-valued DA property the DA layer does not carry.
-  [ADR-0018](adr/0018-da-item-properties.md) records both.
+  `EnumStrings`, which is `LocalizedText[]` where the DA property behind it is
+  `String[]`. [ADR-0018](adr/0018-da-item-properties.md) records both; the
+  second reason narrowed once the DA layer began carrying arrays, and is now
+  about the type rather than about the array.
 
-- SAFEARRAY values are carried by the DA layer and published by no frontend
-  yet. [ADR-0019](adr/0019-safearray-representation.md) decides the
+- SAFEARRAY values are carried by the DA layer and published by all three
+  frontends. [ADR-0019](adr/0019-safearray-representation.md) decides the
   representation: element VARTYPE, dimension count, per-dimension lower bound
   and length, and the element values all survive, which is what design.md §20.4
   requires of any implementation.
@@ -285,13 +286,15 @@ faces now, which is the same reason no SHA is pinned above.
   Variant has nowhere to put one and re-basing would be a value the source does
   not hold.
 
-  Two consequences recorded elsewhere in this file are now partly reachable.
-  A.3.1.4's array-valued property can be *read* where its lower bounds allow,
-  but is still not exposed as a node: Table A.2 gives no `DataType` for an array
-  VARTYPE, so the node has no type to declare, and giving it an element
-  `DataType` and a `ValueRank` is the step that remains. `MultiStateDiscreteType`
-  waits on the same step, and on a real source, since its `EnumStrings` is one
-  of those properties.
+  A.3.1.4's array-valued property rule is applied: such a property is exposed
+  with `ValueRank` `OneOrMoreDimensions` and read where its lower bounds allow.
+  EU Info is the property this reaches on a real source.
+
+  `MultiStateDiscreteType` is still not claimed, and the reason has narrowed to
+  one thing: its mandatory `EnumStrings` is `LocalizedText[]` and a DA array of
+  `VT_BSTR` is `String[]`. A DA string carries no locale, so turning one into
+  the other is a choice rather than a transcription, and claiming the type would
+  promise a mandatory property whose shape the adapter would have to invent.
 
 - The local KVM/libvirt destructive-validation gate is paused. The dedicated
   `opcda-destructive-review` VM and all of its dedicated host resources were
