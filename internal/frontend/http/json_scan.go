@@ -1,9 +1,9 @@
 package http
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
-	"strings"
 	"unicode/utf8"
 
 	"github.com/east-true/opcda-access-adapter/internal/opcda"
@@ -328,9 +328,9 @@ func isHexDigit(character byte) bool {
 // right, and invalid UTF-8 is replaced byte by byte rather than passed through.
 // Both are easy to write differently by accident, and a key that decodes
 // differently is a duplicate that stops being one.
-func jsonKeyValue(raw []byte, escaped bool) (string, error) {
+func jsonKeyValue(raw []byte, escaped bool) ([]byte, error) {
 	if !escaped && utf8.Valid(raw) {
-		return string(raw), nil
+		return raw, nil
 	}
 	quoted := make([]byte, 0, len(raw)+2)
 	quoted = append(quoted, '"')
@@ -338,17 +338,18 @@ func jsonKeyValue(raw []byte, escaped bool) (string, error) {
 	quoted = append(quoted, '"')
 	var decoded string
 	if err := json.Unmarshal(quoted, &decoded); err != nil {
-		return "", fmt.Errorf("invalid JSON object key")
+		return nil, fmt.Errorf("invalid JSON object key")
 	}
-	return decoded, nil
+	return []byte(decoded), nil
 }
 
 // checkCanonicalSpelling refuses a field spelled like a documented one but
 // cased differently. A client that sends "ItemID" has not sent "itemId", and
 // silently ignoring it would answer a request the client did not make.
-func checkCanonicalSpelling(key string) error {
+func checkCanonicalSpelling(key []byte) error {
 	for _, canonical := range canonicalRequestFields {
-		if key != canonical && strings.EqualFold(key, canonical) {
+		if !bytes.Equal(key, []byte(canonical)) && len(key) == len(canonical) &&
+			bytes.EqualFold(key, []byte(canonical)) {
 			return &requestBodyError{
 				code:    opcda.CodeInvalidRequest,
 				message: "request JSON field names must use the exact documented spelling",
@@ -359,46 +360,46 @@ func checkCanonicalSpelling(key string) error {
 }
 
 // jsonKeySet remembers the keys of one object. Most request objects carry a
-// handful of fields, so a slice with a linear scan beats a map until there are
-// enough keys for the scan to cost more than hashing them.
+// handful of fields, so the first few live in an array that costs nothing and
+// are compared by scanning; an object with more than that gets a map, where
+// hashing starts to beat the scan.
+//
+// Keys are held as bytes rather than strings. An unescaped key is a slice of
+// the body, which outlives the scan, so remembering one costs nothing at all.
 type jsonKeySet struct {
-	small []string
-	large map[string]struct{}
+	inline [8][]byte
+	count  int
+	spill  map[string]struct{}
 }
-
-const jsonKeySetSliceLimit = 16
 
 func newJSONKeySet() jsonKeySet {
 	return jsonKeySet{}
 }
 
 func (set *jsonKeySet) empty() bool {
-	return len(set.small) == 0 && len(set.large) == 0
+	return set.count == 0 && len(set.spill) == 0
 }
 
 // add records a key and reports whether it was new.
-func (set *jsonKeySet) add(key string) bool {
-	if set.large != nil {
-		if _, exists := set.large[key]; exists {
-			return false
-		}
-		set.large[key] = struct{}{}
-		return true
-	}
-	for _, existing := range set.small {
-		if existing == key {
+func (set *jsonKeySet) add(key []byte) bool {
+	for index := 0; index < set.count; index++ {
+		if bytes.Equal(set.inline[index], key) {
 			return false
 		}
 	}
-	if len(set.small) == jsonKeySetSliceLimit {
-		set.large = make(map[string]struct{}, jsonKeySetSliceLimit*2)
-		for _, existing := range set.small {
-			set.large[existing] = struct{}{}
+	if set.spill != nil {
+		if _, exists := set.spill[string(key)]; exists {
+			return false
 		}
-		set.small = nil
-		set.large[key] = struct{}{}
+		set.spill[string(key)] = struct{}{}
 		return true
 	}
-	set.small = append(set.small, key)
+	if set.count < len(set.inline) {
+		set.inline[set.count] = key
+		set.count++
+		return true
+	}
+	set.spill = make(map[string]struct{}, len(set.inline)*2)
+	set.spill[string(key)] = struct{}{}
 	return true
 }

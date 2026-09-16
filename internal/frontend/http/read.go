@@ -10,6 +10,7 @@ import (
 	"math"
 	stdhttp "net/http"
 	"strconv"
+	"time"
 	"unicode/utf8"
 
 	"github.com/east-true/opcda-access-adapter/internal/opcda"
@@ -93,8 +94,9 @@ func (s *Server) handleRead(ctx context.Context, w stdhttp.ResponseWriter, reque
 		return
 	}
 	encoded := make([]readHTTPResult, len(results))
+	fields := newReadResultFields(len(results))
 	for index := range results {
-		encoded[index] = encodeReadResult(results[index])
+		encoded[index] = encodeReadResult(results[index], &fields)
 	}
 	writeJSON(w, stdhttp.StatusOK, struct {
 		Results []readHTTPResult `json:"results"`
@@ -273,23 +275,56 @@ func ensureJSONEOF(decoder *json.Decoder) error {
 	return fmt.Errorf("request body must contain exactly one JSON value")
 }
 
-func encodeReadResult(result opcda.ReadResult) readHTTPResult {
+// readResultFields holds the optional fields of a whole response. Each of them
+// is a pointer in the JSON shape because absence has to be distinguishable from
+// a zero, and taking the address of a local made one allocation per field per
+// item -- five for every value in a batch, none of them outliving the response.
+//
+// Handing out pointers into slices allocated once per response is the same
+// output for a fixed cost. The slices are sized up front and never grown, so no
+// pointer handed out can be invalidated by a later item.
+type readResultFields struct {
+	types      []opcda.DAVarTypeInfo
+	canonical  []opcda.DAVarTypeInfo
+	hresults   []opcda.HRESULTValue
+	qualities  []uint16
+	timestamps []string
+	// scratch is reused to format each timestamp, so the only string a
+	// timestamp allocates is the one the response carries.
+	scratch []byte
+	next    int
+}
+
+func newReadResultFields(count int) readResultFields {
+	return readResultFields{
+		types:      make([]opcda.DAVarTypeInfo, count),
+		canonical:  make([]opcda.DAVarTypeInfo, count),
+		hresults:   make([]opcda.HRESULTValue, count),
+		qualities:  make([]uint16, count),
+		timestamps: make([]string, count),
+		scratch:    make([]byte, 0, 64),
+	}
+}
+
+func encodeReadResult(result opcda.ReadResult, fields *readResultFields) readHTTPResult {
+	slot := fields.next
+	fields.next++
 	encoded := readHTTPResult{
 		ItemID:       string(result.ItemID),
 		ErrorCode:    result.ErrorCode,
 		AccessRights: result.AccessRights,
 	}
 	if result.VarType != nil {
-		info := result.VarType.Information()
-		encoded.DataType = &info
+		fields.types[slot] = result.VarType.Information()
+		encoded.DataType = &fields.types[slot]
 	}
 	if result.CanonicalType != nil {
-		info := result.CanonicalType.Information()
-		encoded.CanonicalDataType = &info
+		fields.canonical[slot] = result.CanonicalType.Information()
+		encoded.CanonicalDataType = &fields.canonical[slot]
 	}
 	if result.HRESULTPresent {
-		hresult := result.HRESULT.Representation()
-		encoded.HRESULT = &hresult
+		fields.hresults[slot] = result.HRESULT.Representation()
+		encoded.HRESULT = &fields.hresults[slot]
 	}
 	if result.Value == nil || result.ErrorCode != "" || !result.HRESULTPresent || result.HRESULT.Failed() {
 		return encoded
@@ -309,19 +344,28 @@ func encodeReadResult(result opcda.ReadResult) readHTTPResult {
 	}
 	var timestamp *string
 	if result.Value.TimestampPresent {
-		text, err := result.Value.Timestamp.UTC().MarshalText()
-		if err != nil {
+		// RFC 3339 with nanoseconds is what MarshalText writes, and appending
+		// into a reused buffer means the only string a timestamp allocates is
+		// the one the response carries.
+		//
+		// The year check comes with it. MarshalText refuses a year RFC 3339
+		// cannot represent and AppendFormat does not, so a source reporting
+		// one would have been published as a timestamp no client can parse.
+		// That refusal was doing work, and it is stated here rather than
+		// inherited.
+		utc := result.Value.Timestamp.UTC()
+		if year := utc.Year(); year < 0 || year >= 10000 {
 			encoded.ErrorCode = string(opcda.CodeInvalidValue)
 			return encoded
 		}
-		formatted := string(text)
-		timestamp = &formatted
+		fields.timestamps[slot] = string(utc.AppendFormat(fields.scratch[:0], time.RFC3339Nano))
+		timestamp = &fields.timestamps[slot]
 	}
 	encoded.OK = true
 	encoded.Value = value
 	encoded.ValueEncoding = encoding
-	quality := result.Value.QualityRaw
-	encoded.Quality = &quality
+	fields.qualities[slot] = result.Value.QualityRaw
+	encoded.Quality = &fields.qualities[slot]
 	encoded.TimestampPresent = result.Value.TimestampPresent
 	encoded.Timestamp = timestamp
 	return encoded
