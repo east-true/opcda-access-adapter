@@ -1,6 +1,6 @@
 # ADR-0017: a third-party vendor DA server for validation
 
-- Status: **Proposed — not decided, and nothing is executed under it**
+- Status: **Accepted — option C executed once on 2026-09-16**
 - Date: 2026-08-27
 - Relates to: [ADR-0006](0006-real-da-validation-fixture.md)
 
@@ -88,20 +88,30 @@ vendor observation, but it is not repeatable and will not catch a regression.
 
 ## Decision
 
-**None yet.** This ADR exists so the choice is made deliberately rather than
-drifting, and so the next person does not re-derive that the licence is fine and
-the provenance is not.
+**Option C was chosen explicitly by the operator on 2026-09-16.** An already
+installed x86 Gray Simulator was selected by exact ProgID and exercised on the
+local Windows host. No simulator binary was downloaded, copied into the
+repository, or made a CI dependency. Its installed executable digest and file
+version, the adapter commit, the observed DA behavior, the bounded resource
+result, and the limits of the evidence are recorded in
+`docs/compatibility.md`.
 
-If B or C is chosen, the results must be recorded the way every other result in
-this project is: as evidence about **one** named vendor server at a named
-version, never as vendor-wide compatibility. `docs/compatibility.md` already
-lists the vendor variations such a run should look for — a source without an
-`IOPCDataCallback` connection point, an unrecognised disconnect HRESULT, a
-canonical type or access rights reported differently, a revised update rate far
-from the requested one.
+The run covered local COM connection, complete Browse, ordered partial Read,
+strict typed Write with restoration, Item Properties, real
+`IOPCDataCallback` delivery, repeated group/advise cleanup, and invalidation and
+explicit resubscription across an induced server termination. It also exercised
+the gRPC unary and server-streaming frontend and the read-only OPC UA frontend
+over this source.
+
+This is evidence about **one** installed binary at one version, never
+vendor-wide compatibility. Its provenance remains weaker than ADR-0006's
+source-built fixture: there is still no first-party distribution, signature, or
+vendor checksum against which to authenticate the installed copy.
 
 ## Consequences
 
-Until this is decided, "no third-party vendor DA server has been tested" remains
-true and remains stated wherever a real-DA result appears. Choosing A leaves that
-permanent. Choosing B or C narrows it to one vendor and no further.
+The previous statement that no third-party vendor DA server had been tested is
+no longer true. The compatibility claim is now narrowed to the official fixture
+plus this single operator-supplied Graybox installation and no further. Because
+option C is deliberately one-off, it adds no regression gate; repeating it
+requires another explicit operator decision and the same provenance warning.
