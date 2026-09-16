@@ -20,6 +20,8 @@ type stubRuntime struct {
 	propertyCalls  int
 
 	readRequest  opcda.ReadRequest
+	readCalls    int
+	writeCalls   int
 	readResults  []opcda.ReadResult
 	readErr      error
 	writeItems   []opcda.WriteItem
@@ -33,10 +35,12 @@ func (r *stubRuntime) Browse(context.Context, opcda.BrowseRequest) (opcda.Browse
 }
 func (r *stubRuntime) ReadBatch(_ context.Context, request opcda.ReadRequest) ([]opcda.ReadResult, error) {
 	r.readRequest = request
+	r.readCalls++
 	return r.readResults, r.readErr
 }
 func (r *stubRuntime) WriteBatch(_ context.Context, items []opcda.WriteItem) ([]opcda.WriteResult, error) {
 	r.writeItems = items
+	r.writeCalls++
 	return r.writeResults, r.writeErr
 }
 func (r *stubRuntime) Subscribe(context.Context, opcda.SubscribeRequest) (opcda.Subscription, error) {
