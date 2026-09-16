@@ -3,6 +3,7 @@ package opcda
 import (
 	"strings"
 	"testing"
+	"unicode/utf16"
 )
 
 // An array is accepted only when its description and its elements agree.
@@ -294,5 +295,34 @@ func TestAnElementCountNeedsAPositiveBound(t *testing.T) {
 		if count, err := empty.ElementCount(maximum); err == nil {
 			t.Errorf("ElementCount(%d) on a dimensionless array answered %d", maximum, count)
 		}
+	}
+}
+
+// utf16CodeUnits counts what utf16.Encode would produce without producing it,
+// so the two must agree for every shape of text the adapter carries -- an
+// undercount would let a BSTR past its bound, and an overcount would refuse one
+// inside it.
+func TestTheCodeUnitCountAgreesWithEncoding(t *testing.T) {
+	for _, value := range []string{
+		"",
+		"a",
+		"Channel1.Device1.Tag0001",
+		// Korean, which is three UTF-8 bytes and one UTF-16 unit per character.
+		"온도",
+		// Outside the basic plane: one rune, two code units. This is the case
+		// a rune count alone would get wrong.
+		"😀",
+		"a😀b",
+		strings.Repeat("😀", 64),
+		// Mixed widths in one string, so no single rule about the whole of it
+		// could be right by accident.
+		"A온도😀z",
+	} {
+		t.Run(value, func(t *testing.T) {
+			want := len(utf16.Encode([]rune(value)))
+			if got := utf16CodeUnits(value); got != want {
+				t.Errorf("utf16CodeUnits(%q) = %d, want %d", value, got, want)
+			}
+		})
 	}
 }

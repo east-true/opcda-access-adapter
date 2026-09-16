@@ -178,7 +178,7 @@ func readSafeArrayElement(array uintptr, indices []int32, elementType DAVarType,
 		if err != nil {
 			return nil, 0, err
 		}
-		return text, len(utf16.Encode([]rune(text))), nil
+		return text, utf16CodeUnits(text), nil
 	default:
 		return nil, 0, NewAdapterError(CodeUnsupportedVarType,
 			fmt.Sprintf("unsupported array element VARTYPE %s", elementType))
