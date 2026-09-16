@@ -71,6 +71,14 @@ faces now, which is the same reason no SHA is pinned above.
 
 ## Completed
 
+- The public repository entry points were reorganized after the first
+  third-party DA validation: the root README now leads with scope, status, a
+  copyable Windows quick start, an actual-run-derived PowerShell setup demo,
+  interface selection, compatibility limits, and contribution/security routes;
+  `docs/README.md` provides a task-oriented documentation index; and the
+  contribution guide records the complete CI and evidence expectations.
+  Detailed protocol and operational material remains in its authoritative
+  documents instead of being duplicated at the front door.
 - Phase 0 bootstrap, lifecycle, status, CI, and Windows builds merged in PR #1.
 - Phase 1 dedicated locked STA COM thread, local-only activation, ownership,
   message-aware wait, and repeated lifecycle tests merged in PR #2.
