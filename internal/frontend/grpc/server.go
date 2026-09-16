@@ -917,27 +917,185 @@ func encodeDAValue(varType opcda.DAVarType, value any) (*opcdav1.DAScalarValue, 
 // order: the last dimension varies fastest. The lower bound is the source's and
 // is carried rather than normalised, because a client writing back to an index
 // it read must reach the element it read.
+//
+// The elements are filled from backing slices rather than one message at a
+// time. Every element of an array has the same type, so each protobuf message
+// and each oneof wrapper can be taken from one allocation instead of two of
+// their own -- which for a thousand-element array was two thousand allocations
+// to carry a thousand numbers.
 func encodeArray(array opcda.DAArray) (*opcdav1.DAArrayValue, error) {
-	dimensions := make([]*opcdav1.DADimension, len(array.Dimensions))
+	dimensions := make([]opcdav1.DADimension, len(array.Dimensions))
+	dimensionPointers := make([]*opcdav1.DADimension, len(array.Dimensions))
 	for index, dimension := range array.Dimensions {
-		dimensions[index] = &opcdav1.DADimension{
-			LowerBound: dimension.LowerBound,
-			Length:     dimension.Length,
-		}
+		dimensions[index].LowerBound = dimension.LowerBound
+		dimensions[index].Length = dimension.Length
+		dimensionPointers[index] = &dimensions[index]
 	}
+
+	values := make([]opcdav1.DAScalarValue, len(array.Elements))
 	elements := make([]*opcdav1.DAScalarValue, len(array.Elements))
-	for index, element := range array.Elements {
-		encoded, err := encodeScalar(array.ElementType, element)
-		if err != nil {
-			return nil, fmt.Errorf("array element %d: %w", index, err)
-		}
-		elements[index] = encoded
+	for index := range values {
+		elements[index] = &values[index]
+	}
+	if err := fillArrayValues(array, values); err != nil {
+		return nil, err
 	}
 	return &opcdav1.DAArrayValue{
 		ElementDataType: encodeVarType(&array.ElementType),
-		Dimensions:      dimensions,
+		Dimensions:      dimensionPointers,
 		Elements:        elements,
 	}, nil
+}
+
+// fillArrayValues sets every element from one backing slice per element type.
+// It answers exactly what encodeScalar answers for the same element, which the
+// tests hold it to: two encoders that drift are two wire formats.
+func fillArrayValues(array opcda.DAArray, values []opcdav1.DAScalarValue) error {
+	count := len(array.Elements)
+	switch array.ElementType.Base() {
+	case opcda.VTEmpty, opcda.VTNull:
+		wrappers := make([]opcdav1.DAScalarValue_EmptyOrNull, count)
+		for index, element := range array.Elements {
+			if element != nil {
+				return arrayElementMismatch(index, array.ElementType)
+			}
+			wrappers[index].EmptyOrNull = true
+			values[index].Value = &wrappers[index]
+		}
+		return nil
+	case opcda.VTI1:
+		wrappers := make([]opcdav1.DAScalarValue_I1Value, count)
+		return fillArrayElements(array, values, func(value *opcdav1.DAScalarValue, index int, element int8) bool {
+			wrappers[index].I1Value = int32(element)
+			value.Value = &wrappers[index]
+			return true
+		})
+	case opcda.VTUI1:
+		wrappers := make([]opcdav1.DAScalarValue_Ui1Value, count)
+		return fillArrayElements(array, values, func(value *opcdav1.DAScalarValue, index int, element uint8) bool {
+			wrappers[index].Ui1Value = uint32(element)
+			value.Value = &wrappers[index]
+			return true
+		})
+	case opcda.VTI2:
+		wrappers := make([]opcdav1.DAScalarValue_I2Value, count)
+		return fillArrayElements(array, values, func(value *opcdav1.DAScalarValue, index int, element int16) bool {
+			wrappers[index].I2Value = int32(element)
+			value.Value = &wrappers[index]
+			return true
+		})
+	case opcda.VTUI2:
+		wrappers := make([]opcdav1.DAScalarValue_Ui2Value, count)
+		return fillArrayElements(array, values, func(value *opcdav1.DAScalarValue, index int, element uint16) bool {
+			wrappers[index].Ui2Value = uint32(element)
+			value.Value = &wrappers[index]
+			return true
+		})
+	case opcda.VTI4:
+		wrappers := make([]opcdav1.DAScalarValue_I4Value, count)
+		return fillArrayElements(array, values, func(value *opcdav1.DAScalarValue, index int, element int32) bool {
+			wrappers[index].I4Value = element
+			value.Value = &wrappers[index]
+			return true
+		})
+	case opcda.VTUI4:
+		wrappers := make([]opcdav1.DAScalarValue_Ui4Value, count)
+		return fillArrayElements(array, values, func(value *opcdav1.DAScalarValue, index int, element uint32) bool {
+			wrappers[index].Ui4Value = element
+			value.Value = &wrappers[index]
+			return true
+		})
+	case opcda.VTI8:
+		wrappers := make([]opcdav1.DAScalarValue_I8Value, count)
+		return fillArrayElements(array, values, func(value *opcdav1.DAScalarValue, index int, element int64) bool {
+			wrappers[index].I8Value = element
+			value.Value = &wrappers[index]
+			return true
+		})
+	case opcda.VTUI8:
+		wrappers := make([]opcdav1.DAScalarValue_Ui8Value, count)
+		return fillArrayElements(array, values, func(value *opcdav1.DAScalarValue, index int, element uint64) bool {
+			wrappers[index].Ui8Value = element
+			value.Value = &wrappers[index]
+			return true
+		})
+	case opcda.VTR4:
+		wrappers := make([]opcdav1.DAScalarValue_R4Value, count)
+		return fillArrayElements(array, values, func(value *opcdav1.DAScalarValue, index int, element float32) bool {
+			wrappers[index].R4Value = element
+			value.Value = &wrappers[index]
+			return true
+		})
+	case opcda.VTR8:
+		wrappers := make([]opcdav1.DAScalarValue_R8Value, count)
+		return fillArrayElements(array, values, func(value *opcdav1.DAScalarValue, index int, element float64) bool {
+			wrappers[index].R8Value = element
+			value.Value = &wrappers[index]
+			return true
+		})
+	case opcda.VTBool:
+		wrappers := make([]opcdav1.DAScalarValue_BoolValue, count)
+		return fillArrayElements(array, values, func(value *opcdav1.DAScalarValue, index int, element bool) bool {
+			wrappers[index].BoolValue = element
+			value.Value = &wrappers[index]
+			return true
+		})
+	case opcda.VTBSTR:
+		wrappers := make([]opcdav1.DAScalarValue_BstrValue, count)
+		return fillArrayElements(array, values, func(value *opcdav1.DAScalarValue, index int, element string) bool {
+			if !utf8.ValidString(element) {
+				return false
+			}
+			wrappers[index].BstrValue = element
+			value.Value = &wrappers[index]
+			return true
+		})
+	case opcda.VTError:
+		wrappers := make([]opcdav1.DAScalarValue_ErrorValue, count)
+		return fillArrayElements(array, values, func(value *opcdav1.DAScalarValue, index int, element int32) bool {
+			wrappers[index].ErrorValue = element
+			value.Value = &wrappers[index]
+			return true
+		})
+	case opcda.VTInt:
+		wrappers := make([]opcdav1.DAScalarValue_IntValue, count)
+		return fillArrayElements(array, values, func(value *opcdav1.DAScalarValue, index int, element int32) bool {
+			wrappers[index].IntValue = element
+			value.Value = &wrappers[index]
+			return true
+		})
+	case opcda.VTUInt:
+		wrappers := make([]opcdav1.DAScalarValue_UintValue, count)
+		return fillArrayElements(array, values, func(value *opcdav1.DAScalarValue, index int, element uint32) bool {
+			wrappers[index].UintValue = element
+			value.Value = &wrappers[index]
+			return true
+		})
+	default:
+		return fmt.Errorf("unsupported VARTYPE %s", array.ElementType)
+	}
+}
+
+// fillArrayElements asserts every element to the one Go type its VARTYPE
+// produces and hands it to the setter. An element of another type is refused
+// with the index, because a client told only that an element is wrong has to
+// guess which of a thousand it was.
+func fillArrayElements[E any](array opcda.DAArray, values []opcdav1.DAScalarValue,
+	set func(*opcdav1.DAScalarValue, int, E) bool) error {
+	for index, element := range array.Elements {
+		typed, ok := element.(E)
+		if !ok {
+			return arrayElementMismatch(index, array.ElementType)
+		}
+		if !set(&values[index], index, typed) {
+			return arrayElementMismatch(index, array.ElementType)
+		}
+	}
+	return nil
+}
+
+func arrayElementMismatch(index int, elementType opcda.DAVarType) error {
+	return fmt.Errorf("array element %d: value does not match %s", index, elementType)
 }
 
 // decodeArray reads the shape a client supplied for an array Write. It is the
