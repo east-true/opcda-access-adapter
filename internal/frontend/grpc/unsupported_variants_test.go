@@ -28,19 +28,25 @@ func variantFlags() []struct {
 		name    string
 		varType opcda.DAVarType
 	}{
-		{"an array", opcda.VTArray | opcda.VTI4},
 		{"a byref", opcda.VTByRef | opcda.VTI4},
 		{"an array of byrefs", opcda.VTArray | opcda.VTByRef | opcda.VTI4},
 	}
 }
 
+// An array is carried now; a byref is not, and an array of byrefs is a byref.
+// encodeScalar stays the scalar path, so it refuses an array VARTYPE as well --
+// the array path is encodeArray, and handing one to the other would encode a
+// shape as a value.
 func TestReadingRefusesEveryArrayAndByrefVariant(t *testing.T) {
 	// The plain scalar is the control: without it a guard that refused
 	// everything would pass every case below.
 	if _, err := encodeScalar(opcda.VTI4, int32(1)); err != nil {
 		t.Fatalf("a plain scalar was refused, so the cases below prove nothing: %v", err)
 	}
-	for _, flagged := range variantFlags() {
+	for _, flagged := range append(variantFlags(), struct {
+		name    string
+		varType opcda.DAVarType
+	}{"an array", opcda.VTArray | opcda.VTI4}) {
 		t.Run(flagged.name, func(t *testing.T) {
 			if _, err := encodeScalar(flagged.varType, int32(1)); err == nil {
 				t.Errorf("%s VARTYPE (0x%04X) was encoded", flagged.name, uint16(flagged.varType))

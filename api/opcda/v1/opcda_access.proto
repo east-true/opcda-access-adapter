@@ -64,6 +64,11 @@ message DAItemPropertyResult {
   // for the same reason a Read timestamp's is: absence is absence, and it must
   // not be reported as a failure the source did not report.
   bool value_present = 7;
+  // An array-valued property carries its shape here instead. Exactly one of
+  // value and array_value is set; data_type's array bit says which, so a
+  // client that only understands scalars can tell an array apart from a
+  // property that answered with nothing.
+  DAArrayValue array_value = 8;
 }
 
 message DAStatusRequest {}
@@ -175,6 +180,9 @@ message DAReadResult {
   DAHRESULT hresult = 11;
   DAAccessRights access_rights = 12;
   string error_code = 13;
+  // An array value carries its shape here instead of in value. Exactly one of
+  // the two is set, and data_type's array bit says which.
+  DAArrayValue array_value = 14;
 }
 
 message DAWriteRequest {
@@ -185,6 +193,9 @@ message DAWriteItem {
   string item_id = 1;
   DAVarType data_type = 2;
   DAScalarValue value = 3;
+  // An array Write supplies its shape here instead of in value. Exactly one of
+  // the two is set, and data_type's array bit says which.
+  DAArrayValue array_value = 4;
 }
 
 message DAWriteResponse {
@@ -267,6 +278,27 @@ message DAHRESULT {
   sint32 value = 1;
   fixed32 raw = 2;
   string hex = 3;
+}
+
+// DADimension is one dimension of a DA array: the index it starts at and how
+// many elements it holds. The lower bound is the one the source reported and is
+// never normalised, because a client writing back to an index it read must
+// reach the element it read.
+message DADimension {
+  sint32 lower_bound = 1;
+  uint32 length = 2;
+}
+
+// DAArrayValue is a SAFEARRAY with its shape beside it, which OPC DA Access
+// Adapter ADR-0019 requires: element VARTYPE, dimension count, lower bound and
+// length per dimension, and the element values all survive.
+//
+// elements is flat and ordered so the last dimension varies fastest, so a
+// client can rebuild the array from the description alone.
+message DAArrayValue {
+  DAVarType element_data_type = 1;
+  repeated DADimension dimensions = 2;
+  repeated DAScalarValue elements = 3;
 }
 
 message DAScalarValue {

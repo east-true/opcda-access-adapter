@@ -370,7 +370,10 @@ func (s *Server) Write(ctx context.Context, request *opcdav1.DAWriteRequest) (*o
 	}
 	items := make([]opcda.WriteItem, len(request.Items))
 	for i, item := range request.Items {
-		if item == nil || item.DataType == nil || item.Value == nil {
+		// A value arrives in one of two fields, and which one is the VARTYPE's
+		// business rather than this check's: it asks only that something was
+		// sent, and decodeWriteItemValue decides whether it was the right one.
+		if item == nil || item.DataType == nil || (item.Value == nil && item.ArrayValue == nil) {
 			return nil, invalidRequest("Write item, data type, and value are required")
 		}
 		if err := validateText(item.ItemId, "Write ItemID", s.config.MaxItemIDBytes); err != nil {
@@ -380,7 +383,7 @@ func (s *Server) Write(ctx context.Context, request *opcdav1.DAWriteRequest) (*o
 		if err != nil {
 			return nil, err
 		}
-		value, err := decodeWriteValue(varType, item.Value)
+		value, err := decodeWriteItemValue(varType, item)
 		if err != nil {
 			return nil, err
 		}
@@ -435,12 +438,13 @@ func encodeReadResult(result opcda.ReadResult) (*opcdav1.DAReadResult, error) {
 		encoded.TimestampUnixSeconds = result.Value.Timestamp.Unix()
 		encoded.TimestampNanos = int32(result.Value.Timestamp.Nanosecond())
 	}
-	value, err := encodeScalar(result.Value.VarType, result.Value.Value)
+	scalar, array, err := encodeDAValue(result.Value.VarType, result.Value.Value)
 	if err != nil {
 		encoded.ErrorCode = string(opcda.CodeUnsupportedVarType)
 		return encoded, nil
 	}
-	encoded.Value = value
+	encoded.Value = scalar
+	encoded.ArrayValue = array
 	encoded.Ok = true
 	return encoded, nil
 }
@@ -560,8 +564,8 @@ func decodeWriteVarType(dataType *opcdav1.DAVarType) (opcda.DAVarType, error) {
 	if dataType.Name != "" && dataType.Name != varType.String() {
 		return 0, grpcFrontendError(codes.InvalidArgument, opcda.CodeTypeMismatch, "Write VARTYPE name does not match its raw value")
 	}
-	if varType.IsArray() || varType.IsByRef() {
-		return 0, grpcAdapterError(codes.Unimplemented, opcda.CodeUnsupportedVarType, "array and byref Write values are unsupported")
+	if varType.IsByRef() {
+		return 0, grpcAdapterError(codes.Unimplemented, opcda.CodeUnsupportedVarType, "byref Write values are unsupported")
 	}
 	return varType, nil
 }
@@ -874,13 +878,137 @@ func encodeItemPropertyResult(value opcda.ItemPropertyValue) *opcdav1.DAItemProp
 		encoded.Ok = true
 		return encoded
 	}
-	scalar, err := encodeScalar(value.VarType, value.Value)
+	scalar, array, err := encodeDAValue(value.VarType, value.Value)
 	if err != nil {
 		encoded.ErrorCode = string(opcda.CodeUnsupportedVarType)
 		return encoded
 	}
 	encoded.Value = scalar
+	encoded.ArrayValue = array
 	encoded.ValuePresent = true
 	encoded.Ok = true
 	return encoded
+}
+
+// encodeDAValue writes a DA value into the pair of fields a result carries:
+// the scalar one, or the array one. Exactly one is set, and the result's
+// data_type already says which, so a client that only understands scalars can
+// tell an array apart from a value that was not carried.
+func encodeDAValue(varType opcda.DAVarType, value any) (*opcdav1.DAScalarValue, *opcdav1.DAArrayValue, error) {
+	if varType.IsArray() {
+		array, ok := value.(opcda.DAArray)
+		if !ok {
+			return nil, nil, fmt.Errorf("a %s value did not carry an array", varType)
+		}
+		encoded, err := encodeArray(array)
+		if err != nil {
+			return nil, nil, err
+		}
+		return nil, encoded, nil
+	}
+	scalar, err := encodeScalar(varType, value)
+	if err != nil {
+		return nil, nil, err
+	}
+	return scalar, nil, nil
+}
+
+// encodeArray writes an array as its shape plus its elements in the published
+// order: the last dimension varies fastest. The lower bound is the source's and
+// is carried rather than normalised, because a client writing back to an index
+// it read must reach the element it read.
+func encodeArray(array opcda.DAArray) (*opcdav1.DAArrayValue, error) {
+	dimensions := make([]*opcdav1.DADimension, len(array.Dimensions))
+	for index, dimension := range array.Dimensions {
+		dimensions[index] = &opcdav1.DADimension{
+			LowerBound: dimension.LowerBound,
+			Length:     dimension.Length,
+		}
+	}
+	elements := make([]*opcdav1.DAScalarValue, len(array.Elements))
+	for index, element := range array.Elements {
+		encoded, err := encodeScalar(array.ElementType, element)
+		if err != nil {
+			return nil, fmt.Errorf("array element %d: %w", index, err)
+		}
+		elements[index] = encoded
+	}
+	return &opcdav1.DAArrayValue{
+		ElementDataType: encodeVarType(&array.ElementType),
+		Dimensions:      dimensions,
+		Elements:        elements,
+	}, nil
+}
+
+// decodeArray reads the shape a client supplied for an array Write. It is the
+// same description a Read publishes, so a client can send back what it was
+// given; the adapter never infers a shape, and a message whose elements and
+// dimensions do not describe each other is refused rather than reshaped.
+func decodeArray(varType opcda.DAVarType, supplied *opcdav1.DAArrayValue) (opcda.DAArray, error) {
+	if supplied == nil {
+		return opcda.DAArray{}, invalidRequest(
+			fmt.Sprintf("a %s Write must carry an array value", varType))
+	}
+	elementType := varType.Base()
+	// The element type may be named, and then it has to agree. Leaving it out
+	// is not a disagreement: data_type already carries it.
+	if named := supplied.GetElementDataType(); named != nil {
+		decoded, err := decodeWriteVarType(named)
+		if err != nil {
+			return opcda.DAArray{}, err
+		}
+		if decoded != elementType {
+			return opcda.DAArray{}, grpcFrontendError(codes.InvalidArgument, opcda.CodeTypeMismatch,
+				fmt.Sprintf("array element type %s does not match the declared %s", decoded, varType))
+		}
+	}
+
+	array := opcda.DAArray{
+		ElementType: elementType,
+		Dimensions:  make([]opcda.DADimension, len(supplied.GetDimensions())),
+		Elements:    make([]any, len(supplied.GetElements())),
+	}
+	for index, dimension := range supplied.GetDimensions() {
+		array.Dimensions[index] = opcda.DADimension{
+			LowerBound: dimension.GetLowerBound(),
+			Length:     dimension.GetLength(),
+		}
+	}
+	for index, element := range supplied.GetElements() {
+		value, err := decodeWriteValue(elementType, element)
+		if err != nil {
+			return opcda.DAArray{}, fmt.Errorf("array element %d: %w", index, err)
+		}
+		array.Elements[index] = value
+	}
+	// The shape and the elements have to describe each other. What the runtime
+	// is willing to carry is a separate question the DA layer's bounds answer,
+	// so a client's mistake is not reported as an operator's limit.
+	if err := array.MatchesItsShape(); err != nil {
+		return opcda.DAArray{}, invalidRequest(err.Error())
+	}
+	return array, nil
+}
+
+// decodeWriteItemValue reads whichever of the two value fields the declared
+// VARTYPE calls for, and refuses an item that supplies the other one or both.
+// A request that names a scalar and carries an array has not said what it
+// wants written, and guessing would write something the client did not ask for.
+func decodeWriteItemValue(varType opcda.DAVarType, item *opcdav1.DAWriteItem) (any, error) {
+	scalar, array := item.GetValue(), item.GetArrayValue()
+	if scalar != nil && array != nil {
+		return nil, invalidRequest("a Write item carries both a scalar and an array value")
+	}
+	if varType.IsArray() {
+		if scalar != nil {
+			return nil, invalidRequest(
+				fmt.Sprintf("a %s Write carries a scalar value", varType))
+		}
+		return decodeArray(varType, array)
+	}
+	if array != nil {
+		return nil, invalidRequest(
+			fmt.Sprintf("a %s Write carries an array value", varType))
+	}
+	return decodeWriteValue(varType, scalar)
 }
