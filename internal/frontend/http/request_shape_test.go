@@ -191,7 +191,7 @@ func TestAWrittenItemIDMayBeExactlyTheConfiguredLength(t *testing.T) {
 //     name instead of a malformed literal, and an ordinary host name carrying
 //     a bracket can never be loopback -- "localhost" has none and net.ParseIP
 //     rejects them -- so both forms answer false for every input that differs.
-//   - decodeRequestBody's `ensureJSONEOF` check: validateJSONStructure has
+//   - decodeRequestBody's `ensureJSONEOF` check: the structural pre-scan has
 //     already walked the same bytes and refused a second value, so removing
 //     this one leaves the body refused by the earlier pass. It is
 //     defence in depth rather than the only guard, which is why a request

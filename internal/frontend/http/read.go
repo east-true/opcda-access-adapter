@@ -142,12 +142,50 @@ func (value *exactJSONString) UnmarshalJSON(data []byte) error {
 	if !validJSONSurrogates(data) {
 		return fmt.Errorf("JSON string contains an unpaired UTF-16 surrogate")
 	}
+	// The outer decoder has already established that this is one JSON string
+	// literal, and a literal with nothing to unescape is its own value: the
+	// bytes between the quotes. Handing it to a second decoder parses every
+	// ItemID twice, which is what the profile showed the Read path doing once
+	// per item.
+	//
+	// Anything with an escape, or anything that is not a plain literal, goes
+	// the long way, so the fast path decides only whether a second parse is
+	// needed and never what the answer is.
+	if unquoted, ok := unquotedJSONString(data); ok {
+		*value = exactJSONString(unquoted)
+		return nil
+	}
 	var decoded string
 	if err := json.Unmarshal(data, &decoded); err != nil {
 		return err
 	}
 	*value = exactJSONString(decoded)
 	return nil
+}
+
+// unquotedJSONString reports the value of a JSON string literal that is its own
+// value, and whether it was one.
+//
+// Three things disqualify a literal from the fast path, and the third is easy
+// to miss. A backslash has something to unescape. A byte below 0x20 is
+// malformed, which is the decoder's answer to give. And invalid UTF-8 is not
+// passed through by the decoder either -- it replaces each bad byte with
+// U+FFFD, so returning the bytes unchanged would be a different value under the
+// same name. The repository's own fuzz target caught exactly that.
+func unquotedJSONString(data []byte) (string, bool) {
+	if len(data) < 2 || data[0] != '"' || data[len(data)-1] != '"' {
+		return "", false
+	}
+	body := data[1 : len(data)-1]
+	for _, character := range body {
+		if character == '\\' || character == '"' || character < 0x20 {
+			return "", false
+		}
+	}
+	if !utf8.Valid(body) {
+		return "", false
+	}
+	return string(body), true
 }
 
 func validJSONSurrogates(data []byte) bool {
@@ -211,7 +249,7 @@ func (s *Server) decodeRequestBody(w stdhttp.ResponseWriter, request *stdhttp.Re
 	if !utf8.Valid(body) {
 		return fmt.Errorf("request body must be valid UTF-8")
 	}
-	if err := validateJSONStructure(body, s.config.MaxJSONDepth); err != nil {
+	if err := scanJSONStructure(body, s.config.MaxJSONDepth); err != nil {
 		return err
 	}
 	decoder := json.NewDecoder(bytes.NewReader(body))

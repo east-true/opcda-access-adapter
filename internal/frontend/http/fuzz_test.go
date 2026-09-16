@@ -46,7 +46,16 @@ func FuzzReadHTTPBody(f *testing.F) {
 }
 
 func FuzzExactJSONString(f *testing.F) {
-	for _, seed := range []string{`"plain"`, `"\uD83D\uDE00"`, `"\uD800"`, `"\\uD800"`} {
+	for _, seed := range []string{
+		`"plain"`, `"\uD83D\uDE00"`, `"\uD800"`, `"\\uD800"`,
+		// A literal whose bytes are not valid UTF-8. The decoder replaces each
+		// bad byte with U+FFFD rather than passing it through, so a fast path
+		// that returned the bytes between the quotes would answer a different
+		// value under the same name. This target found exactly that when one
+		// was added, and the seed keeps the case.
+		"\"\xff\"",
+		"\"a\xffb\"",
+	} {
 		f.Add(seed)
 	}
 	f.Fuzz(func(t *testing.T, input string) {
