@@ -510,10 +510,9 @@ var typeDefinitionNodes = map[uint32]struct {
 	NodeIDMultiStateDiscreteType: {"MultiStateDiscreteType", NodeClassVariableType},
 }
 
-// TypeDefinitionReference is the HasTypeDefinition reference a node is the
-// source of. OPC 10000-3 5.6.2 and 5.5.2: each Variable and each Object "shall
-// have exactly one type definition and therefore be the SourceNode of exactly
-// one HasTypeDefinition Reference".
+// TypeDefinitionReference는 노드에서 출발하는 HasTypeDefinition 참조를 반환한다.
+// OPC 10000-3 5.6.2와 5.5.1은 각 Variable과 Object에 정확히 하나의
+// 타입 정의와 그 정의로 향하는 HasTypeDefinition 참조를 요구한다.
 //
 // It is built here rather than stored on the node because a node's type
 // definition can change after the node exists: A.3.1.3 promotes an item from
