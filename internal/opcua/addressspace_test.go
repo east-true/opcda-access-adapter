@@ -579,10 +579,9 @@ func TestOnlyTheServersOwnNodesAreArrays(t *testing.T) {
 	}
 }
 
-// OPC 10000-3 scopes the rule to instances: 5.5.2 and 5.6.2 give each Object
-// and each Variable exactly one HasTypeDefinition reference, and say nothing
-// about any other node class. No node of another class exists in this address
-// space, so the method is asked directly.
+// OPC 10000-3 5.5.1과 5.6.2는 Object와 Variable 인스턴스에만 정확히
+// 하나의 HasTypeDefinition 참조를 요구한다. 이 주소 공간에는 다른 클래스의
+// 노드가 없으므로 메서드를 직접 호출하여 클래스별 적용 범위를 검증한다.
 func TestOnlyInstancesAreTheSourceOfATypeDefinition(t *testing.T) {
 	for _, testCase := range []struct {
 		name  string

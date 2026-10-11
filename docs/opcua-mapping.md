@@ -1952,11 +1952,10 @@ Table 168 adds one more: a type definition exists only for `Object` and
 `Variable`, so any other node class carries a null NodeId there.
 
 **Every instance is also the source of its own `HasTypeDefinition` reference.**
-OPC 10000-3 5.6.2 says each Variable "shall have exactly one type definition and
-therefore be the SourceNode of exactly one HasTypeDefinition Reference", and
-5.5.2 says the same of each Object. Browsing an item for its type definition
-finds that one reference; browsing it for everything finds it alongside the
-item's other references.
+OPC 10000-3 5.6.2와 5.5.1은 각 Variable과 Object에 정확히 하나의 타입
+정의와 그 정의로 향하는 HasTypeDefinition 참조를 요구한다. 항목의 타입
+정의를 Browse하면 해당 참조 하나를 반환하고, 전체 참조를 Browse하면
+항목의 다른 참조와 함께 반환한다.
 
 The type nodes themselves are not materialised, which 4.6 allows: a server may
 "use well-known NodeIds without representing the corresponding

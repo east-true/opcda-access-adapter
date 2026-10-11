@@ -157,6 +157,16 @@ faces now, which is the same reason no SHA is pinned above.
 
 ## In progress
 
+- PR #224와 #225의 CI 실패는 의존성 변경이 아니라 같은 버전 URL에서
+  제공하는 OPC Foundation Part 3 Markdown과 검토 해시의 불일치였다.
+  2026-10-11에 현재 원본의 필수 속성 표와 구현에서 참조하는 규칙을
+  재검토하고 해시를 갱신했다. Object의 HasTypeDefinition 규칙을 가리키는
+  주석과 문서의 절 번호도 5.5.2에서 5.5.1로 바로잡았다.
+  이전 원본이 없어 전체 변경분을 비교할 수
+  없었던 한계와 검토 범위는 `scripts/spec-check/README.md`에 기록했다.
+  규격 검사는 계속 모든 원본의 SHA-256을 확인하며, 이 수정은 DA/UA
+  런타임 동작이나 호환성 주장에 영향을 주지 않는다.
+
 - The OPC DA side was verified against the specification on 2026-08-27, and the
   check joined `scripts/spec-check/check.py`. **No defect was found.**
 
