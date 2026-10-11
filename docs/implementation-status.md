@@ -166,6 +166,13 @@ faces now, which is the same reason no SHA is pinned above.
   없었던 한계와 검토 범위는 `scripts/spec-check/README.md`에 기록했다.
   규격 검사는 계속 모든 원본의 SHA-256을 확인하며, 이 수정은 DA/UA
   런타임 동작이나 호환성 주장에 영향을 주지 않는다.
+  재실행에서는 `interop`의 버전 미지정 .NET 패키지 설치가 2.0.0을 선택해
+  기존 클라이언트의 13개 컴파일 오류를 유발했다. 2026-10-12에 SDK 8.0
+  컨테이너에서 재현하고, 기존 호환성 기록의 `1.5.378.156`으로 설치 버전을
+  고정했다. 준비·빌드 오류 출력도 보존하고 생성하는 프로젝트 이름을
+  재사용 검사와 같은 `uaconformance`로 맞췄다.
+  고정한 패키지로 SDK 8.0 컨테이너에서 기본·Browse 미지원·Write 허용
+  시나리오를 실행해 .NET 클라이언트의 47+45+48개 검사가 모두 통과했다.
 
 - The OPC DA side was verified against the specification on 2026-08-27, and the
   check joined `scripts/spec-check/check.py`. **No defect was found.**
