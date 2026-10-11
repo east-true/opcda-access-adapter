@@ -84,8 +84,8 @@ func TestBrowseWalksTheAddressSpace(t *testing.T) {
 		t.Fatalf("results = %+v", response.Results)
 	}
 	references := response.Results[0].References
-	// Two children and the folder's own HasTypeDefinition, which OPC 10000-3
-	// 5.5.2 makes every Object the source of.
+	// 자식 둘과 OPC 10000-3 5.5.1이 각 Object에 요구하는 폴더 자신의
+	// HasTypeDefinition 참조를 반환해야 한다.
 	if len(references) != 3 {
 		t.Fatalf("references = %d, want two children and a type definition",
 			len(references))
@@ -1089,11 +1089,9 @@ func TestOneSessionsPointsAreNotAnothersToSpend(t *testing.T) {
 	}
 }
 
-// OPC 10000-3 5.6.2 and 5.5.2: each Variable and each Object "shall have
-// exactly one type definition and therefore be the SourceNode of exactly one
-// HasTypeDefinition Reference". The adapter knew each node's type definition
-// and reported it in the ReferenceDescription of a browse from the parent, but
-// browsing the node itself found no such reference at all.
+// OPC 10000-3 5.6.2와 5.5.1은 각 Variable과 Object에서 타입 정의로
+// 향하는 HasTypeDefinition 참조를 정확히 하나 요구한다. 부모의 Browse
+// 결과뿐 아니라 해당 인스턴스 자체를 Browse할 때도 이 참조가 있어야 한다.
 func TestEveryInstanceIsTheSourceOfOneTypeDefinitionReference(t *testing.T) {
 	service, space := testBrowseService(t, DefaultBrowseLimits())
 	rights := &opcda.DAAccessRights{Raw: 3, Read: true, Write: true}

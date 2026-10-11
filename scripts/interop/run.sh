@@ -101,13 +101,16 @@ if [ -n "$dotnet_bin" ] && [ -x "$dotnet_bin" ]; then
     if [ ! -f "$netstack/uaconformance.csproj" ]; then
         echo "== preparing the .NET client =="
         DOTNET_CLI_TELEMETRY_OPTOUT=1 DOTNET_NOLOGO=1 \
-            "$dotnet_bin" new console -o "$netstack" --force >/dev/null
+            "$dotnet_bin" new console -o "$netstack" --name uaconformance --force
+        # 호환성 기록에서 검증한 버전을 사용한다. 최신 2.x는 기존 클라이언트의
+        # API와 호환되지 않으므로 버전 변경은 별도 검토와 실행 결과가 필요하다.
         DOTNET_CLI_TELEMETRY_OPTOUT=1 DOTNET_NOLOGO=1 \
-            "$dotnet_bin" add "$netstack" package OPCFoundation.NetStandard.Opc.Ua.Client >/dev/null
+            "$dotnet_bin" add "$netstack" package OPCFoundation.NetStandard.Opc.Ua.Client \
+                --version 1.5.378.156
     fi
     cp "$here/netstack/Program.cs" "$netstack/Program.cs"
     DOTNET_CLI_TELEMETRY_OPTOUT=1 DOTNET_NOLOGO=1 \
-        "$dotnet_bin" build "$netstack" -v q --nologo >/dev/null
+        "$dotnet_bin" build "$netstack" -v q --nologo
     run_netstack() {
         DOTNET_CLI_TELEMETRY_OPTOUT=1 DOTNET_NOLOGO=1 \
             "$dotnet_bin" run --project "$netstack" --no-build -- "$@" 2>&1 |
