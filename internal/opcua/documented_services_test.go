@@ -43,7 +43,7 @@ func TestDocumentedServicesMatchTheDispatch(t *testing.T) {
 // the set is empty for that service set, not a service named "-".
 func documentedServices(t *testing.T) (map[string]bool, map[string]bool) {
 	t.Helper()
-	body := readNormalisedFile(t, repositoryRootFromOPCUATest(t), "docs", "opcua-mapping.md")
+	body := readNormalisedFile(t, repositoryRootFromOPCUATest(t), "docs", "frontend", "opcua", "README.md")
 	start := strings.Index(body, "## Which services this server answers")
 	if start < 0 {
 		t.Fatal("the service table is gone; this test names its heading")

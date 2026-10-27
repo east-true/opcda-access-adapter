@@ -32,7 +32,7 @@ on:
       - go.mod
       - go.sum
       - docs/validation/**
-      - docs/compatibility.md
+      - docs/validation/compatibility.md
       - docs/implementation-status.md
 
 permissions:

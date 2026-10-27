@@ -551,7 +551,7 @@ func (l *Listener) handleHello(conn net.Conn, state *connectionState, body []byt
 		l.acceptableRequestBytes(ack.MaxMessageSize), StatusBadRequestTooLarge)
 	state.service = NewChannelService(l.registry, hello.ProtocolVersion)
 	// The sequence rule set is a property of the SecurityPolicy. Only the
-	// legacy rules are exercised here; see docs/opcua-mapping.md for why the
+	// legacy rules are exercised here; see docs/frontend/opcua/README.md for why the
 	// per-policy flag is not bound.
 	state.receiveSequence = NewSequenceValidator(SequenceNumberingLegacy)
 	state.sendSequence = NewSequenceValidator(SequenceNumberingLegacy)

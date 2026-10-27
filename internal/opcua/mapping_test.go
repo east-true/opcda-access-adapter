@@ -110,7 +110,7 @@ func TestQualityMappingFollowsPart8TableA3(t *testing.T) {
 
 // The one quality this project has actually observed from a real DA server.
 func TestQualityMappingMatchesTheObservedFixtureQuality(t *testing.T) {
-	const observedGood = uint16(192) // 0xC0, recorded in docs/compatibility.md
+	const observedGood = uint16(192) // 0xC0, recorded in docs/validation/compatibility.md
 	if got := StatusCodeForQuality(observedGood); got != StatusGood {
 		t.Fatalf("observed fixture quality mapped to %s, want Good", got.Hex())
 	}
@@ -255,7 +255,7 @@ func TestDataTypeAgreesWithWhatTheAdapterDelivers(t *testing.T) {
 // OPC 10000-8 Table A.4 - OPC DA Read error mapping, transcribed row for row.
 //
 // Only OPC_E_BADRIGHTS and OPC_E_UNKNOWNITEMID have been observed against a
-// real server; the rest are transcribed and untested, which docs/compatibility.md
+// real server; the rest are transcribed and untested, which docs/validation/compatibility.md
 // records. They are bound anyway because the alternative is the table's "Others"
 // row, which answers Bad_UnexpectedError for conditions the table gives a
 // precise status for.

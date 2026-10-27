@@ -8,9 +8,10 @@ Browse, Read, and typed value Write without changing source semantics.
 
 ## Authoritative documents
 
-- `docs/design.md` is the design baseline and overrides implementation ideas.
-- `docs/implementation-status.md` is the continuation record.
-- `docs/adr/` records reversible engineering decisions and any required design
+- `docs/design/baseline.md` is the design baseline and overrides implementation ideas.
+- `docs/implementation-status.md` records current completion and next work.
+- `docs/architecture.md` explains the current implementation; the baseline and ADRs remain authoritative.
+- `docs/design/adr/` records reversible engineering decisions and any required design
   change.
 
 ## Critical invariants
@@ -54,7 +55,7 @@ GOOS=windows GOARCH=amd64 go build ./cmd/adapter
 `main` is updated only through a green PR. Work one implementation phase per
 branch, update the status document, run the commands above, push, open a PR,
 confirm CI, merge, and continue. Do not claim real DA compatibility without a
-real server result in `docs/compatibility.md`.
+real server result in `docs/validation/compatibility.md`.
 
 ## Current implementation definition
 
@@ -78,8 +79,9 @@ than `None` -- the frontend described above is the whole of what is in scope
 for UA. Local CLI detection is registration inventory only and does not alter
 the single explicitly configured runtime source.
 
-MCP stdio는 ADR-0020에 따라 명시적으로 선택하는 추가 프런트엔드다.
-기본 HTTP를 유지하고 `mcp` 선택 전에는 MCP를 실행하지 않는다. 한 프로세스·한 소스·
-한 프런트엔드 원칙을 유지하며 stdio는 MCP 클라이언트가 실행한다. Windows Service는
-지원하지 않는다. DA Subscribe는 명시적 생성·조회·해제 도구로 기존 코어의 항목별 병합을
-제공한다. 네트워크 MCP 전송·새 소스·데이터 저장·자동 제어는 범위에 포함하지 않는다.
+MCP stdio is an explicitly selected additional frontend under ADR-0020. HTTP
+remains the default, and MCP does not run before `mcp` is selected. Each process
+still serves one source through one frontend. An MCP client launches stdio;
+Windows Service mode is unsupported. Explicit subscription create/read/release
+tools expose the core's per-item coalescing. Network MCP transports, new sources,
+persistent values, and automated control are outside scope.

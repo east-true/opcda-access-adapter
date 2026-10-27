@@ -5,7 +5,7 @@ documentation, and in-scope design proposals are welcome.
 
 This project deliberately has a narrow boundary: one local OPC DA source, one
 explicitly selected frontend, and source semantics preserved end to end. Read
-the [design baseline](docs/design.md) and [repository instructions](AGENTS.md)
+the [design baseline](docs/design/baseline.md) and [repository instructions](AGENTS.md)
 before proposing behavior changes.
 
 ## Before opening an issue
@@ -64,7 +64,7 @@ Additional rules protect the adapter's core guarantees:
 - Keep Write disabled by default, strictly typed, and free of automatic retry
   or replay.
 - Do not claim compatibility without an authorized real-server result in
-  [`docs/compatibility.md`](docs/compatibility.md).
+  [`docs/validation/compatibility.md`](docs/validation/compatibility.md).
 
 If the protobuf contract changes, regenerate checked-in bindings with
 [`scripts/generate-proto.sh`](scripts/generate-proto.sh) and include both the
@@ -73,8 +73,12 @@ contract and generated output in the same pull request.
 ## Documentation changes
 
 The root README is the short project entrance. Put detailed operating,
-protocol, security, and validation material under `docs/` and link it from the
+protocol, security, and validation material in topic directories under `docs/`
+and link it from the
 [documentation index](docs/README.md).
+
+Keep frontend references in `docs/frontend/<frontend>/`: use `README.md` as
+the entry point and add operation pages such as `read.md` or `subscribe.md`.
 
 Use relative links, keep commands copyable, distinguish executed evidence from
 planned work, and avoid certification or broad compatibility language. A docs

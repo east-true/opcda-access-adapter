@@ -114,7 +114,11 @@ func documentedKeys(t *testing.T) map[string]bool {
 // referenceDocuments are the documents that carry configuration tables. Each
 // frontend documents its own settings; the shared DA runtime settings live in
 // the HTTP reference, which the other two point at.
-var referenceDocuments = []string{"http-api.md", "grpc-api.md", "opcua-mapping.md"}
+var referenceDocuments = []string{
+	filepath.Join("frontend", "http", "configuration.md"),
+	filepath.Join("frontend", "grpc", "configuration.md"),
+	filepath.Join("frontend", "opcua", "README.md"),
+}
 
 // A frontend the adapter serves has to be named where somebody would look for
 // it. The OPC UA frontend shipped, was validated, and was gated in CI while
@@ -124,7 +128,7 @@ var referenceDocuments = []string{"http-api.md", "grpc-api.md", "opcua-mapping.m
 // reads prose against the set of frontends the code accepts.
 func TestEveryFrontendIsNamedWhereItIsChosen(t *testing.T) {
 	root := repositoryRoot(t)
-	for _, document := range []string{"README.md", filepath.Join("docs", "setup.md")} {
+	for _, document := range []string{"README.md", filepath.Join("docs", "operations", "setup.md")} {
 		body, err := os.ReadFile(filepath.Join(root, document))
 		if err != nil {
 			t.Fatalf("read %s: %v", document, err)

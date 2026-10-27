@@ -9,7 +9,7 @@ import (
 )
 
 // INV-8 says remote DCOM is not this project's responsibility, and
-// docs/security-windows.md makes the operator a precise promise about how that
+// docs/operations/windows-security.md makes the operator a precise promise about how that
 // is achieved: the runtime "calls CoCreateInstance with only
 // CLSCTX_INPROC_SERVER | CLSCTX_LOCAL_SERVER" and "never requests
 // CLSCTX_REMOTE_SERVER or uses CoCreateInstanceEx".
@@ -38,7 +38,7 @@ func TestActivationNeverLeavesTheLocalMachine(t *testing.T) {
 	}
 	if strings.Contains(source, "CoCreateInstanceEx") {
 		t.Error("CoCreateInstanceEx is bound here; it carries a COSERVERINFO and " +
-			"docs/security-windows.md promises the adapter never uses it")
+			"docs/operations/windows-security.md promises the adapter never uses it")
 	}
 
 	// Every activation passes the same two bits. The call is through a syscall

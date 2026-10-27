@@ -27,7 +27,7 @@ import (
 // AnalogItemType and TwoStateDiscreteType those carry EUInformation and
 // LocalizedText, but Table A.1 says String and the DA source supplies a string.
 // The table is followed rather than improved on, and the difference is recorded
-// in docs/opcua-mapping.md.
+// in docs/frontend/opcua/README.md.
 
 const (
 	// NodeIDRange is the Range DataType, and NodeIDRangeEncodingDefaultBinary

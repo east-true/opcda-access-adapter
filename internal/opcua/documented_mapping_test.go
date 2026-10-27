@@ -62,7 +62,7 @@ func documentedRuntimeStatuses(t *testing.T) map[string]StatusCode {
 		"Bad_ServiceUnsupported": StatusBadServiceUnsupported,
 		"Bad_InternalError":      StatusBadInternalError,
 	}
-	body := readNormalisedFile(t, repositoryRootFromOPCUATest(t), "docs", "opcua-mapping.md")
+	body := readNormalisedFile(t, repositoryRootFromOPCUATest(t), "docs", "frontend", "opcua", "README.md")
 	row := regexp.MustCompile("(?m)^\\| `(Bad_[A-Za-z]+)` \\| (.+) \\|$")
 	mapping := map[string]StatusCode{}
 	for _, match := range row.FindAllStringSubmatch(body, -1) {

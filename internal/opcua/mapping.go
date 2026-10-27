@@ -105,7 +105,7 @@ const (
 
 // Standard OPC DA 2.05a quality values, expressed as the QQSSSS field with the
 // limit bits cleared. Only GOOD has been confirmed against a real server in
-// this project; see docs/compatibility.md.
+// this project; see docs/validation/compatibility.md.
 const (
 	QualityBad                   uint16 = 0x00
 	QualityConfigError           uint16 = 0x04
@@ -250,7 +250,7 @@ const (
 // maps to Good; the quality field carries the data condition instead.
 //
 // Only OPC_E_BADRIGHTS and OPC_E_UNKNOWNITEMID have been observed against a
-// real server; the rest are transcribed and untested, which docs/compatibility.md
+// real server; the rest are transcribed and untested, which docs/validation/compatibility.md
 // records. Transcribing them is still better than leaving them in the "Others"
 // row, because that row reports Bad_UnexpectedError for a condition the table
 // gives a precise answer for.
