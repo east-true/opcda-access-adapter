@@ -1,94 +1,76 @@
-# OPC DA Access Adapter — 전체 설계 문서
+# Design baseline
 
-> **문서 상태:** Implementation Baseline Draft  
-> **기준일:** 2026-08-22  
-> **대상 독자:** 프로젝트를 처음 접하는 개발자, 리뷰어, 기여자, 운영자  
-> **작업명:** OPC DA Access Adapter  
-> **구현 언어:** Go  
-> **배포 대상:** Windows  
-> **완료된 초기 Frontend:** HTTP/JSON
-> **현재 확장 Frontend:** gRPC unary Status/Browse/Read/Write
-> **향후 승인된 Frontend 방향:** OPC UA; DA callback core 이후 gRPC stream
->
-> **이 문서는 기준일 시점의 설계 baseline이며, 그 뒤 구현된 것을 되짚어
-> 수정하지 않는다.** 계획으로 쓰인 문장을 현재형으로 고치면 이 프로젝트가
-> 무엇을 왜 그렇게 정했는지의 기록이 사라지기 때문이다. 다만 "향후"라고 적힌
-> 것 중 아래는 **이미 구현·검증되어 CI에서 게이팅된다.** 지금 존재하는 것의
-> 설명은 각각의 문서에 있다.
->
-> | 이 문서가 "향후"라 부르는 것 | 현재 상태 | 존재하는 것의 설명 |
-> |---|---|---|
-> | DA Subscribe core (§18) | 구현됨. `IOPCDataCallback` connection point 기반 | ADR-0013 |
-> | gRPC server streaming `Subscribe` (§34) | 구현됨 | [gRPC API](grpc-api.md#subscribe) |
-> | MCP stdio (ADR-0020) | 명시적 `mcp` 선택으로 기존 DA Runtime에 접근; 기본 HTTP 유지 | [MCP API](mcp-api.md), [ADR-0020](adr/0020-mcp-stdio-frontend.md) |
-> | OPC UA Frontend (§35) | 구현됨, `SecurityPolicy None` 한정. production ready가 아니며 conformance 주장도 아니다 | [OPC UA mapping](opcua-mapping.md), ADR-0016 |
-> | UA Subscription / MonitoredItem / Publish (§5.2 부근) | 구현됨 | [OPC UA mapping](opcua-mapping.md#subscriptions-and-monitoreditems) |
-> | SAFEARRAY (§20.4) | DA 계층은 §20.4가 요구하는 다섯 가지를 모두 보존해 읽고 쓴다. 어떤 실제 소스로도 아직 검증되지 않았고, frontend는 아직 공개하지 않는다 | [ADR-0019](adr/0019-safearray-representation.md) |
->
-> 나머지 "향후" 항목(HTTP streaming frontend, MTA/복수 worker, subprocess
-> isolation, remote network)은 여전히 미구현이며 v0 범위 밖이다.
->
-> 이 문서는 프로젝트의 목적, 설계 철학, 경계, 런타임 구조, 데이터 계약, 초기 HTTP API, 향후 Frontend 확장 규칙, COM 제약, 오류/재연결/보안/테스트/호환성 정책을 하나의 기준 문서로 정의한다.  
-> 별도 ADR 또는 명시적인 설계 변경 없이 이 문서의 **불변 조건(Invariants)** 을 깨는 구현은 허용하지 않는다.
+Baseline date: 2026-08-22. This document records the original product boundary,
+implementation plan, and its later clarifications. Planned features, examples,
+and unchecked phase checklists describe that baseline, not the current backlog.
+Accepted [ADRs](adr/README.md) record subsequent decisions.
 
----
+For the current implementation, start with [architecture](architecture.md) and
+[implementation status](implementation-status.md). API contracts live in the
+individual [frontend references](README.md#client-integration).
 
-## 1. 문서 목적
+## Reading this baseline
 
-이 프로젝트는 단순히 “OPC DA 값을 HTTP로 읽는 프로그램”이나 “DA를 UA로 변환하는 Gateway”를 만드는 것이 아니다.
+| Question | Sections |
+|---|---|
+| Product purpose and boundaries | [1. Purpose](#1-document-purpose), [4. Invariants](#4-invariants), 1–6 |
+| Runtime, COM ownership, and DA operations | [7. Architecture](#7-architecture), [10. COM threading](#10-com-threading), 7–20 |
+| Frontends and the original HTTP contract | [21. Frontend architecture](#21-frontend-architecture), 21–35 |
+| Security, limits, failures, and correctness | [36. Security](#36-security-model), 36–49 |
+| Testing, deployment, and scope decisions | [50. Tests](#50-test-strategy), [62. Phases](#62-implementation-phases), [review checklist](#appendix-a-design-review-checklist) |
 
-목표는 다음 한 문장으로 정의한다.
+## 1. Document purpose
 
-> **OPC DA Server의 원래 데이터와 동작 의미를 바꾸지 않으면서, 현대 애플리케이션이 COM/DCOM 또는 OPC DA 자체를 직접 알 필요 없이 접근할 수 있게 하는 얇은 Access Adapter를 만든다.**
+This project provides DA access through a bounded adapter rather than a general DA-to-UA gateway.
 
-따라서 이 문서는 기능 목록만 설명하지 않는다. 오히려 다음을 더 중요하게 다룬다.
+Its objective is:
 
-1. 프로젝트가 왜 존재하는지
-2. 무엇을 반드시 보존해야 하는지
-3. 무엇을 절대로 하지 않는지
-4. 어떤 확장이 허용되고 어떤 확장이 금지되는지
-5. OPC DA/COM이라는 레거시 기술의 제약을 Go 런타임 안에서 어떻게 격리할지
-6. Frontend가 늘어나더라도 왜 Gateway/Integration Platform으로 변질되지 않아야 하는지
-7. 초기 HTTP 구현이 최종 제품의 중심이 아니라 **DA Runtime 검증 도구이자 첫 Access Frontend**라는 점
-8. gRPC와 향후 OPC UA가 추가될 때도 동일한 DA-native contract를 공유해야 한다는 점
+> Build a thin access adapter that lets modern applications use an OPC DA server without handling COM/DCOM or changing the source's data and behavior.
 
-이 문서를 읽은 사람은 과거 대화나 설계 배경을 알지 못해도 구현 방향과 금지선을 이해할 수 있어야 한다.
+The document establishes the constraints behind the feature set:
 
----
+1. Why the project exists.
+2. Which source information must survive.
+3. Which behaviors are prohibited.
+4. Which extensions fit the product boundary.
+5. How OPC DA/COM constraints are isolated from the Go runtime.
+6. How additional frontends retain the adapter's scope.
+7. Why HTTP is the first access frontend and a DA runtime validation tool.
+8. Why gRPC and later OPC UA share the same DA-native contract.
 
-# 2. 배경과 문제 정의
+A reader should understand the implementation direction and boundaries without knowing earlier discussions.
 
-## 2.1 현실적인 문제
+## 2. Background and problem
 
-산업 현장에는 여전히 OPC DA 기반 시스템이 존재한다.
+### 2.1 Existing systems
 
-기존 설비나 소프트웨어가 안정적으로 동작하고 있다면, 단순히 프로토콜이 오래되었다는 이유만으로 전체 시스템을 OPC UA로 교체하는 것은 현실적으로 쉽지 않다. 교체에는 다음과 같은 비용이 발생할 수 있다.
+Industrial systems still use OPC DA.
 
-- 기존 DA Server 교체 또는 업그레이드
-- 벤더 라이선스 비용
-- 설비 정지와 검증 비용
-- 운영자/개발자 학습 비용
-- 기존 시스템과 신규 시스템의 동시 운영
-- 새로운 Client/Server 조합의 호환성 검증
+Replacing stable equipment or software with OPC UA has costs beyond replacing an old protocol:
 
-반면 새로운 애플리케이션은 OPC DA의 COM/DCOM 환경을 직접 다루고 싶어 하지 않거나, 아예 다룰 수 없는 경우가 많다.
+- DA server replacement or upgrade.
+- Vendor licenses.
+- Equipment downtime and validation.
+- Operator and developer training.
+- Running old and new systems together.
+- Validating new client/server combinations.
 
-예:
+Modern applications may be unable or unwilling to manage the DA server's COM/DCOM environment directly.
 
-- Go/Java/Python 기반 Backend 서비스
-- 컨테이너 또는 별도 서비스 계층
-- OPC UA Client만 지원하는 신규 프로그램
-- HTTP API만 사용하고 싶은 내부 도구
-- typed RPC를 원하는 서비스
-- DCOM 설정과 COM threading을 애플리케이션 코드에 끌어들이고 싶지 않은 개발자
+Example:
 
-이 프로젝트는 **기존 DA Server를 교체하지 않고**, 그 앞에 작고 명확한 compatibility layer를 두는 문제를 푼다.
+- Go, Java, and Python backend services.
+- Containers or separate service layers.
+- Programs that support UA clients only.
+- Internal tools that use HTTP APIs.
+- Services that need typed RPC.
+- Applications that should not embed DCOM configuration and COM threading.
 
----
+The adapter places a small compatibility layer in front of the existing DA server without replacing it.
 
-## 2.2 처음 검토했던 DA→UA 전용 방향
+### 2.2 The original DA-to-UA approach
 
-초기 아이디어는 다음과 같았다.
+The initial idea was:
 
 ```text
 Existing OPC DA Server
@@ -102,21 +84,19 @@ Existing OPC DA Server
 Existing OPC UA Client
 ```
 
-이 방향은 명확하지만, 조사 결과 이미 여러 상용/오픈소스 DA→UA Wrapper/Gateway가 존재한다.
+Commercial and open-source DA-to-UA wrappers already address this use case.
 
-따라서 단순히 다음을 만드는 것은 프로젝트의 존재 이유로 충분하지 않다고 판단했다.
+Another implementation alone would not justify the project:
 
-> “Go로 만든 또 하나의 OPC DA→UA 변환기”
+> Another OPC DA-to-UA converter written in Go.
 
-특히 기존 구현과 비교했을 때 언어 선택이나 라이브러리 선택만으로는 제품 가치가 충분히 차별화되지 않는다.
+A different implementation language or library would not provide enough additional product value.
 
----
+### 2.3 Access adapter scope
 
-## 2.3 Access Adapter로 확장한 이유
+The problem was reframed around source access.
 
-최종적으로 문제 정의를 한 단계 아래로 내렸다.
-
-**UA가 목적이 아니라 OPC DA 자체에 대한 현대적인 접근이 목적**이다.
+The objective is modern access to OPC DA itself; UA is one access method.
 
 ```text
                     OPC DA Server
@@ -134,25 +114,21 @@ Existing OPC UA Client
           HTTP/JSON       gRPC        OPC UA
 ```
 
-중요한 점은 **Source는 늘어나지 않는다.**
+The set of source protocols does not expand.
 
-확장되는 것은 오직 접근 방법(Access Frontend)이다.
+Only the access frontends expand.
 
----
+## 3. Product definition
 
-# 3. 제품 정의
+### 3.1 Definition
 
-## 3.1 공식 제품 정의
+> OPC DA Access Adapter exposes one OPC DA server's Browse, Read, Write, and later Subscribe capabilities through modern frontends while preserving source semantics.
 
-> **OPC DA Access Adapter는 하나의 OPC DA Server를 source로 사용하고, OPC DA의 Browse/Read/Write/(향후 Subscribe) capability와 source semantics를 변경하지 않은 채 현대적인 Access Frontend를 통해 노출하는 얇은 compatibility adapter다.**
+### 3.2 Product boundary
 
----
+The project does not provide:
 
-## 3.2 이 프로젝트가 아닌 것
-
-이 프로젝트는 다음 제품이 아니다.
-
-- 산업용 Integration Gateway
+- An industrial integration gateway.
 - Protocol Converter Platform
 - IoT Gateway
 - Historian
@@ -166,23 +142,21 @@ Existing OPC UA Client
 - Rule Engine
 - Multi-source Aggregator
 
-이 구분은 이름의 문제가 아니라 아키텍처의 문제다.
+These exclusions constrain the architecture, not just the product name.
 
----
+## 4. Invariants
 
-# 4. 최상위 불변 조건
+These rules define the product boundary.
 
-아래 규칙은 프로젝트의 가장 중요한 제약이다.
+### INV-1. OPC DA is the only source protocol
 
-## INV-1. Source Protocol은 OPC DA 하나뿐이다
-
-허용:
+Allowed:
 
 ```text
 OPC DA -> Adapter -> Frontend
 ```
 
-금지:
+Forbidden:
 
 ```text
 Modbus -----+
@@ -191,7 +165,7 @@ BACnet -----+--> Common Core --> Frontends
 OPC DA -----+
 ```
 
-다음 source protocol 추가는 이 프로젝트의 범위를 깨므로 허용하지 않는다.
+Adding any of these sources would break that boundary:
 
 - Modbus
 - Siemens S7
@@ -201,44 +175,40 @@ OPC DA -----+
 - OPC UA source
 - REST source
 - Database source
-- 기타 산업 프로토콜
+- Other industrial protocols.
 
-다른 source가 필요하다면 별도 프로젝트로 다룬다.
+Use a separate project when another source protocol is required.
 
----
+### INV-2. Preserve source semantics
 
-## INV-2. Source semantics를 재해석하지 않는다
+The adapter must not change the meaning supplied by the DA server.
 
-Adapter는 DA Server가 제공한 의미를 바꾸지 않는다.
+Prohibited examples:
 
-금지 예:
-
-- 단위 변환
+- Unit conversion.
 - scaling
 - offset
 - tag rename
 - tag merge
 - tag split
 - derived value
-- 계산식
+- Calculated expressions.
 - smoothing
 - interpolation
-- “last good value”를 정상값처럼 반환
-- 잘못된 값을 임의 수정
-- timestamp 재생성 후 source timestamp처럼 표시
-- Bad Quality를 Good으로 변경
-- vendor-specific 의미 추론
-- Asset/Device 구조 추론
+- Returning a last-good value as a current valid value.
+- Arbitrarily repairing an invalid value.
+- Regenerating a timestamp and presenting it as source time.
+- Changing Bad Quality to Good.
+- Inferring vendor-specific meaning.
+- Inferring an Asset/Device hierarchy.
 
-허용되는 것은 **target protocol이 요구하는 결정적 representation mapping**뿐이다.
+Only deterministic representation mapping required by the target protocol is permitted.
 
----
+### INV-3. Preserve source information
 
-## INV-3. Source가 제공한 정보는 가능한 한 버리지 않는다
+A thin adapter must not discard source metadata merely to simplify its model.
 
-“얇은 Adapter”라는 이유로 source metadata를 의도적으로 삭제해서는 안 된다.
-
-최소 보존 대상:
+Preserve at least:
 
 - ItemID
 - Canonical VARTYPE / DataType
@@ -248,15 +218,13 @@ Adapter는 DA Server가 제공한 의미를 바꾸지 않는다.
 - Timestamp presence
 - HRESULT
 - Access Rights
-- source가 직접 제공한 관련 item property
+- Relevant item properties supplied by the source.
 
-단, target frontend가 구조적으로 모든 정보를 표현할 수 없는 경우 손실을 명시적으로 문서화한다.
+Document any information the target frontend cannot represent.
 
----
+### INV-4. Do not introduce a common industrial model
 
-## INV-4. 새로운 공통 산업 데이터 모델을 만들지 않는다
-
-다음과 같은 공통 모델을 만들지 않는다.
+Do not add models such as:
 
 ```text
 Asset
@@ -270,9 +238,9 @@ Signal
 CommonValue
 ```
 
-Core model은 반드시 DA-native vocabulary를 유지한다.
+The core must retain DA-native vocabulary.
 
-예:
+Example:
 
 ```text
 DAItem
@@ -283,11 +251,9 @@ DAAccessRights
 DABrowseEntry
 ```
 
----
+### INV-5. Frontends expose DA capabilities
 
-## INV-5. Frontend는 DA capability를 노출하기만 한다
-
-허용되는 Frontend operation의 중심은 다음이다.
+The primary frontend operations are:
 
 ```text
 Browse
@@ -296,7 +262,7 @@ Write
 Subscribe
 ```
 
-새 Frontend가 다음 개념을 요구한다면 해당 Frontend는 원칙적으로 이 프로젝트에 들어올 수 없다.
+A frontend generally does not belong here if it requires:
 
 - Topic routing
 - Asset query
@@ -309,58 +275,52 @@ Subscribe
 - Workflow
 - Event processing DSL
 
----
+### INV-6. Do not persist process data
 
-## INV-6. 영속 Process Data 저장소를 만들지 않는다
-
-금지:
+Forbidden:
 
 - Historian
-- 시계열 DB
+- Time-series databases.
 - last-good-value DB
 - tag value cache DB
 - event history DB
 - persistent telemetry store
 
-허용:
+Allowed:
 
-- 설정 파일
-- 로그
-- 프로세스 내부의 bounded runtime state
+- Configuration files.
+- Logs.
+- Bounded in-process runtime state.
 - COM handle cache
-- 일시적인 browse/request state
+- Temporary Browse and request state.
 
-운영 로그에도 process value를 기본적으로 기록하지 않는다.
+Operational logs must not record process values by default.
 
----
+### INV-7. One instance serves one DA server
 
-## INV-7. 하나의 Adapter instance는 하나의 OPC DA Server를 담당한다
-
-초기/기본 아키텍처는 다음과 같다.
+The default architecture is:
 
 ```text
 Adapter Process A -> DA Server A
 Adapter Process B -> DA Server B
 ```
 
-하나의 process가 여러 DA Server를 집계해서 하나의 namespace로 노출하는 구조는 만들지 않는다.
+Do not aggregate multiple DA servers into one namespace in a single process.
 
-이 제약의 이유:
+This keeps the following concerns bounded:
 
-- source routing이 생기는 것을 방지
-- namespace collision 방지
-- multi-server aggregation Gateway로 변질되는 것을 방지
-- 장애 경계 단순화
-- 호환성 문제를 server 단위로 격리
-- config를 단순화
+- Source routing.
+- Namespace collisions.
+- Multi-server gateway behavior.
+- Failure boundaries.
+- Server-specific compatibility problems.
+- Configuration complexity.
 
-여러 DA Server가 필요하면 Adapter instance를 여러 개 실행한다.
+Run separate adapter instances for separate DA servers.
 
----
+### INV-8. Remote DCOM is out of scope
 
-## INV-8. Remote DCOM은 이 프로젝트의 책임이 아니다
-
-초기 지원 대상은 **Adapter가 실행되는 Windows 머신에서 local COM으로 접근 가능한 OPC DA Server**다.
+The initial target is a DA server accessible through local COM on the same Windows machine as the adapter.
 
 ```text
 [Windows Machine]
@@ -371,38 +331,34 @@ Adapter Process B -> DA Server B
   Access Adapter
 ```
 
-원격 DCOM 설정/터널링은 별도의 문제다.
+Remote DCOM configuration and tunneling are separate concerns.
 
-Remote OPC DA가 필요하면 별도 **DA Tunneler / DCOM-less Proxy** 프로젝트에서 해결한다.
+If remote DA is required, use a separate DA tunneler or DCOM-less proxy project.
 
-Access Adapter에 tunneling 기능을 합치지 않는다.
+Do not add tunneling to this adapter.
 
----
+### INV-9. Correctness precedes concurrency
 
-## INV-9. correctness가 concurrency보다 우선한다
+Do not call COM objects directly from multiple goroutines merely because goroutines are convenient.
 
-Go가 goroutine을 쉽게 제공한다는 이유로 COM object를 여러 goroutine에서 직접 호출하지 않는다.
+The initial implementation serializes COM access on a dedicated OS thread.
 
-초기 구현은 COM access를 전용 OS thread에 직렬화한다.
+Optimize only after collecting benchmarks and vendor compatibility evidence.
 
-성능 최적화는 실제 benchmark와 vendor compatibility 테스트가 확보된 이후에만 한다.
+### INV-10. Unsupported operations fail explicitly
 
----
+Do not hide an unsupported VARTYPE, Browse capability, or Write form behind an invented conversion.
 
-## INV-10. Unsupported는 명시적으로 실패한다
-
-지원하지 않는 DA VARTYPE, Browse capability, Write 형태 등을 발견했을 때 임의 변환으로 “동작하는 것처럼” 만들지 않는다.
-
-예:
+Example:
 
 ```text
-VT_UNKNOWN -> string 변환   X
+VT_UNKNOWN -> string       X
 SAFEARRAY -> flat JSON      X
 Bad Quality -> last good    X
 unknown HRESULT -> success  X
 ```
 
-대신:
+Instead:
 
 ```text
 explicit unsupported/error result
@@ -410,33 +366,29 @@ explicit unsupported/error result
 raw source code/type information where available
 ```
 
-를 반환한다.
+Return an explicit error with the available raw source code and type information.
 
----
+## 5. Technology and implementation constraints
 
-# 5. 기술 스택과 구현 제약
+### 5.1 Language
 
-## 5.1 언어
+Use Go.
 
-**Go**를 사용한다.
+Go supports the deployment and runtime goals:
 
-선택 이유는 단순한 선호가 아니라 다음 목표와 맞기 때문이다.
+- A single executable.
+- Direct Windows API access.
+- A small runtime footprint.
+- Network frontend implementation.
+- Clear separation between goroutines and the COM runtime.
+- x86 and x64 builds.
+- Long-running foreground and service operation.
 
-- 단일 binary 배포
-- Windows API 직접 호출 가능
-- 작은 runtime footprint
-- 네트워크 Frontend 구현 용이
-- goroutine과 COM runtime을 명확히 분리 가능
-- x86 / x64 binary 빌드 가능
-- 장시간 daemon/service 형태 운영에 적합
+### 5.2 OPC DA and OPC UA dependencies
 
----
+Do not use an existing OPC DA or OPC UA implementation library as a core implementation dependency.
 
-## 5.2 OPC DA/OPC UA 라이브러리 의존 정책
-
-이 프로젝트는 기존 OPC DA 또는 OPC UA 구현 라이브러리를 핵심 implementation dependency로 사용하지 않는다.
-
-예를 들어 다음 프로젝트들은 참고/interop 대상일 수 있으나 구현 기반으로 채택하지 않는다.
+The following may be references or interoperability targets, but not implementation bases:
 
 - konimarti/opc
 - huskar-t/opcda
@@ -444,30 +396,28 @@ raw source code/type information where available
 - TitaniumAS
 - asyncua
 - open62541
-- 기타 범용 OPC DA/UA SDK
+- Other general-purpose OPC DA/UA SDKs.
 
-이 제약의 목적은 “모든 것을 직접 만들기” 자체가 아니다.
+The constraint does not require reimplementing every general-purpose facility.
 
-목적은 **필요한 vertical slice만 구현하는 작은 Adapter**를 유지하는 것이다.
+It keeps the adapter focused on the required vertical slices.
 
-허용되는 일반 목적 dependency의 예:
+Examples of acceptable general-purpose dependencies:
 
 - Windows syscall/low-level helper
-- HTTP 관련 일반 라이브러리
-- 향후 공식/일반 gRPC runtime
+- General HTTP libraries.
+- A later official or general-purpose gRPC runtime.
 - test library
 
-단, dependency 도입은 supply-chain, license, injection surface, 유지보수성을 검토해야 한다.
+Review supply chain, license, injection surface, and maintenance before adding a dependency.
 
----
+### 5.3 Keep UA implementation bounded
 
-## 5.3 UA는 범용 SDK로 구현하지 않는다
+If the UA frontend is implemented directly, keep `internal/opcua` from becoming a general-purpose UA SDK.
 
-향후 OPC UA Frontend를 직접 구현할 경우 `internal/opcua`를 범용 UA SDK로 확장하지 않는다.
+Implement the required features only:
 
-필요한 기능만 구현한다.
-
-예:
+Example:
 
 ```text
 UA-TCP framing
@@ -477,51 +427,45 @@ Session
 Browse
 Read
 Write
-향후 Subscription/MonitoredItem/Publish
+Later Subscription/MonitoredItem/Publish
 ```
 
-Events, Historical Access, PubSub 등은 DA Access Adapter가 필요로 하지 않는 한 구현하지 않는다.
+Do not implement Events, Historical Access, or PubSub unless the DA access adapter requires them.
 
----
+## 6. Runtime platform
 
-# 6. 운영 플랫폼
+### 6.1 Windows
 
-## 6.1 Windows 전용
+OPC DA uses COM/DCOM, so the DA runtime executes on Windows.
 
-OPC DA는 COM/DCOM 기반이므로 DA Runtime은 Windows에서 동작한다.
-
-초기 지원 build target:
+Initial build targets:
 
 ```text
 windows/386
 windows/amd64
 ```
 
----
+### 6.2 Bitness
 
-## 6.2 Bitness
+Validate 32-bit and 64-bit environments separately.
 
-32-bit와 64-bit 환경을 별도로 검증한다.
+COM registration and server behavior can depend on bitness. Do not assume:
 
-일부 DA Server/COM registration은 bitness에 영향을 받을 수 있으므로 다음을 보장한다고 가정해서는 안 된다.
+> One 64-bit binary can connect to every DA server.
 
-> “64-bit binary 하나가 모든 DA Server에 접속한다.”
-
-Compatibility Matrix에서 다음을 기록한다.
+Record these in the compatibility matrix:
 
 - Windows version
 - Adapter architecture
 - DA Server vendor/product/version
-- DA Server bitness 또는 COM registration 특성
+- DA server bitness or COM registration characteristics.
 - Connect
 - Browse
 - Read
 - Write
-- Subscribe(구현 후)
+- Subscribe, once implemented.
 
----
-
-# 7. 전체 아키텍처
+## 7. Architecture
 
 ```text
                            +-----------------------+
@@ -558,13 +502,13 @@ Compatibility Matrix에서 다음을 기록한다.
         +---------------+      +---------------+      +---------------+
 ```
 
-핵심 의존 방향:
+Dependency direction:
 
 ```text
 Frontend -> DA Runtime
 ```
 
-금지:
+Forbidden:
 
 ```text
 DA Runtime -> HTTP
@@ -572,13 +516,11 @@ DA Runtime -> gRPC
 DA Runtime -> UA
 ```
 
-DA Runtime은 어떤 Frontend가 자신을 호출하는지 몰라야 한다.
+The DA runtime must not know which frontend calls it.
 
----
+## 8. Process structure
 
-# 8. 프로세스 내부 구조
-
-권장 package 구조:
+Suggested package structure:
 
 ```text
 cmd/
@@ -619,26 +561,24 @@ internal/
     lifecycle.go
 ```
 
-향후:
+Planned extension:
 
 ```text
 internal/frontend/grpc/
 internal/frontend/opcua/
 ```
 
-중요한 것은 폴더명 자체가 아니라 의존 방향이다.
+Dependency direction matters more than directory names.
 
----
+## 9. OPC DA Runtime
 
-# 9. OPC DA Runtime
+### 9.1 Responsibilities
 
-## 9.1 역할
+The DA runtime is the core of the adapter.
 
-DA Runtime은 프로젝트의 핵심이다.
+Responsibilities:
 
-책임:
-
-- COM 초기화/정리
+- COM initialization and cleanup.
 - DA Server activation
 - server connection lifecycle
 - group lifecycle
@@ -646,33 +586,31 @@ DA Runtime은 프로젝트의 핵심이다.
 - Browse
 - ReadBatch
 - WriteBatch
-- source metadata 획득
-- HRESULT 보존
+- Obtaining source metadata.
+- Preserving HRESULTs.
 - reconnect
 - handle invalidation
 - future subscription callbacks
 
-책임이 아닌 것:
+Outside its responsibilities:
 
 - HTTP JSON encoding
 - gRPC protobuf
 - UA StatusCode
-- 인증 정책
+- Authentication policy.
 - UI
 - DB
 - data normalization
 
----
+## 10. COM threading
 
-# 10. COM Threading 모델
+### 10.1 Thread ownership
 
-## 10.1 핵심 규칙
+Every thread that uses COM must initialize the COM library.
 
-COM을 사용하는 thread는 COM library를 초기화해야 한다.
+The Go runtime can move goroutines between OS threads, so ordinary goroutines must not directly own COM objects.
 
-Go runtime은 goroutine을 OS thread 사이에서 이동시킬 수 있으므로 COM object를 일반 goroutine에서 직접 유지하면 안 된다.
-
-초기 구조:
+Initial structure:
 
 ```text
 HTTP/gRPC/UA goroutines
@@ -695,50 +633,44 @@ HTTP/gRPC/UA goroutines
         OPC DA Server
 ```
 
----
+### 10.2 Apartment
 
-## 10.2 Apartment
+The initial design prioritizes compatibility with a dedicated apartment-threaded runtime.
 
-초기 구현은 compatibility 우선으로 전용 apartment-threaded runtime을 기본 설계로 삼는다.
-
-전용 thread에서:
+The dedicated thread performs these steps:
 
 1. `runtime.LockOSThread()`
 2. `CoInitializeEx`
-3. COM object 생성
-4. DA command 처리
-5. 필요한 message pumping
+3. Create COM objects.
+4. Process DA commands.
+5. Pump messages as required.
 6. COM object Release
 7. `CoUninitialize`
-8. thread 종료
+8. Exit the thread.
 
-를 수행한다.
+All steps run on that owning thread.
 
-COM interface pointer를 다른 goroutine/thread에 직접 전달하지 않는다.
+Do not pass COM interface pointers directly to another goroutine or thread.
 
-향후 MTA 또는 복수 worker 구조를 검토할 수 있지만, 실제 vendor compatibility 근거 없이 변경하지 않는다.
+MTA or multiple workers may be considered later, but require real vendor compatibility evidence.
 
----
+### 10.3 Message Pump
 
-## 10.3 Message Pump
+An STA implementation must satisfy its message-loop requirements.
 
-STA를 사용할 경우 message loop requirement를 무시하지 않는다.
-
-특히 향후 다음 callback이 들어오면 message dispatch가 필수적이다.
+Message dispatch becomes essential when callbacks such as these are introduced:
 
 - `IOPCDataCallback`
 - `IOPCShutdown`
 - connection point callback
 
-v0가 sync Read/Write만 사용하더라도, 설계상 STA message processing을 안전하게 수용할 수 있어야 한다.
+Even synchronous v0 Read/Write must allow safe STA message processing.
 
----
+## 11. OPC DA Baseline
 
-# 11. OPC DA Baseline
+The initial baseline is OPC DA 2.05a.
 
-초기 목표는 **OPC DA 2.05a**다.
-
-주요 interface:
+Principal interfaces:
 
 - `IOPCServer`
 - `IOPCItemMgt`
@@ -747,22 +679,20 @@ v0가 sync Read/Write만 사용하더라도, 설계상 STA message processing을
 - `IOPCItemProperties`
 - `IOPCCommon`
 - `IConnectionPointContainer`
-- 향후 `IOPCDataCallback` 관련 connection point
-- 필요 시 group state 관련 interface
+- A later connection point for `IOPCDataCallback`.
+- Group-state interfaces where required.
 
-OPC DA 3.0 지원은 v0 필수가 아니다.
+OPC DA 3.0 is not required for v0.
 
----
+## 12. Stateful protocol runtime
 
-# 12. Runtime은 Stateless가 아니다
+The adapter does not store process data, but it does retain protocol state.
 
-프로젝트는 process data를 저장하지 않지만 runtime protocol state는 존재한다.
-
-정확한 표현:
+The distinction is:
 
 > **No persistent process-data storage, but stateful protocol runtime.**
 
-runtime state 예:
+Examples of runtime state:
 
 - COM initialized state
 - DA server COM interface
@@ -777,13 +707,11 @@ runtime state 예:
 - generation/incarnation
 - future callback registrations
 
-이 state를 “없다”고 가정하면 DA 2.05a 구현 자체가 틀어진다.
+A DA 2.05a implementation cannot treat this protocol state as absent.
 
----
+## 13. Server Connection Lifecycle
 
-# 13. Server Connection Lifecycle
-
-상태 예:
+Example lifecycle:
 
 ```text
 STARTING
@@ -805,72 +733,64 @@ CONNECTING
 shutdown -> STOPPING -> STOPPED
 ```
 
-추가로 심각한 COM hang 또는 내부 불변식 위반 시:
+A serious COM hang or internal invariant violation may also enter:
 
 ```text
 DEGRADED
 ```
 
-상태를 둘 수 있다.
+This is a separate runtime state.
 
----
-
-## 13.1 연결 설정
+### 13.1 Source configuration
 
 v0 source identifier:
 
 - ProgID
-- 또는 CLSID
+- Or a CLSID.
 
-둘 중 하나를 명시한다.
+Specify exactly one identifier.
 
-Remote host는 받지 않는다.
+Do not accept a remote host.
 
-예:
+Example:
 
 ```text
 source.progId = "Matrikon.OPC.Simulation.1"
 ```
 
----
+### 13.2 Reconnect
 
-## 13.2 재연결
+On disconnect:
 
-연결이 끊긴 경우:
+1. Mark the current connection `disconnected`.
+2. Invalidate every group and item handle.
+3. Do not reuse stale handles.
+4. Attempt reconnect in the background.
+5. Create a new connection generation.
+6. Recreate the internal group.
+7. Lazily register items again when needed.
+8. Return to `connected` after success.
 
-1. 현재 연결을 `disconnected`로 표시
-2. 기존 group/item handle을 모두 무효화
-3. stale handle을 재사용하지 않음
-4. background reconnect 시도
-5. 새 connection generation 생성
-6. group을 다시 생성
-7. item handle은 필요 시 lazy re-register
-8. 성공 후 `connected` 상태로 복귀
+Do not return an old value as Good during reconnect.
 
-재연결 중 이전 값을 “Good”으로 반환하지 않는다.
+### 13.3 Backoff
 
----
+Connection failures must not create a busy loop.
 
-## 13.3 Backoff
+Reconnect may use bounded exponential backoff with jitter.
 
-연결 실패 시 busy-loop 하지 않는다.
+Choose the default intervals before implementation, subject to these requirements:
 
-reconnect는 bounded exponential backoff + jitter 구조를 사용할 수 있다.
+- No unbounded tight retries.
+- No log flood.
+- Automatic recovery when the server becomes available.
+- An observable current state for operators.
 
-정확한 기본 간격은 구현 전 config default로 결정하되 다음 원칙을 지킨다.
+## 14. Group and item handles
 
-- 무한 tight retry 금지
-- 로그 폭주 금지
-- server 복구 후 자동 회복 가능
-- 운영자가 현재 상태를 확인 가능
+### 14.1 Required protocol state
 
----
-
-# 14. Group / Item Handle 관리
-
-## 14.1 왜 필요하며 왜 제거할 수 없는가
-
-DA 2.05a Read/Write는 일반적으로 다음 흐름을 사용한다.
+DA 2.05a Read/Write normally use this sequence:
 
 ```text
 IOPCServer::AddGroup
@@ -882,28 +802,24 @@ IOPCItemMgt::AddItems
 IOPCSyncIO::Read / Write
 ```
 
-따라서 HTTP 요청 하나마다 “ItemID 문자열만 넘겨서 stateless read”하는 구조로 생각하면 안 된다.
+An HTTP request cannot be modeled as a stateless read that supplies only an ItemID string.
 
----
+### 14.2 Internal group
 
-## 14.2 내부 Group
+A v0 instance serves one DA server and maintains a simple internal group.
 
-v0는 하나의 Adapter instance가 하나의 DA Server를 담당하므로, 단순한 내부 Group을 유지한다.
+Default strategy:
 
-기본 전략:
-
-- 연결 시 internal Group 생성
-- Item은 최초 사용 시 lazy AddItems
+- Create the internal group when connecting.
+- Add items lazily on first use.
 - server handle cache
-- reconnect 시 전부 폐기
+- Discard all handles on reconnect.
 
----
+### 14.3 Item registration cache
 
-## 14.3 Item registration cache
+The handle cache is a runtime optimization, not persistent data.
 
-cache는 영속 데이터가 아니라 runtime optimization이다.
-
-보존 정보 예:
+Example retained fields:
 
 ```text
 ItemID
@@ -913,45 +829,41 @@ AccessRights
 ConnectionGeneration
 ```
 
-규칙:
+Rules:
 
-- 반드시 bounded 해야 한다.
-- reconnect generation이 바뀌면 old handle 금지
-- invalid handle/unknown item 오류 시 cache entry 재검증 가능
-- cache 때문에 source 오류를 숨기면 안 됨
-- cache persistence 금지
+- Bound the cache.
+- Never reuse handles from an earlier connection generation.
+- An invalid-handle or unknown-item result may trigger entry revalidation.
+- Never use the cache to hide a source error.
+- Do not persist the cache.
 
-정확한 최대 item 수는 구현 benchmark 후 설정한다.
+Choose the maximum item count after implementation benchmarks.
 
----
+## 15. Browse
 
-# 15. Browse
+### 15.1 Optional capability
 
-## 15.1 Browse는 optional capability다
+`IOPCBrowseServerAddressSpace` is optional in DA 2.x; not every DA 2.05a server supports Browse.
 
-DA 2.x의 `IOPCBrowseServerAddressSpace`는 optional이므로 모든 OPC DA 2.05a Server가 Browse를 지원한다고 가정하지 않는다.
-
-따라서:
+Therefore:
 
 ```text
 Browse unsupported != Adapter unusable
 ```
 
-알고 있는 ItemID에 대해서는 Read/Write가 가능할 수 있다.
+Known ItemIDs may still support Read and Write.
 
----
+### 15.2 No invented Browse fallback
 
-## 15.2 Browse unsupported일 때 금지되는 fallback
-
-Browse를 지원하지 않는 서버를 위해 다음을 만들지 않는다.
+Do not compensate for an unsupported Browse interface by adding:
 
 - CSV tag database
 - manual tag mapping DB
 - persisted tag registry
 - inferred hierarchy
-- delimiter 기반 hierarchy 강제 생성
+- A hierarchy inferred from delimiters.
 
-대신 capability를 명시한다.
+Report the capability explicitly:
 
 ```text
 browse: unsupported
@@ -959,23 +871,21 @@ read: available
 write: source-dependent
 ```
 
-사용자는 알고 있는 ItemID로 Read/Write할 수 있다.
+Users can supply known ItemIDs for Read and Write.
 
----
+### 15.3 Browse the source
 
-## 15.3 Browse는 source를 직접 본다
+The rule is:
 
-기본 철학:
+> Do not maintain Browse results as a separate adapter data model.
 
-> Browse 결과를 Adapter가 별도 모델로 유지하지 않는다.
-
-금지:
+Forbidden:
 
 ```text
 startup full scan -> DB -> Browse from DB
 ```
 
-기본:
+Use:
 
 ```text
 Frontend Browse request
@@ -987,74 +897,64 @@ DA Runtime Browse
 OPC DA Server
 ```
 
-동적 address space를 가진 서버에서도 source가 현재 제공하는 내용을 기준으로 한다.
+For dynamic address spaces, use what the source currently exposes.
 
----
+### 15.4 Browse state serialization
 
-## 15.4 Browse state serialization
+DA 2.x Browse is stateful: it uses a current Browse position.
 
-DA 2.x Browse는 current browse position을 사용하는 stateful API다.
+Concurrent requests that move the same Browse object can produce incorrect results.
 
-따라서 동시에 여러 request가 같은 browse object의 position을 변경하면 잘못된 결과가 나올 수 있다.
+Serialize Browse on the dedicated DA thread in v0.
 
-v0에서는 Browse를 dedicated DA thread에서 **직렬화**한다.
+Keep each HTTP Browse operation independent where possible:
 
-각 HTTP Browse request는 가능한 한:
+1. Reset to the root position.
+2. Follow the requested path in order.
+3. Enumerate at that position.
+4. Collect results.
+5. End the operation.
 
-1. root position으로 reset
-2. request의 browse path를 순서대로 이동
-3. 해당 position에서 enumerate
-4. 결과 수집
-5. operation 종료
+Do not retain a frontend session's Browse position between operations.
 
-형태로 독립 실행한다.
-
----
-
-## 15.5 Branch와 Item identity
+### 15.5 Branch and item identity
 
 Item:
 
-- identity의 기준은 **실제 DA ItemID**
-- display/browse path에서 ItemID를 추론하지 않는다.
+- Use the exact DA ItemID as identity.
+- Do not infer ItemIDs from display names or Browse paths.
 
 Branch:
 
-- DA Server가 stable item identity를 제공하면 사용
-- 그렇지 않으면 Browse frontend에서 navigation을 위해 browse-name sequence를 사용할 수 있다.
-- 이 sequence는 Adapter의 **navigation representation**이지 source semantic identity가 아니다.
+- Use a stable branch identity if the DA server supplies one.
+- Otherwise use a sequence of Browse names for frontend navigation.
+- That sequence is a navigation representation, not a source semantic identity.
 
----
+## 16. Read
 
-# 16. Read
+### 16.1 Batch first
 
-## 16.1 Batch first
-
-내부 API는 단건보다 batch를 기본으로 한다.
+The internal API is batch-first.
 
 ```go
 ReadBatch(ctx, []ItemID, ReadOptions) -> []DAReadResult
 ```
 
-HTTP 단건 read도 내부적으로 batch 1개로 처리할 수 있다.
+A single-item HTTP read can use a batch containing one item.
 
----
+### 16.2 Read source
 
-## 16.2 Read source
+The internal contract may represent both DA `device` and `cache` sources.
 
-DA 2.05a capability를 숨기지 않기 위해 내부적으로 `device`와 `cache` source 개념을 표현할 수 있다.
+The v0 HTTP default prioritizes `device` for correctness.
 
-v0 HTTP 기본값은 correctness를 위해 `device`를 우선한다.
+Exposing DA cache reads later would remain within scope because they are a native DA capability.
 
-향후 API가 `cache`를 노출하더라도 이는 DA 자체 capability를 노출하는 것이므로 scope 위반이 아니다.
+### 16.3 Partial failures
 
----
+A failed item must not turn an otherwise handled batch into a generic 500 response.
 
-## 16.3 부분 실패
-
-Batch 요청에서 일부 item이 실패했다고 전체를 generic 500으로 만들지 않는다.
-
-예:
+Example:
 
 ```text
 Item A -> S_OK
@@ -1062,13 +962,11 @@ Item B -> OPC_E_UNKNOWNITEMID
 Item C -> S_OK
 ```
 
-결과도 item별로 유지한다.
+Keep each item's result.
 
----
+## 17. Write
 
-# 17. Write
-
-## 17.1 Write는 source write-through다
+### 17.1 Write through to the source
 
 ```text
 Frontend Write
@@ -1083,42 +981,36 @@ IOPCSyncIO::Write
 DA Server
 ```
 
-중간 queue가 있더라도 semantic transformation을 하지 않는다.
+A command queue must not transform Write semantics.
 
----
+### 17.2 DA 2.05a Write scope
 
-## 17.2 DA 2.05a Write 범위
+The v0 DA 2.05a contract writes values only.
 
-v0의 DA 2.05a Write는 **Value Write**를 대상으로 한다.
+Do not pretend to support writes to Status, Quality, or Timestamp.
 
-Status/Quality/Timestamp를 write하는 기능을 가짜로 제공하지 않는다.
+DA 3.0 `WriteVQT` is a separate extension.
 
-DA 3.0 `WriteVQT` 지원은 별도 확장이다.
+### 17.3 Default Write policy
 
----
+An industrial Write can cause a physical control action.
 
-## 17.3 Write 기본 보안 정책
+The policy is:
 
-산업 장비에서 Write는 실제 제어 동작으로 이어질 수 있다.
+- Implement the capability.
+- Keep Write disabled by default.
+- Require explicit enablement.
+- Never retry Write automatically.
+- Document that a timeout can leave the outcome unknown.
+- Do not promise rollback.
 
-따라서:
+### 17.4 Type validation
 
-- 기능 자체는 구현한다.
-- 기본 설정은 `write disabled`.
-- 사용자가 명시적으로 enable 해야 한다.
-- Adapter는 Write를 자동 재시도하지 않는다.
-- timeout 이후 “성공 여부 불명” 상태가 될 수 있음을 명시한다.
-- rollback을 약속하지 않는다.
+Do not coerce every JSON number into the source's canonical DA type.
 
----
+The request must remove type ambiguity.
 
-## 17.4 Type validation
-
-JSON number를 무조건 DA canonical type으로 임의 변환하지 않는다.
-
-Write request는 type ambiguity를 제거해야 한다.
-
-권장 request:
+Suggested request:
 
 ```json
 {
@@ -1128,21 +1020,19 @@ Write request는 type ambiguity를 제거해야 한다.
 }
 ```
 
-Runtime은:
+The runtime checks:
 
-- transport value가 요청 VARTYPE으로 lossless 표현 가능한지 확인
-- source canonical type과의 관계 확인
-- 지원되지 않는 conversion이면 실패
+- Whether the transport value is losslessly representable as the requested VARTYPE.
+- Its relationship to the source's canonical type.
+- Whether the requested conversion is supported; otherwise fail.
 
-silent narrowing/overflow 금지.
+No silent narrowing or overflow is permitted.
 
----
+## 18. Subscribe — core capability
 
-# 18. Subscribe — Core Capability (구현됨; 아래는 설계 시점의 기준)
+Subscribe is a DA capability shared by frontends.
 
-Subscribe는 UA만의 기능이 아니다.
-
-장기적으로는 DA Runtime 자체 capability로 정의한다.
+The plan places it in the DA runtime itself.
 
 ```text
 DA Runtime Subscribe
@@ -1151,26 +1041,22 @@ DA Runtime Subscribe
         |
         +----> OPC UA Subscription/MonitoredItem
         |
-        +----> 필요한 경우 향후 HTTP streaming frontend
+        +----> possible later HTTP streaming frontend
 ```
 
-DA Browse 때문에 subscription을 만들지 않는다.
+Do not create subscriptions just to Browse DA.
 
----
+### 18.1 DA side
 
-## 18.1 DA side
+Implement later DA 2.x subscriptions through `IOPCDataCallback` and connection points.
 
-향후 DA 2.x subscription은 `IOPCDataCallback` / connection point 기반으로 구현하는 방향을 사용한다.
+Callback COM object ownership, apartment/thread affinity, and message pumping must remain correct.
 
-이때 callback COM object와 thread/apartment/message pump correctness가 중요하다.
+### 18.2 Excluded from v0
 
----
+The first HTTP validation phase does not implement Subscribe.
 
-## 18.2 v0에서는 제외
-
-초기 HTTP 검증 단계에서는 Subscribe를 구현하지 않는다.
-
-v0 목표는:
+Its validation scope is:
 
 - Connect
 - Browse
@@ -1182,25 +1068,21 @@ v0 목표는:
 - HRESULT
 - reconnect
 
-검증이다.
+These are the v0 validation goals.
 
----
+## 19. DA-native Internal Contract
 
-# 19. DA-native Internal Contract
+Define the core contract independently of the frontend.
 
-Frontend 독립적인 Core contract를 정의한다.
-
----
-
-## 19.1 DAItemID
+### 19.1 DAItemID
 
 ```go
 type DAItemID string
 ```
 
-원본 문자열을 canonicalize하지 않는다.
+Do not canonicalize the source string.
 
-다음 변환 금지:
+Forbidden transformations:
 
 - trim
 - lower/upper case
@@ -1208,17 +1090,15 @@ type DAItemID string
 - dot/slash replacement
 - whitespace normalization
 
-source가 준 값 그대로 identity로 사용한다.
+Use the exact source string as identity.
 
----
+### 19.2 DAVarType
 
-## 19.2 DAVarType
+Do not replace VARTYPE with a Go reflection type.
 
-단순 Go reflect type으로 대체하지 않는다.
+Preserve the original COM VARTYPE.
 
-반드시 원래 COM VARTYPE을 보존한다.
-
-예:
+Example:
 
 ```text
 VT_I2
@@ -1230,16 +1110,16 @@ VT_BOOL
 ...
 ```
 
-이유:
+Rationale:
 
 ```text
-VT_I2 -> Go int -> source type 손실
-VT_I4 -> Go int -> source type 손실
+VT_I2 -> Go int -> source type lost
+VT_I4 -> Go int -> source type lost
 ```
 
-같은 문제를 막기 위해서다.
+These conversions lose the source type distinction.
 
-내부 representation은 최소한 다음을 가져야 한다.
+The internal representation must contain at least:
 
 ```text
 Raw VARTYPE code
@@ -1247,11 +1127,9 @@ Symbolic name if known
 Array/byref flags
 ```
 
----
+### 19.3 DAValue
 
-## 19.3 DAValue
-
-개념적 모델:
+Conceptual model:
 
 ```go
 type DAValue struct {
@@ -1265,87 +1143,73 @@ type DAValue struct {
 }
 ```
 
-실제 구현에서는 COM VARIANT ownership과 Go representation을 분리한다.
+Keep COM VARIANT ownership separate from the Go value representation.
 
----
+### 19.4 Quality
 
-## 19.4 Quality
-
-DA Quality는 raw 16-bit 값을 보존한다.
+Preserve raw 16-bit DA Quality.
 
 ```text
 lower 8 bits: QQSSSSLL
 upper 8 bits: vendor-specific
 ```
 
-Core/HTTP/gRPC에서는 raw 16-bit 값을 잃지 않는다.
+The core, HTTP, and gRPC preserve all 16 bits.
 
-해석 helper를 제공하더라도 raw가 source of truth다.
+Raw Quality remains authoritative even when interpretation helpers exist.
 
----
+### 19.5 Timestamp
 
-## 19.5 Timestamp
+Preserve a source timestamp when present.
 
-source timestamp가 존재하면 그대로 보존한다.
+Do not substitute adapter processing time for source time.
 
-Adapter processing time을 source timestamp로 대체하지 않는다.
+A separate observation-time field may be added if needed, but must remain clearly distinct.
 
-필요하다면 별도 field로 adapter observation time을 둘 수 있으나 명확히 구분한다.
+### 19.6 HRESULT
 
----
+Do not reduce HRESULT to a generic error string.
 
-## 19.6 HRESULT
-
-HRESULT는 generic string error로 없애지 않는다.
-
-다음 둘을 구분한다.
+Distinguish:
 
 1. COM method-level HRESULT
 2. item-level HRESULT array
 
-성공 판단은 `hr == 0`만 보지 않고 COM `SUCCEEDED/FAILED` semantics를 따른다.
+Use COM `SUCCEEDED/FAILED` semantics, not just `hr == 0`.
 
-raw HRESULT도 보존한다.
+Preserve the raw HRESULT as well.
 
----
+### 19.7 Access Rights
 
-## 19.7 Access Rights
+Preserve source Read/Write access rights.
 
-source가 제공한 Read/Write access rights를 보존한다.
+Expose them unchanged when the frontend can represent them.
 
-Frontend가 이를 표시할 수 있으면 그대로 노출한다.
+Do not infer a new adapter authorization policy from those rights.
 
-단, access rights를 보고 Adapter가 새로운 authorization semantics를 만들지는 않는다.
+## 20. VARIANT and value representation
 
----
+### 20.1 Type preservation
 
-# 20. VARIANT와 값 표현
+A conversion to Go must not discard the source VARTYPE.
 
-## 20.1 원칙
+### 20.2 Scalars first in v0
 
-Go type으로 변환한 뒤 source VARTYPE을 잃어버리는 구현은 금지한다.
+Start with scalar VARTYPEs needed for real-site validation.
 
----
-
-## 20.2 v0 scalar 우선
-
-v0에서는 실제 현장 검증에 필요한 scalar VARTYPE부터 지원한다.
-
-예상 우선순위:
+Expected priority:
 
 - signed/unsigned integer
 - float/double
 - boolean
 - BSTR
-- 필요한 날짜/decimal type
+- Date and decimal types where needed.
 
-지원 범위는 테스트 결과에 따라 명시적으로 관리한다.
+Track the supported set explicitly against test results.
 
----
+### 20.3 Unsupported VARTYPE
 
-## 20.3 Unsupported VARTYPE
-
-지원하지 않는 타입은:
+For an unsupported type, return:
 
 ```text
 UNSUPPORTED_VARTYPE
@@ -1353,15 +1217,13 @@ raw vartype code
 item id
 ```
 
-를 반환한다.
+Keep this an explicit failure.
 
-다른 type으로 변환하지 않는다.
+Do not convert it to a different type.
 
----
+### 20.4 SAFEARRAY
 
-## 20.4 SAFEARRAY
-
-SAFEARRAY를 구현할 때 다음 정보를 잃지 않아야 한다.
+A SAFEARRAY implementation must preserve:
 
 - element VARTYPE
 - dimensions
@@ -1369,23 +1231,21 @@ SAFEARRAY를 구현할 때 다음 정보를 잃지 않아야 한다.
 - length per dimension
 - element values
 
-따라서 “JSON array로 flat하게 만들기”는 허용되지 않는다.
+Flattening an array while discarding its dimensional metadata is prohibited.
 
-v0에서 완전한 SAFEARRAY support가 없다면 명시적으로 unsupported 처리한다.
+If v0 lacks full SAFEARRAY support, return an explicit unsupported result.
 
-DA 계층은 이제 위 다섯 가지를 모두 보존한다. 표현과 그 근거는
-[ADR-0019](adr/0019-safearray-representation.md)가 정하고, element 순서·lower
-bound·frontend별 표현을 포함한다. 검증 상태는
-[implementation status](implementation-status.md)가 따로 기록한다 — 구현했다는
-것이 검증했다는 뜻은 아니며, 검증 전 지원 약속은 이 문서의 non-goal이다.
+The DA layer now preserves all five fields above. Its representation is defined by
+[ADR-0019](adr/0019-safearray-representation.md), including element order,
+lower bounds, and frontend-specific encodings. Validation status is recorded in
+[implementation status](implementation-status.md): implementation alone
+does not establish compatibility, and promising support before validation is a non-goal.
 
----
+### 20.5 COM memory ownership
 
-## 20.5 COM memory ownership
+Ownership is a required review topic for long-running stability.
 
-장시간 안정성을 위해 ownership은 코드 리뷰 핵심 항목이다.
-
-확인 대상:
+Review:
 
 - `IUnknown::Release`
 - `CoTaskMemFree`
@@ -1396,73 +1256,63 @@ bound·frontend별 표현을 포함한다. 검증 상태는
 - returned buffer ownership
 - callback reference counting
 
-COM resource leak은 “GC가 언젠가 정리한다”는 방식으로 처리하지 않는다.
+Do not rely on eventual garbage collection to release COM resources.
 
----
+## 21. Frontend Architecture
 
-# 21. Frontend Architecture
-
-Frontend의 역할:
+Frontend responsibilities:
 
 1. transport request decode
-2. DA-native request로 변환
-3. DA Runtime 호출
-4. DA-native result를 transport representation으로 encode
+2. Convert to a DA-native request.
+3. Call the DA runtime.
+4. Encode the DA-native result for the transport.
 
-Frontend가 하지 않는 것:
+A frontend does not perform:
 
 - source routing
 - data transformation
 - tag mapping
 - tag renaming
 - normalization
-- caching semantics 변경
-- retry semantics 변경
+- Changes to caching semantics.
+- Changes to retry semantics.
 
----
+## 22. Frontend Admission Rule
 
-# 22. Frontend Admission Rule
+A new frontend must meet every condition:
 
-새 Frontend를 추가하기 위한 필수 조건:
+1. Express DA Browse, Read, Write, and Subscribe directly.
+2. Preserve ItemID, VARTYPE, Quality, Timestamp, and HRESULT.
+3. Require no new industrial data model.
+4. Require no persistent process-data storage.
+5. Require no routing or topic semantics.
+6. Retain OPC DA as the only source protocol.
+7. Keep core behavior consistent across frontends.
 
-1. DA Browse/Read/Write/Subscribe를 직접 표현할 수 있다.
-2. ItemID/VARTYPE/Quality/Timestamp/HRESULT를 보존할 수 있다.
-3. 새로운 산업 data model을 요구하지 않는다.
-4. persistent storage를 요구하지 않는다.
-5. routing/topic semantics를 요구하지 않는다.
-6. source가 OPC DA 하나인 구조를 깨지 않는다.
-7. 다른 Frontend와 Core behavior가 달라지지 않는다.
+An extension that fails these conditions belongs in a separate project.
 
-이 조건을 만족하지 못하면 별도 프로젝트다.
+## 23. Frontend scope
 
----
+### 23.1 Approved directions
 
-# 23. Frontend 범위
-
-## 23.1 승인된 방향
-
-제품 방향상 다음 Frontend는 자연스러운 확장 후보다.
+The baseline identifies these access frontends:
 
 - HTTP/JSON
 - gRPC
 - OPC UA
 
----
+### 23.2 Conditional candidates
 
-## 23.2 조건부 후보
-
-실제 요구가 확인될 때만 검토:
+Consider only when an actual requirement exists:
 
 - WebSocket
 - Named Pipe / local IPC
 - XML-DA
 - custom TCP
 
----
+### 23.3 Exclusions
 
-## 23.3 제외
-
-다음은 기본적으로 제외한다.
+Excluded by default:
 
 - MQTT
 - Kafka
@@ -1471,51 +1321,45 @@ Frontend가 하지 않는 것:
 - AMQP
 - event bus
 
-이들은 단순 access transport가 아니라 topic/event/query semantics를 요구하기 쉽기 때문이다.
+These commonly introduce topic, event, or query semantics beyond access transport.
 
----
+## 24. Purpose of v0
 
-# 24. v0의 목적
+v0 is a technical validation release rather than a complete industrial gateway.
 
-v0는 “완성된 산업용 Gateway”가 아니다.
+Its goal is to validate the DA runtime itself.
 
-**DA Runtime 자체의 기술적 검증**이 목적이다.
+Validation questions:
 
-검증 질문:
+- Is direct COM OPC DA access stable from Go?
+- Does Browse work against a real DA server?
+- Is item registration correct?
+- Is batch Read correct?
+- Is Write correct?
+- Is VARTYPE preserved?
+- Are all 16 raw Quality bits preserved?
+- Is the timestamp preserved?
+- Are per-item HRESULTs preserved?
+- Are stale handles rejected after reconnect?
+- How do x86 and x64 behavior differ?
+- Does a long run avoid accumulating COM resource leaks?
 
-- Go에서 direct COM OPC DA 연결이 안정적인가?
-- 실제 DA Server에서 Browse가 되는가?
-- Item registration이 올바른가?
-- Batch Read가 올바른가?
-- Write가 올바른가?
-- VARTYPE이 보존되는가?
-- Quality가 raw 16-bit로 보존되는가?
-- Timestamp가 보존되는가?
-- HRESULT가 item별로 보존되는가?
-- reconnect 후 stale handle이 재사용되지 않는가?
-- x86/x64에서 어떻게 다르게 동작하는가?
-- 장시간 실행 시 COM resource leak이 없는가?
+## 25. v0 Frontend: HTTP/JSON
 
----
+HTTP was selected first because it supports:
 
-# 25. v0 Frontend: HTTP/JSON
+- Immediate checks with curl or Postman.
+- No separate client SDK.
+- No `.proto` or stub generation.
+- Straightforward DA runtime debugging.
+- A small frontend implementation.
+- Human inspection of values, types, quality, and errors.
 
-HTTP를 먼저 선택한 이유:
+This does not make HTTP the permanent primary frontend.
 
-- curl/Postman으로 즉시 검증 가능
-- 별도 client SDK가 필요 없음
-- `.proto`/stub generation 불필요
-- DA Runtime debugging이 쉬움
-- Frontend implementation cost가 작음
-- 값/type/quality/error를 사람이 직접 확인하기 쉬움
+## 26. v0 HTTP API
 
-HTTP가 제품의 “최종 주력 Frontend”라는 의미는 아니다.
-
----
-
-# 26. v0 HTTP API
-
-초기 endpoint:
+Initial endpoints:
 
 ```text
 GET  /v1/status
@@ -1524,21 +1368,19 @@ POST /v1/read
 POST /v1/write
 ```
 
-Subscribe endpoint는 v0에 없다.
+v0 has no Subscribe endpoint.
 
----
+## 27. GET /v1/status
 
-# 27. GET /v1/status
+Purpose:
 
-목적:
-
-- Adapter 상태
-- DA 연결 상태
+- Adapter state.
+- DA connection state.
 - source capability
-- HTTP listener 상태
-- write enable 상태
+- HTTP listener state.
+- Write enablement.
 
-예:
+Example:
 
 ```json
 {
@@ -1564,17 +1406,15 @@ Subscribe endpoint는 v0에 없다.
 }
 ```
 
-process value를 status에 포함하지 않는다.
+Status must not contain process values.
 
----
+## 28. POST /v1/browse
 
-# 28. POST /v1/browse
+### 28.1 Request
 
-## 28.1 Request
+Do not maintain a frontend session's Browse position on the server.
 
-Browse position을 server-side session으로 유지하지 않는다.
-
-Frontend navigation용 path sequence를 request에 전달한다.
+Pass the navigation path sequence in each request.
 
 ```json
 {
@@ -1583,13 +1423,11 @@ Frontend navigation용 path sequence를 request에 전달한다.
 }
 ```
 
-`path=[]`는 root다.
+`path=[]` selects the root.
 
-`path`는 source의 semantic ItemID가 아니라 DA Browse navigation representation이다.
+`path` represents DA Browse navigation, not a semantic ItemID.
 
----
-
-## 28.2 Response
+### 28.2 Response
 
 ```json
 {
@@ -1617,31 +1455,27 @@ Frontend navigation용 path sequence를 request에 전달한다.
 }
 ```
 
-source가 metadata를 제공하지 않는 경우 해당 field는 `null/unknown`으로 둔다.
+Leave unavailable source metadata as `null/unknown`.
 
-값을 추론해 채우지 않는다.
+Do not infer replacement metadata.
 
----
+### 28.3 Browse result limit
 
-## 28.3 Browse result limit
+Bound every Browse response.
 
-Browse response는 반드시 bounded 해야 한다.
-
-v0에서는 continuation을 억지로 구현하기보다 결과가 hard limit을 넘으면 명시적으로 실패할 수 있다.
+v0 may fail explicitly when a result exceeds the hard limit instead of implementing continuation prematurely.
 
 ```text
 BROWSE_RESULT_LIMIT_EXCEEDED
 ```
 
-silent truncation은 금지한다.
+Silent truncation is prohibited.
 
-제품화 과정에서 continuation을 구현할 경우 dynamic source semantics와 COM enumerator lifetime을 고려한 별도 ADR이 필요하다.
+Adding continuation requires a separate ADR covering dynamic source semantics and COM enumerator lifetime.
 
----
+## 29. POST /v1/read
 
-# 29. POST /v1/read
-
-## 29.1 Request
+### 29.1 Request
 
 ```json
 {
@@ -1653,11 +1487,9 @@ silent truncation은 금지한다.
 }
 ```
 
----
+### 29.2 Response
 
-## 29.2 Response
-
-응답의 `results` 순서는 request의 `items` 순서와 대응해야 한다. Adapter가 최적화를 위해 사용자 요청을 임의로 재정렬하거나 실패 item을 제거하지 않는다.
+Keep `results` in request `items` order. Do not reorder requests for optimization or remove failed items.
 
 ```json
 {
@@ -1691,15 +1523,13 @@ silent truncation은 금지한다.
 }
 ```
 
-숫자는 예시일 뿐 특정 HRESULT를 contract로 고정하지 않는다.
+These numbers are examples, not a promise of a particular HRESULT.
 
----
+## 30. JSON Value Encoding
 
-# 30. JSON Value Encoding
+JSON cannot represent every COM VARIANT losslessly without an encoding contract.
 
-JSON은 COM VARIANT의 모든 값을 자연스럽게 lossless 표현하지 못한다.
-
-따라서 transport representation rule을 명시한다.
+Use explicit transport representation rules:
 
 | DA type class | JSON representation |
 |---|---|
@@ -1707,22 +1537,20 @@ JSON은 COM VARIANT의 모든 값을 자연스럽게 lossless 표현하지 못�
 | I1/UI1/I2/UI2/I4/UI4 | JSON integer |
 | I8/UI8 | decimal string |
 | R4/R8 finite | JSON number |
-| R4/R8 NaN/Inf | explicit special-float encoding 또는 unsupported until implemented |
+| R4/R8 NaN/Inf | explicit special-float encoding or unsupported until implemented |
 | BSTR | JSON string |
 | DECIMAL | exact decimal string |
-| DATE | explicit OLE DATE representation 또는 명시적 supported mapping |
+| DATE | explicit OLE DATE representation or an explicitly supported mapping |
 | SAFEARRAY | v0 unsupported unless full dimensional metadata preserved |
 | unknown/custom | explicit unsupported |
 
-핵심:
+Rule:
 
-> JSON 편의를 위해 source type을 다른 type으로 강제 변환하지 않는다.
+> Do not coerce a source type merely to make JSON encoding convenient.
 
----
+## 31. POST /v1/write
 
-# 31. POST /v1/write
-
-## 31.1 Request
+### 31.1 Request
 
 ```json
 {
@@ -1737,11 +1565,9 @@ JSON은 COM VARIANT의 모든 값을 자연스럽게 lossless 표현하지 못�
 }
 ```
 
----
+### 31.2 Response
 
-## 31.2 Response
-
-Write 결과 역시 request item과 대응 가능한 순서를 유지한다. Adapter는 처리량을 위해 Write를 임의 재정렬하거나 서로 다른 request의 Write를 의미적으로 병합하지 않는다.
+Keep Write results in request order. Do not reorder Writes for throughput or semantically merge Writes from separate requests.
 
 ```json
 {
@@ -1758,122 +1584,104 @@ Write 결과 역시 request item과 대응 가능한 순서를 유지한다. Ada
 }
 ```
 
----
+### 31.3 Write disabled
 
-## 31.3 Write disabled
+When Write is disabled, do not forward the request to the source.
 
-write가 비활성화되어 있다면 request를 source에 전달하지 않는다.
-
-예:
+Example:
 
 ```text
 HTTP 403
 WRITE_DISABLED
 ```
 
----
+## 32. HTTP Error Boundary
 
-# 32. HTTP Error Boundary
+### 32.1 Request-level failure
 
-## 32.1 Request-level failure
-
-예:
+Example:
 
 - malformed JSON
 - invalid schema
-- batch size limit 초과
+- A batch exceeding the item limit.
 - Adapter not ready
 - write disabled
 - internal runtime unavailable
 
-이 경우 HTTP status로 표현한다.
+Represent these as HTTP status failures.
 
----
+### 32.2 Item-level failure
 
-## 32.2 Item-level failure
-
-DA가 특정 item만 실패시킨 경우:
+If DA rejects only particular items:
 
 ```text
-HTTP request 자체는 성공적으로 처리
+HTTP request handled successfully
 +
-results[] item별 ok/hresult
+results[] retains each item's ok/hresult
 ```
 
-partial failure를 generic 500으로 숨기지 않는다.
+Do not hide a partial failure behind a generic 500.
 
----
+### 32.3 Suggested HTTP statuses
 
-## 32.3 권장 HTTP status
-
-| 상황 | Status |
+| Condition | Status |
 |---|---:|
-| 정상 batch/partial item failure | 200 |
+| Handled batch, including partial item failure | 200 |
 | malformed request | 400 |
 | write disabled | 403 |
-| source capability상 Browse 불가 | 422 |
+| Source does not support Browse | 422 |
 | DA Runtime disconnected/unavailable | 503 |
 | Adapter-level request deadline | 504 |
-| 구현 bug/unexpected internal failure | 500 |
+| Implementation bug or unexpected internal failure | 500 |
 
-정확한 error body schema는 구현 시 고정하되 DA HRESULT와 Adapter error를 구분한다.
+Finalize the error body during implementation, keeping DA HRESULTs distinct from adapter errors.
 
----
+## 33. Timeouts and cancellation
 
-# 33. Timeout과 Cancellation
+### 33.1 HTTP disconnect != COM call cancellation
 
-## 33.1 HTTP disconnect != COM call cancellation
+Do not kill the COM thread when an HTTP client disconnects during a synchronous COM call.
 
-sync COM method가 이미 실행 중일 때 HTTP client가 연결을 끊었다고 COM thread를 강제로 죽이지 않는다.
-
-금지:
+Forbidden:
 
 - `TerminateThread`
 - unsafe COM object destruction
-- 성공 여부가 불명확한 Write 강제 중단
+- Forcibly interrupting a Write whose outcome is unknown.
 
----
+### 33.2 queued request
 
-## 33.2 queued request
+Context cancellation may remove a request that has not started on the COM thread.
 
-아직 COM thread에서 시작되지 않은 요청은 context cancellation로 제거할 수 있다.
+### 33.3 in-flight request
 
----
+For an in-flight COM call:
 
-## 33.3 in-flight request
+- The runtime may wait for the result.
+- The frontend deadline may expire first.
+- The response may be discarded for that client.
+- Write is never retried automatically.
 
-이미 COM call이 실행 중이라면:
+### 33.4 COM hang
 
-- 결과를 기다리거나
-- frontend deadline은 먼저 끝날 수 있다.
-- 결과는 client에게 버려질 수 있다.
-- Write는 자동 재시도하지 않는다.
+A vendor COM call that blocks indefinitely is an operational risk.
 
----
+v0 must not claim recovery by forcibly terminating its thread.
 
-## 33.4 COM hang
+Possible policy:
 
-COM call 자체가 무한 block되는 vendor failure는 중요한 운영 위험이다.
+- Mark the runtime degraded through a watchdog.
+- Fail new requests immediately.
+- Require an operator to restart the process.
 
-v0에서는 thread 강제 종료로 “복구한 척”하지 않는다.
+Hard isolation through a DA runtime subprocess needs a separate design and is outside v0.
 
-가능한 정책:
+## 34. gRPC Frontend — Phase 6
 
-- watchdog으로 degraded 상태 표시
-- 신규 요청 fail-fast
-- 운영자가 process restart
-
-향후 hard isolation이 필요하다면 DA Runtime subprocess 분리를 별도 설계로 검토할 수 있으나 v0 범위가 아니다.
-
----
-
-# 34. gRPC Frontend — Phase 6
-
-gRPC의 목적:
+gRPC supports:
 
 - typed client API
-- Go/Java/.NET 등 서비스 연동
-- 향후 Subscribe의 server streaming
+- Go, Java, and .NET service integration.
+- Later server streaming for Subscribe.
 
 Phase 6 unary service:
 
@@ -1884,12 +1692,12 @@ Read
 Write
 ```
 
-Subscribe와 server stream은 Phase 6에 포함하지 않는다. DA callback core를
-먼저 구현하고 검증한 뒤 별도 Phase에서 추가한다.
+Phase 6 excludes Subscribe and server streaming. Add them in a later phase
+after the DA callback core is implemented and validated.
 
-protobuf도 DA-native field를 유지한다.
+Protobuf retains DA-native fields.
 
-예:
+Example:
 
 ```text
 item_id
@@ -1901,15 +1709,13 @@ hresult
 typed value
 ```
 
-Asset/Metric protobuf 모델을 만들지 않는다.
+Do not introduce Asset/Metric protobuf models.
 
----
+## 35. OPC UA frontend
 
-# 35. OPC UA Frontend (구현됨, `SecurityPolicy None` 한정; 아래는 설계 시점의 기준)
+OPC UA is one of the adapter's access frontends.
 
-OPC UA Frontend는 Access Adapter의 여러 Frontend 중 하나다.
-
-구조:
+Structure:
 
 ```text
 Existing OPC DA Server
@@ -1926,45 +1732,39 @@ Existing OPC DA Server
 Existing UA Client
 ```
 
----
+### 35.1 Roles
 
-## 35.1 역할
+The adapter acts as a UA server on the UA side.
 
-Adapter는 UA side에서 **UA Server** 역할을 한다.
+It acts as a DA client on the DA side.
 
-DA side에서는 **DA Client** 역할을 한다.
+### 35.2 Address Space
 
----
-
-## 35.2 Address Space
-
-기본 mapping:
+Default mapping:
 
 ```text
 DA Branch -> UA Folder/Object
 DA Item   -> UA Variable
 ```
 
-Item identity는 exact DA ItemID를 기준으로 한다.
+Use the exact DA ItemID as item identity.
 
-DA Browse path를 ItemID라고 가정하지 않는다. DA Server의 delimiter를 추측해서 ItemID를 재구성하지도 않는다.
+Do not treat Browse paths as ItemIDs or reconstruct ItemIDs by guessing a vendor delimiter.
 
-UA identity 규칙:
+UA identity rules:
 
-- Namespace URI는 Adapter가 안정적으로 유지한다.
-- `ns=2` 같은 Namespace Index 숫자를 persistent identity로 간주하지 않는다.
-- Item node의 NodeId는 가능한 한 exact DA ItemID와 직접 대응시킨다.
-- Branch는 source가 stable identity를 제공하면 그것을 우선하고, 그렇지 않으면 navigation representation을 사용한다.
-- BrowseName/DisplayName은 DA Browse가 제공한 이름을 우선 사용한다.
-- 사용 편의를 위해 tag 이름을 임의로 정리하거나 `.`/공백을 `_`로 치환하지 않는다.
+- Keep the namespace URI stable.
+- Do not use a namespace index such as `ns=2` as persistent identity.
+- Map an item NodeId directly to its exact DA ItemID where possible.
+- Prefer a source-supplied stable branch identity; otherwise use a navigation representation.
+- Prefer BrowseName and DisplayName values supplied by DA Browse.
+- Do not rename tags or replace dots and spaces with underscores for convenience.
 
----
+### 35.3 Standard mapping
 
-## 35.3 표준 mapping
+Use the COM DA mapping in OPC UA Part 8.
 
-OPC UA Part 8의 COM DA mapping을 기준으로 representation한다.
-
-예:
+Example:
 
 ```text
 VT_I2 -> Int16
@@ -1992,23 +1792,19 @@ HRESULT:
 DA error -> UA StatusCode
 ```
 
----
+### 35.4 Quality vendor bits
 
-## 35.4 Quality vendor bits
+The core preserves the vendor-specific upper byte of DA Quality.
 
-DA Quality의 upper 8 bit vendor-specific 부분은 Core에서는 보존한다.
+The standard COM DA-to-UA mapping may not preserve that byte in a UA StatusCode.
 
-그러나 표준 COM DA→UA mapping에서는 vendor quality가 UA StatusCode로 완전히 보존되지 않을 수 있다.
+Follow the standard mapping; do not invent a custom UA property solely to carry raw Quality.
 
-UA Frontend는 표준 mapping을 따르며, 단지 raw quality를 보존하기 위해 임의의 custom UA property를 추가하지 않는다.
+Document this loss.
 
-이 손실은 documentation에 기록한다.
+### 35.5 UA implementation scope
 
----
-
-## 35.5 UA 구현 범위
-
-처음 UA Frontend를 구현할 때 최소 vertical slice:
+The initial UA vertical slice includes:
 
 - UA-TCP Hello/Acknowledge
 - message framing/chunking
@@ -2021,17 +1817,17 @@ UA Frontend는 표준 mapping을 따르며, 단지 raw quality를 보존하기 �
 - Read
 - Write
 
-Subscribe가 DA Runtime에 추가된 후:
+After Subscribe is implemented in the DA runtime, add:
 
 - Subscription
 - MonitoredItem
 - Publish
 
-를 추가한다.
+These build on the DA subscription core.
 
-UA ServerTimestamp가 필요한 경우 Adapter가 해당 operation을 처리한 시간을 사용할 수 있으나, 이것을 DA SourceTimestamp와 혼동하지 않는다. DA Timestamp는 SourceTimestamp의 source of truth다.
+If a UA ServerTimestamp is needed, it may use the operation's adapter processing time. Keep it distinct from SourceTimestamp, whose authority is the DA timestamp.
 
-직접 UA wire parser를 구현하는 경우 다음은 필수다.
+A directly implemented UA wire parser must enforce:
 
 - max message size
 - max chunk count
@@ -2039,85 +1835,73 @@ UA ServerTimestamp가 필요한 경우 Adapter가 해당 operation을 처리한 
 - max string/ByteString length
 - max nesting/decode depth
 - max sessions/subscriptions/monitored items
-- malformed packet 처리
-- integer overflow/length overflow 방지
+- Malformed-packet handling.
+- Integer and length overflow protection.
 - fuzz test
 
-직접 구현한다는 이유로 UA protocol validation을 느슨하게 하지 않는다.
+Direct implementation does not justify weaker UA protocol validation.
 
----
+### 35.6 UA security
 
-## 35.6 UA security
+An initial interoperability prototype may use `SecurityPolicy=None + Anonymous`, subject to:
 
-초기 interop prototype에서 `SecurityPolicy=None + Anonymous`를 사용할 수는 있으나:
+- Local and test use only.
+- No production-readiness claim.
+- Certificate lifecycle and secure policies before a real production release.
 
-- local/test 전용
-- production-ready라고 표현 금지
-- 첫 실제 운영 릴리스 전에 certificate lifecycle과 secure policy 필요
+### 35.7 Conformance claim
 
----
-
-## 35.7 Conformance claim
-
-공식 인증을 받지 않은 상태에서 다음 표현을 사용하지 않는다.
+Without official certification, do not claim:
 
 - OPC UA Certified
 - OPC UA Compliant
 - OPC Foundation Certified
 
-또한 구현한 subset이 제한되어 있는 동안 README에서 “모든 OPC UA Client와 호환된다”는 식으로 일반화하지 않는다.
+Do not claim compatibility with every UA client while only a limited subset is implemented.
 
-대신 구현한 subset과 실제 interoperability test 결과를 명확히 기록한다. OPC Foundation의 로고나 인증 마크를 임의의 프로젝트 배지처럼 사용하지 않는다.
+Describe the implemented subset and executed interoperability results. Do not use the OPC Foundation logo or certification marks as project badges.
 
----
+## 36. Security Model
 
-# 36. Security Model
+### 36.1 Network exposure
 
-## 36.1 새로운 network attack surface
+An existing DA deployment may have used local COM only.
 
-DA는 기존에는 local COM으로만 사용되었을 수 있다.
+Opening HTTP, gRPC, or UA adds a network attack surface.
 
-Adapter가 HTTP/gRPC/UA를 열면 새로운 network attack surface가 생긴다.
+A relay still requires a security boundary.
 
-따라서 “단순 relay니까 보안이 중요하지 않다”는 판단은 금지한다.
+### 36.2 v0 HTTP
 
----
+The v0 HTTP frontend exists to validate DA access.
 
-## 36.2 v0 HTTP
+Default policy:
 
-v0는 DA 검증 목적이다.
+- Bind to loopback by default.
+- Require explicit configuration for a remote bind.
+- Disable Write by default.
+- Make no production security claim.
 
-기본 정책:
+### 36.3 Remote exposure
 
-- loopback bind가 기본
-- remote bind는 명시적 설정
-- write disabled가 기본
-- production security claim 없음
-
----
-
-## 36.3 Remote exposure
-
-향후 remote network 사용 시 다음이 필요하다.
+Later remote network use requires:
 
 - TLS
-- authentication 전략
+- An authentication strategy.
 - request limits
 - connection limits
 - audit/logging boundary
 - write authorization boundary
 
-단, RBAC platform으로 확장하지 않는다.
+Do not expand this into an RBAC platform.
 
-정확한 authentication mechanism은 별도 ADR로 결정한다.
+Choose the authentication mechanism through a separate ADR.
 
----
+## 37. Resource Limits
 
-# 37. Resource Limits
+Direct protocol and COM handling requires hard resource limits.
 
-직접 protocol/COM 데이터를 다루므로 hard limit가 필요하다.
-
-반드시 bounded 해야 하는 항목:
+Bound the following:
 
 - HTTP request body size
 - items per Read batch
@@ -2132,17 +1916,15 @@ v0는 DA 검증 목적이다.
 - recent diagnostic operations
 - log size/rotation
 
-정확한 default는 benchmark와 실제 server 검증 후 결정한다.
+Choose defaults after benchmarks and real-server validation.
 
-**무제한을 default로 두지 않는다.**
+Never use unlimited as the default.
 
----
+## 38. Observability
 
-# 38. Observability
+Observability describes adapter operation, not process-data analysis.
 
-관찰 기능의 목적은 Adapter 동작 확인이지 process data 분석이 아니다.
-
-허용:
+Allowed:
 
 - DA connection state
 - connection generation
@@ -2154,7 +1936,7 @@ v0는 DA 검증 목적이다.
 - operation latency
 - bounded recent operation metadata
 
-금지:
+Forbidden:
 
 - value trend chart
 - historian
@@ -2163,13 +1945,11 @@ v0는 DA 검증 목적이다.
 - process dashboard
 - persisted telemetry
 
----
+## 39. Logging
 
-# 39. Logging
+Default logs must not contain process values.
 
-기본 log에는 process value를 남기지 않는다.
-
-권장 log field:
+Suggested log fields:
 
 ```text
 timestamp
@@ -2182,24 +1962,22 @@ hresult
 connection_generation
 ```
 
-ItemID도 운영 환경에서 민감할 수 있으므로 verbose/debug policy를 별도로 검토한다.
+ItemIDs may also be sensitive; review verbose and debug policies separately.
 
-Write value를 평문 log로 남기지 않는다.
+Never put Write values in plaintext logs.
 
----
+## 40. Persistence
 
-# 40. Persistence
+No process-data state needs restoration after a restart.
 
-프로세스 재시작 후 복원해야 하는 process state는 없다.
-
-가능한 persistent file:
+Permitted persistent files:
 
 - config
 - logs
-- certificate/key (secure frontend 도입 후)
+- Certificates and keys, after a secure frontend is introduced.
 - compatibility/test artifact
 
-금지:
+Forbidden:
 
 - cached values
 - tag DB
@@ -2207,13 +1985,11 @@ Write value를 평문 log로 남기지 않는다.
 - write queue replay log
 - historian
 
-특히 Write를 재시작 후 replay하지 않는다.
+Never replay a Write after restart.
 
----
+## 41. Configuration
 
-# 41. Configuration
-
-v0 config의 핵심:
+Core v0 settings:
 
 ```text
 source ProgID/CLSID
@@ -2224,12 +2000,12 @@ resource limits
 logging
 ```
 
-환경변수 기반 foreground 실행 외에 guided setup이 생성하는 bounded,
-versioned configuration file을 사용할 수 있다. File-based 실행은 ambient
-environment를 merge하지 않으며 정확히 하나의 source와 하나의 HTTP
-frontend만 포함한다. 기존 파일은 암묵적으로 overwrite하지 않는다.
+Alongside environment-based foreground execution, guided setup may write a bounded,
+versioned configuration file. File execution does not merge the ambient
+environment and names exactly one source and one HTTP
+frontend. Never overwrite an existing file implicitly.
 
-금지되는 config:
+Prohibited configuration:
 
 ```text
 tag mapping table
@@ -2240,35 +2016,31 @@ asset model
 multi-server routing
 ```
 
----
+## 42. Server Discovery
 
-# 42. Server Discovery
+Bounded detection may inspect registrations in the local DA 2.0 component category
+for setup convenience. It returns candidate registrations only;
+it neither activates vendor servers nor guarantees connectivity.
 
-로컬 DA 2.0 component category 등록을 조회하는 bounded detection은
-convenience 기능으로 제공할 수 있다. Detection은 등록 후보를 반환할 뿐
-vendor server를 활성화하거나 연결 가능성을 보증하지 않는다.
+Runtime execution still requires an explicit ProgID or CLSID. Never auto-select
+a sole candidate or connect several candidates to one runtime.
 
-Adapter 실행에는 계속 ProgID 또는 CLSID를 명시한다. 후보가 하나여도
-자동 선택하지 않으며, 여러 후보를 하나의 runtime으로 연결하지 않는다.
+Detection:
 
-Detection은:
+- Does not change runtime architecture.
+- Is a local CLI operation, not an HTTP endpoint.
+- Returns local registration metadata only.
+- Does not perform remote DCOM discovery.
 
-- runtime architecture를 바꾸지 않음
-- HTTP endpoint가 아닌 local CLI operation임
-- local registration metadata만 반환함
-- remote DCOM discovery로 확장하지 않음
+Guided setup requires an explicit operator choice even for one candidate.
+It records the exact selected CLSID in configuration and never activates
+a candidate during detection.
 
-Guided setup은 detection 결과가 하나여도 operator의 명시적 선택을
-요구한다. 선택 결과는 exact CLSID로 configuration에 고정되며 detection
-단계에서 candidate를 activate하지 않는다.
+## 43. Concurrency
 
----
+Frontends may accept concurrent requests.
 
-# 43. Concurrency
-
-Frontend는 concurrent request를 받을 수 있다.
-
-하지만 COM side는 초기에는 직렬 실행한다.
+The initial COM side executes them serially.
 
 ```text
 many HTTP requests
@@ -2280,37 +2052,33 @@ bounded queue
 single DA runtime OS thread
 ```
 
-장점:
+Benefits:
 
 - apartment correctness
-- Browse position 안전
-- handle lifecycle 단순
-- vendor compatibility 우선
-- race condition 최소화
+- Safe Browse position handling.
+- Simpler handle lifetimes.
+- Vendor compatibility first.
+- Fewer race conditions.
 
-성능 문제가 실제 측정되기 전에는 parallel COM access로 확장하지 않는다.
+Do not parallelize COM access until measurements establish a need.
 
----
+## 44. Backpressure
 
-# 44. Backpressure
+Bound the DA command queue.
 
-DA command queue는 bounded 해야 한다.
+When it is full:
 
-queue가 가득 차면:
+- Do not wait indefinitely.
+- Do not grow memory without a limit.
+- Return overload or unavailable to the frontend.
 
-- 무한 대기 금지
-- memory unbounded growth 금지
-- frontend에 overload/unavailable 응답
+Do not silently drop Read or Write requests.
 
-Read/Write 요청을 임의 drop하지 않는다.
+## 45. Consistent frontend semantics
 
----
+HTTP, gRPC, and UA implementations share one source behavior.
 
-# 45. Frontend 간 일관성
-
-향후 HTTP, gRPC, UA가 동시에 존재할 때도 source behavior는 하나다.
-
-금지:
+Forbidden:
 
 ```text
 HTTP -> cached read
@@ -2318,29 +2086,25 @@ gRPC -> device read
 UA -> custom normalized value
 ```
 
-각 Frontend가 다른 semantic path를 가져서는 안 된다.
+Frontends must not choose different semantic paths implicitly.
 
-옵션이 존재한다면 DA-native option으로 명시적으로 요청되어야 한다.
+Any selectable behavior must be requested explicitly as a DA-native option.
 
----
+## 46. Failure Model
 
-# 46. Failure Model
+Keep three failure layers separate.
 
-오류는 세 층으로 구분한다.
+### 46.1 Transport/Frontend error
 
-## 46.1 Transport/Frontend error
-
-예:
+Example:
 
 - malformed JSON
 - invalid protobuf
 - UA decoding error
 
----
+### 46.2 Adapter/Runtime error
 
-## 46.2 Adapter/Runtime error
-
-예:
+Example:
 
 - queue full
 - runtime stopped
@@ -2349,11 +2113,9 @@ UA -> custom normalized value
 - write disabled
 - timeout
 
----
+### 46.3 DA source error
 
-## 46.3 DA source error
-
-예:
+Example:
 
 - COM activation failure
 - method HRESULT failure
@@ -2363,15 +2125,13 @@ UA -> custom normalized value
 - bad rights
 - server disconnected
 
-이 세 층을 하나의 generic error로 합치지 않는다.
+Do not merge them into one generic error.
 
----
+## 47. Stale Data Policy
 
-# 47. Stale Data Policy
+After disconnect, do not return a saved result from an earlier Read.
 
-연결이 끊겼을 때 이전 Read 결과를 저장해두었다가 반환하지 않는다.
-
-금지:
+Forbidden:
 
 ```text
 DA disconnected
@@ -2379,7 +2139,7 @@ DA disconnected
 return last value as Good
 ```
 
-대신:
+Instead:
 
 ```text
 DA disconnected
@@ -2387,13 +2147,11 @@ DA disconnected
 explicit unavailable/error
 ```
 
-필요하다면 이전 값은 observability/debug context로만 존재할 수 있으며 정상 Read 결과로 사용하지 않는다.
+A previous value may exist only in an observability or debugging context, never as a successful current Read.
 
----
+## 48. Correctness requirements
 
-# 48. Correctness 원칙
-
-다음은 성능보다 우선한다.
+These take priority over performance:
 
 - exact ItemID
 - exact VARTYPE
@@ -2405,11 +2163,9 @@ explicit unavailable/error
 - ownership correctness
 - reconnect generation correctness
 
----
+## 49. Performance priorities
 
-# 49. 성능 원칙
-
-성능 최적화는 다음 순서를 따른다.
+Optimize in this order:
 
 1. correctness
 2. interoperability
@@ -2418,19 +2174,17 @@ explicit unavailable/error
 5. handle reuse
 6. bounded cache
 7. profiling
-8. 필요 시 concurrency
+8. Concurrency, if needed.
 
-처음부터 복수 COM thread나 complicated lock-free 구조를 만들지 않는다.
+Do not begin with multiple COM threads or complicated lock-free structures.
 
----
+## 50. Test strategy
 
-# 50. 테스트 전략
+### 50.1 Unit Test
 
-## 50.1 Unit Test
+Required unit coverage:
 
-필수 대상:
-
-- HRESULT success/failure 판단
+- HRESULT success and failure semantics.
 - HRESULT hex/decimal representation
 - VARTYPE parsing
 - numeric overflow detection
@@ -2444,9 +2198,7 @@ explicit unavailable/error
 - queue backpressure
 - unsupported VARTYPE
 
----
-
-## 50.2 COM marshalling test
+### 50.2 COM marshalling test
 
 Windows-specific test:
 
@@ -2459,13 +2211,11 @@ Windows-specific test:
 - interface Release
 - CoTaskMem memory
 
----
+### 50.3 Integration Test
 
-## 50.3 Integration Test
+Run integration tests against a real DA server.
 
-실제 DA Server에서 검증한다.
-
-최소 시나리오:
+Minimum scenarios:
 
 - connect
 - disconnect
@@ -2482,56 +2232,48 @@ Windows-specific test:
 - server restart
 - stale handle invalidation
 
----
+### 50.4 Architecture coverage
 
-## 50.4 Architecture별 test
-
-다음 조합을 별도로 확인한다.
+Validate each target separately:
 
 ```text
 windows/386
 windows/amd64
 ```
 
----
+### 50.5 Vendor Compatibility
 
-## 50.5 Vendor Compatibility
+Use different server implementations where possible.
 
-가능하다면 서로 다른 구현을 사용한다.
-
-예시 후보:
+Example candidates:
 
 - Matrikon simulation/server
 - Kepware
-- 실제 legacy vendor server
+- Real legacy vendor servers.
 
-특정 vendor 한 개에서 성공했다고 “OPC DA compatible”을 일반화하지 않는다.
+A pass against one vendor must not become a general OPC DA compatibility claim.
 
----
+### 50.6 Soak Test
 
-## 50.6 Soak Test
-
-장시간 테스트에서 확인:
+Observe during a long-running test:
 
 - process memory
-- COM reference count 추정 지표
+- Indicators of COM reference-count behavior.
 - handle count
 - goroutine count
 - queue growth
-- reconnect 반복
+- Repeated reconnects.
 - repeated Browse
 - repeated Add/Remove item
 - repeated Write
 
-목표는 단순 “크래시 없음”이 아니라 **증가가 계속되는 resource leak이 없는지** 확인하는 것이다.
+Verify that resources stop growing; absence of a crash alone is insufficient.
 
----
+## 51. HTTP Acceptance Test
 
-# 51. HTTP Acceptance Test
+The minimum flow must be testable with curl or Postman.
 
-curl/Postman만으로 최소 검증 가능해야 한다.
-
-예:
+Example:
 
 ```text
 1. status
@@ -2549,30 +2291,26 @@ curl/Postman만으로 최소 검증 가능해야 한다.
 13. read -> success
 ```
 
----
+## 52. Compatibility Matrix
 
-# 52. Compatibility Matrix
+Record executed results in the repository.
 
-Repository에는 실제 검증 결과를 기록한다.
-
-예:
+Example:
 
 | DA Server | Version | Windows | Adapter Arch | Browse | Read | Write | Notes |
 |---|---|---|---|---|---|---|---|
 | Matrikon ... | ... | ... | amd64 | PASS | PASS | PASS | ... |
 
-향후 Frontend:
+For later frontends:
 
 | Client | Version | Frontend | Browse | Read | Write | Subscribe |
 |---|---|---|---|---|---|---|
 
-“지원”은 추측이 아니라 실제 검증 결과로 관리한다.
+Support claims require executed evidence rather than inference.
 
----
+## 53. CI
 
-# 53. CI
-
-초기 CI:
+Initial CI:
 
 ```text
 gofmt check
@@ -2583,41 +2321,37 @@ windows/386 build
 windows/amd64 build
 ```
 
-COM integration test는 일반 GitHub-hosted runner에서 실제 DA Server가 없을 수 있으므로 별도 환경 또는 self-hosted test가 필요할 수 있다.
+A hosted runner may lack a DA server; COM integration can require a separately provisioned or self-hosted environment.
 
-단순 cross-build 성공을 DA interoperability 검증으로 간주하지 않는다.
+A successful cross-build is not DA interoperability evidence.
 
----
+## 54. Release
 
-# 54. Release
-
-장기적으로 목표:
+Longer-term distribution goals:
 
 - windows/386 binary
 - windows/amd64 binary
 - checksums
 - version metadata
 - changelog/release notes
-- reproducible build에 가까운 절차
+- A build procedure approaching reproducibility.
 
-단일 binary는 foreground 실행과 SCM service dispatcher를 함께 제공한다.
-Guided setup의 background 선택은 detached child process가 아니라 실제
-Windows Service를 명시적으로 install/start한다.
+One executable provides foreground operation and an SCM service dispatcher.
+Guided background setup explicitly installs and starts a Windows Service,
+not a detached child process.
 
-Service는 LocalService identity, automatic start, SCM Stop/Shutdown,
-bounded graceful shutdown을 사용한다. AppID/DCOM permission이나 RunAs를
-자동 변경하지 않으며 service name 하나당 configuration/source 하나만
-소유한다. 세부 결정은 ADR-0011을 따른다.
+The service uses LocalService, automatic startup, SCM Stop/Shutdown, and
+bounded graceful shutdown. It does not change AppID/DCOM permissions or RunAs
+automatically. Each service name owns one configuration and source.
+ADR-0011 records the details.
 
----
+## 55. UI
 
-# 55. UI
+v0 has no GUI.
 
-v0에 GUI는 없다.
+Any later operational UI must retain a narrow scope.
 
-향후 운영 UI를 만들더라도 범위는 제한한다.
-
-허용:
+Allowed:
 
 - connection state
 - listener state
@@ -2625,7 +2359,7 @@ v0에 GUI는 없다.
 - config status
 - recent operation metadata
 
-금지:
+Forbidden:
 
 - value dashboard
 - trend
@@ -2634,126 +2368,112 @@ v0에 GUI는 없다.
 - alarm
 - control panel
 
----
+## 56. Open-source policy
 
-# 56. OSS 정책
+Publish the project in a public GitHub repository.
 
-프로젝트는 GitHub public open-source repository로 공개한다.
-
-초기 repository 후보:
+Initial repository-name candidate:
 
 ```text
 opc-da-access-adapter
 ```
 
-표시명:
+Display name:
 
 ```text
 OPC DA Access Adapter
 ```
 
-설명 예:
+Example description:
 
 > A thin access adapter for exposing OPC DA through modern interfaces without changing source semantics.
 
----
+## 57. License
 
-# 57. License
+The baseline leaves the open-source license for an explicit final decision.
 
-오픈소스 license는 최종 확정이 필요하다.
-
-현재 권장 후보:
+Recommended candidate at that point:
 
 ```text
 Apache License 2.0
 ```
 
-그러나 이것은 아직 최종 결정으로 간주하지 않는다.
+This recommendation is not itself a final license decision.
 
-Repository 생성 시 license를 명시적으로 확정한다.
+Choose the license explicitly when creating the repository.
 
----
+## 58. Reusing existing projects
 
-# 58. 기존 프로젝트 코드 사용 정책
-
-기존 OSS는 다음 목적으로 활용할 수 있다.
+Existing open-source projects may be used for:
 
 - behavior reference
 - interoperability comparison
 - bug/edge-case discovery
 - client/server test target
 
-기존 코드를 가져올 경우 반드시 개별 license와 attribution을 확인한다.
+Check the individual license and attribution requirements before copying code.
 
-이 프로젝트가 direct implementation을 지향한다는 이유로 license 의무가 사라지지 않는다.
+Direct implementation does not remove license obligations.
 
-공식 specification 문서를 repository에 복제하지 않는다.
+Do not copy official specification documents into this repository.
 
----
+## 59. Product value
 
-# 59. 프로젝트의 차별점
+The number of frontends is not the product's value.
 
-이 프로젝트의 가치는 “Frontend 개수가 많다”가 아니다.
+The intended benefits are:
 
-핵심 가치 후보:
-
-1. OPC DA source 하나에만 집중
+1. Focus on one OPC DA source protocol.
 2. DA-native semantics preservation
-3. 별도 common industrial model 없음
-4. Tag mapping 없음
-5. Data transformation 없음
-6. 작은 deployment
+3. No separate common industrial model.
+4. No tag mapping.
+5. No data transformation.
+6. A small deployment.
 7. direct DA Runtime
-8. Frontend가 DA capability를 그대로 노출
-9. 실제 vendor compatibility를 공개 검증
+8. Frontends that expose native DA capabilities.
+9. Publicly recorded vendor compatibility results.
 
----
+## 60. Gateway boundary
 
-# 60. Gateway와의 경계
-
-Gateway가 되어가는 징후:
+These proposals indicate gateway scope:
 
 ```text
-"Modbus도 넣자"
-"서버 여러 개를 하나로 묶자"
-"tag 이름 바꾸자"
-"unit convert 하자"
-"MQTT도 publish 하자"
-"DB에 저장하자"
-"asset model 만들자"
-"rule도 넣자"
+"Add Modbus"
+"Aggregate several servers"
+"Rename tags"
+"Convert units"
+"Publish to MQTT"
+"Store values in a database"
+"Add an asset model"
+"Add rules"
 ```
 
-이 중 하나라도 제안되면 먼저 다음 질문을 해야 한다.
+For each such proposal, ask:
 
-> 이것이 OPC DA에 접근하는 방법을 제공하기 위해 반드시 필요한가?
+> Is this required to provide access to OPC DA?
 
-아니라면 scope 밖이다.
+If not, it is outside scope.
 
----
+## 61. Feature admission test
 
-# 61. 기능 추가 Decision Test
+Before adding a feature, confirm every condition:
 
-새 기능을 넣기 전에 다음을 모두 확인한다.
+1. Is OPC DA still the only source protocol?
+2. Are source data semantics unchanged?
+3. Does it correspond directly to a DA capability?
+4. Does it avoid persistent process data?
+5. Does it avoid routing and aggregation?
+6. Does it avoid a common model?
+7. Does it preserve existing frontend semantics?
+8. Is there an actual user requirement?
 
-1. Source는 여전히 OPC DA 하나인가?
-2. source data의 의미를 바꾸지 않는가?
-3. DA capability에 직접 대응하는가?
-4. persistent process data를 요구하지 않는가?
-5. routing/aggregation을 요구하지 않는가?
-6. common model을 만들지 않는가?
-7. 기존 Frontend의 semantics를 바꾸지 않는가?
-8. 실제 사용자 요구가 존재하는가?
+A clear failure means a separate project or rejection.
 
-하나라도 명확히 실패하면 별도 프로젝트 또는 NO-GO다.
+## 62. Implementation phases
 
----
+### Phase 0 — Repository / Skeleton
 
-# 62. 단계별 구현 계획
-
-## Phase 0 — Repository / Skeleton
-
-목표:
+Goals:
 
 - OSS repository
 - Go module
@@ -2763,15 +2483,13 @@ Gateway가 되어가는 징후:
 - empty DA Runtime lifecycle
 - HTTP status endpoint
 
-구현하지 않음:
+Excluded:
 
 - fake data production behavior
 
----
+### Phase 1 — COM Foundation
 
-## Phase 1 — COM Foundation
-
-목표:
+Goals:
 
 - dedicated OS thread
 - COM init/uninit
@@ -2782,14 +2500,12 @@ Gateway가 되어가는 징후:
 
 Acceptance:
 
-- repeated start/stop leak 확인
+- Check for leaks across repeated start/stop cycles.
 - x86/x64 build
 
----
+### Phase 2 — DA Read Core
 
-## Phase 2 — DA Read Core
-
-목표:
+Goals:
 
 - AddGroup
 - AddItems
@@ -2807,13 +2523,11 @@ HTTP:
 POST /v1/read
 ```
 
-이 단계가 첫 핵심 milestone이다.
+This is the first core milestone.
 
----
+### Phase 3 — Browse
 
-## Phase 3 — Browse
-
-목표:
+Goals:
 
 - capability detection
 - `IOPCBrowseServerAddressSpace`
@@ -2828,13 +2542,11 @@ HTTP:
 POST /v1/browse
 ```
 
-Browse unsupported server에서도 known ItemID Read는 계속 동작해야 한다.
+Known-ItemID Read must remain usable when Browse is unsupported.
 
----
+### Phase 4 — Write
 
-## Phase 4 — Write
-
-목표:
+Goals:
 
 - strict typed write
 - `IOPCSyncIO::Write`
@@ -2848,11 +2560,9 @@ HTTP:
 POST /v1/write
 ```
 
----
+### Phase 5 — Reliability
 
-## Phase 5 — Reliability
-
-목표:
+Goals:
 
 - reconnect
 - generation invalidation
@@ -2863,11 +2573,9 @@ POST /v1/write
 - resource leak fixes
 - multiple vendor verification
 
----
+### Phase 6 — gRPC Frontend
 
-## Phase 6 — gRPC Frontend
-
-검증된 DA Runtime 위에 다음 unary service를 추가한다.
+Add these unary services over the validated DA runtime:
 
 ```text
 Status
@@ -2876,41 +2584,35 @@ Read
 Write
 ```
 
-이유:
+Rationale:
 
 - typed API
 - future Subscribe streaming
 
-protobuf는 DA-native 용어와 scalar width를 보존하며, 하나의 process는
-HTTP 또는 gRPC 중 하나만 명시적으로 선택한다. Subscribe/streaming,
-frontend registry, multi-source routing은 이 Phase에 포함하지 않는다.
+Protobuf preserves DA-native vocabulary and scalar widths. Each process
+explicitly selects HTTP or gRPC. This phase excludes Subscribe/streaming,
+a frontend registry, and multi-source routing.
 
----
+### Phase 7 — Subscribe
 
-## Phase 7 — Subscribe
+Implement Subscribe in the DA core first.
 
-DA core Subscribe를 먼저 구현한다.
-
-그 후:
+Then expose it through:
 
 - gRPC stream
 - UA Subscription
 
-등으로 노출한다.
+These frontends share that core capability.
 
----
+### Phase 8 — OPC UA Frontend
 
-## Phase 8 — OPC UA Frontend
+Proceed after the DA runtime and mappings are stable.
 
-DA Runtime과 mapping이 안정된 이후 진행한다.
+Keep UA implementation work from delaying DA runtime validation.
 
-UA implementation cost가 DA Runtime 검증을 방해하지 않도록 뒤로 둔다.
+## 63. Explicit v0 non-goals
 
----
-
-# 63. v0 명시적 Non-goals
-
-v0에서 하지 않는다.
+v0 excludes:
 
 - OPC UA
 - gRPC
@@ -2930,16 +2632,14 @@ v0에서 하지 않는다.
 - Multi DA Server
 - Remote DCOM
 - DCOM Tunneling
-- OPC DA 3.0 완전 지원
-- full SAFEARRAY support를 검증 전 약속
+- Full OPC DA 3.0 support.
+- Promising full SAFEARRAY support before validation.
 - production auth/RBAC
 - arbitrary plugin framework
 
----
+## 64. No plugin framework
 
-# 64. Plugin Framework를 만들지 않는다
-
-Frontend 확장 가능하다는 이유로 처음부터 다음을 만들지 않는다.
+Frontend extensibility does not justify introducing these upfront:
 
 ```go
 type Plugin interface { ... }
@@ -2949,13 +2649,11 @@ plugin marketplace
 runtime extension API
 ```
 
-Frontend는 source tree에 명시적으로 구현한다.
+Implement frontends explicitly in the source tree.
 
-실제 plugin 필요성이 확인되지 않는 한 plugin system은 과설계다.
+A plugin system requires an established need.
 
----
-
-# 65. 공개 API Versioning
+## 65. Public API versioning
 
 HTTP:
 
@@ -2963,75 +2661,67 @@ HTTP:
 /v1/...
 ```
 
-를 사용한다.
+Use this versioned HTTP path prefix.
 
-v1이 공개 stable로 선언되기 전에는 API가 experimental일 수 있다.
+The API may remain experimental until v1 is declared publicly stable.
 
-한번 stable release로 선언하면:
+After a stable release, treat these as breaking changes:
 
-- field 삭제
-- 의미 변경
-- type 변경
+- Removing a field.
+- Changing its meaning.
+- Changing its type.
 
-은 major compatibility break로 취급한다.
+They require a major compatibility change.
 
----
+## 66. HTTP client retries
 
-# 66. HTTP Client Retry 주의
+Clients may retry Read and Browse, but the adapter does not perform hidden unbounded retries.
 
-Read/Browse는 client가 retry할 수 있지만 Adapter가 숨은 retry를 무한 수행하지 않는다.
+Write requires particular care:
 
-Write는 특히 주의한다.
+> A Write response timeout does not prove that the DA server did not apply the Write.
 
-> Write response timeout은 Write가 실제 DA Server에 적용되지 않았다는 뜻이 아니다.
+Never replay a timed-out Write automatically.
 
-따라서 Adapter는 timeout된 Write를 자동 replay하지 않는다.
+State this in the API documentation.
 
-이 내용은 API 문서에 명확히 기록한다.
+## 67. Process Shutdown
 
----
-
-# 67. Process Shutdown
-
-정상 종료 순서:
+Normal shutdown order:
 
 ```text
-1. Frontend 신규 요청 중단
-2. queued request 처리/취소 정책 적용
+1. Stop accepting new frontend requests.
+2. Apply the queued-request completion or cancellation policy.
 3. DA Runtime stop command
 4. callback unadvise (future)
 5. item/group cleanup
 6. COM interface Release
 7. CoUninitialize
-8. HTTP/gRPC listener 종료
+8. Close HTTP/gRPC listeners.
 9. process exit
 ```
 
-COM resource cleanup은 소유한 OS thread에서 수행한다.
+Release COM resources on the owning OS thread.
 
----
+## 68. Source Metadata
 
-# 68. Source Metadata
+Do not discard source properties merely to keep the adapter thin.
 
-source가 제공하는 property는 “얇음을 위해” 버리지 않는다.
-
-예:
+Example:
 
 - canonical data type
 - access rights
 - item properties
 
-단, 이를 Asset metadata로 재구성하지 않는다.
+Do not rebuild them as Asset metadata.
 
-arbitrary vendor property exposure가 실제로 필요해질 경우 `GetProperties` 같은 DA-native capability로 추가할 수 있다.
+If arbitrary vendor properties are required, expose a DA-native capability such as `GetProperties`.
 
----
+## 69. Naming
 
-# 69. Naming
+Prefer these terms in code and documentation.
 
-코드/문서에서 다음 용어를 우선한다.
-
-사용:
+Preferred:
 
 ```text
 OPC DA Source
@@ -3045,7 +2735,7 @@ Timestamp
 HRESULT
 ```
 
-피함:
+Avoid:
 
 ```text
 Asset
@@ -3056,142 +2746,120 @@ Protocol Gateway Core
 Universal Data Model
 ```
 
----
+## 70. Known risks
 
-# 70. 알려진 위험
+### 70.1 COM correctness
 
-## 70.1 COM correctness
+Incorrect Go/COM apartment and thread affinity can cause intermittent vendor-specific failures.
 
-Go와 COM apartment/thread affinity를 잘못 다루면 간헐적인 vendor-specific 오류가 발생할 수 있다.
+### 70.2 COM memory ownership
 
----
+VARIANT, BSTR, CoTaskMem, and IUnknown ownership mistakes can cause long-term leaks or crashes.
 
-## 70.2 COM memory ownership
+### 70.3 Browse vendor differences
 
-VARIANT/BSTR/CoTaskMem/IUnknown ownership 실수는 장시간 memory leak 또는 crash로 이어질 수 있다.
+Browse is optional, and implementation quality varies between vendors.
 
----
+### 70.4 x86/x64
 
-## 70.3 Browse vendor differences
+Legacy DA deployments can differ by bitness and registration view.
 
-Browse가 optional이고 구현 품질도 vendor마다 다를 수 있다.
+### 70.5 Vendor quirks
 
----
+Implementing the standard alone does not prove compatibility with every real DA server.
 
-## 70.4 x86/x64
+### 70.6 Write safety
 
-legacy DA 환경은 bitness/registration 차이가 존재할 수 있다.
+A network Write API can expose additional physical equipment controls.
 
----
+### 70.7 Frontend scope creep
 
-## 70.5 Vendor quirks
+Additional frontends can push the product toward a gateway.
 
-표준만 구현했다고 실제 모든 DA Server와 동작하는 것은 아니다.
+Frontend count must not become a success metric.
 
----
+## 71. Success criteria
 
-## 70.6 Write safety
+Evaluate the project against operational outcomes.
 
-네트워크 API의 Write는 실제 설비 제어 surface를 확장할 수 있다.
+Useful criteria:
 
----
+- Stable operation against real legacy DA servers.
+- Simple installation.
+- Preserved source semantics.
+- Published compatibility results.
+- No accumulating long-term leaks.
+- Automatic recovery after recoverable failures.
+- Consistent results across frontends.
 
-## 70.7 Frontend scope creep
+Unsuitable criteria:
 
-Frontend가 많아질수록 Gateway로 변질될 가능성이 커진다.
+- Number of protocols.
+- Number of UI screens.
+- Number of integrations.
+- Number of configuration options.
+- Code volume.
 
-Frontend 수가 성공 지표가 되어서는 안 된다.
+## 72. Decisions fixed in the baseline
 
----
+The baseline fixes:
 
-# 71. 성공 기준
-
-프로젝트 성공은 다음으로 판단한다.
-
-좋은 성공 기준:
-
-- 실제 legacy DA Server에서 안정적으로 동작
-- 설치가 단순
-- source semantics 보존
-- compatibility 결과 공개
-- 장시간 leak 없음
-- 장애 후 자동 회복
-- Frontend 결과 일관성
-
-나쁜 성공 기준:
-
-- 지원 protocol 개수
-- UI 화면 개수
-- integration 개수
-- 설정 옵션 개수
-- 코드량
-
----
-
-# 72. 현재 확정된 결정
-
-현재 설계 기준으로 확정된 항목:
-
-- 제품 방향: OPC DA Access Adapter
+- Product direction: OPC DA Access Adapter.
 - Source: OPC DA only
-- 구현 언어: Go
+- Implementation language: Go.
 - Windows runtime
-- local COM 우선
-- Remote DCOM/Tunneler 제외
+- Local COM first.
+- No remote DCOM or tunneler.
 - DA 2.05a baseline
 - direct DA implementation
-- 기존 OPC DA/UA library를 핵심 구현 dependency로 사용하지 않음
-- DA Runtime과 Frontend 분리
-- DA-native semantics 보존
+- No existing OPC DA/UA implementation library as a core dependency.
+- Separate DA runtime and frontends.
+- Preserve DA-native semantics.
 - no normalization/transformation
 - no common industrial model
 - no process-data persistence
-- Browse/Read/Write, 향후 Subscribe
-- 초기 Frontend: HTTP/JSON
-- 현재 확장 Frontend: gRPC unary Status/Browse/Read/Write
-- 이후 후보: OPC UA; DA callback core 이후 gRPC Subscribe stream
+- Browse, Read, Write, and later Subscribe.
+- Initial frontend: HTTP/JSON.
+- Unary gRPC extension: Status, Browse, Read, and Write.
+- Later candidates: OPC UA and gRPC Subscribe after the DA callback core.
 - COM access dedicated OS thread
-- Browse optional capability로 취급
-- partial per-item failure 보존
-- reconnect 시 stale handle 폐기
+- Treat Browse as optional.
+- Preserve partial per-item failures.
+- Discard stale handles on reconnect.
 - v0 Write value only
 - Write disabled by default
-- v0 Subscribe 제외
-- HTTP는 DA Runtime 검증을 우선
-- Gateway화 금지
+- No Subscribe in v0.
+- Use HTTP first to validate the DA runtime.
+- Keep gateway behavior out of scope.
 
----
+## 73. Decisions requiring later ADRs
 
-# 73. 아직 최종 확정이 필요한 항목
+Decide these before implementation or before starting the corresponding feature:
 
-다음은 구현 전에 또는 해당 기능 착수 전에 ADR로 확정한다.
-
-- OSS license 최종 선택
-- repository 최종 이름
+- Final open-source license.
+- Final repository name.
 - HTTP default port
 - exact request/body/batch hard limits
 - reconnect backoff default
-- COM apartment의 최종 세부 구현(STA message loop 구현 방식)
+- COM apartment details, including the STA message loop.
 - scalar VARTYPE v0 exact support matrix
 - SAFEARRAY support timing
 - production authentication mechanism
-- gRPC 도입 시점
-- Subscribe 도입 시점
+- Timing of gRPC introduction.
+- Timing of Subscribe introduction.
 - OPC UA security profile
 - release signing
 
-이 항목들은 “모름”을 숨기기보다 명시적으로 관리한다.
-Windows Service packaging의 v0 방식은 ADR-0011에서 확정했다.
+Track unresolved decisions explicitly.
+ADR-0011 later fixed the v0 Windows Service packaging approach.
 
----
+## 74. Standards and references
 
-# 74. 공식 표준과 외부 참고
+Use official specifications as implementation authority.
 
-구현은 공식 specification을 기준으로 한다.
+The planned UA frontend uses the COM DA-to-UA mapping in OPC UA Part 8 Annex A.
 
-특히 향후 UA Frontend mapping은 OPC UA Part 8 Annex A의 COM DA→UA mapping을 참고한다.
-
-주요 참고:
+References:
 
 - OPC UA Part 8: Data Access — COM DA to UA mapping  
   https://reference.opcfoundation.org/specs/OPC-10000-8/full
@@ -3205,13 +2873,11 @@ Windows Service packaging의 v0 방식은 ADR-0011에서 확정했다.
 - Microsoft — Single-Threaded Apartments  
   https://learn.microsoft.com/en-us/windows/win32/com/single-threaded-apartments
 
-공식 specification 문서를 repository에 복제하지 않는다.
+Do not copy official specifications into the repository.
 
----
+## 75. Architecture summary
 
-# 75. 마지막 요약
-
-이 프로젝트의 구조를 가장 짧게 표현하면 다음과 같다.
+The structure is:
 
 ```text
                      ONE OPC DA SERVER
@@ -3241,52 +2907,48 @@ Windows Service packaging의 v0 방식은 ADR-0011에서 확정했다.
              first       future      future
 ```
 
-그리고 가장 중요한 경계는 다음이다.
+The central boundaries are:
 
 ```text
-SOURCE는 늘리지 않는다.
-SEMANTICS는 바꾸지 않는다.
-PROCESS DATA를 저장하지 않는다.
-COMMON MODEL을 만들지 않는다.
-FRONTEND는 접근 방법만 제공한다.
+Do not add source protocols.
+Do not change source semantics.
+Do not persist process data.
+Do not introduce a common model.
+Frontends provide access methods only.
 ```
 
-프로젝트가 향후 어떤 기능을 추가하더라도 이 다섯 문장이 깨지면 더 이상 OPC DA Access Adapter가 아니다.
+Any later feature must preserve these five boundaries to remain part of this adapter.
 
----
+## Appendix A. Design review checklist
 
-## Appendix A. 설계 판단 체크리스트
+Review before opening a PR or proposing a feature.
 
-PR 또는 새로운 기능 제안 전에 확인한다.
+- [ ] OPC DA is the only source protocol.
+- [ ] Each instance serves one DA server.
+- [ ] No remote DCOM or tunneling is introduced.
+- [ ] ItemIDs remain unchanged.
+- [ ] VARTYPE is preserved.
+- [ ] Raw Quality is preserved.
+- [ ] Source timestamps remain source timestamps.
+- [ ] HRESULTs remain visible.
+- [ ] Partial failures are preserved.
+- [ ] Unsupported data is not coerced into another type.
+- [ ] No database or persistent process-data store is introduced.
+- [ ] No tag mapping, renaming, or scaling is introduced.
+- [ ] No common Asset/Metric model is introduced.
+- [ ] The frontend introduces no new source semantics.
+- [ ] COM objects do not escape their owning thread.
+- [ ] COM memory ownership is explicit.
+- [ ] Queues, caches, and results are bounded.
+- [ ] Write is never retried or replayed automatically.
+- [ ] Disconnected Reads return no stale Good value.
+- [ ] An actual user requirement or compatibility result supports the change.
 
-- [ ] Source가 OPC DA 하나인가?
-- [ ] 하나의 instance가 하나의 DA Server를 담당하는가?
-- [ ] Remote DCOM/Tunneling을 끌어들이지 않았는가?
-- [ ] ItemID를 변경하지 않는가?
-- [ ] VARTYPE을 보존하는가?
-- [ ] Quality raw value를 보존하는가?
-- [ ] Timestamp를 source timestamp로 보존하는가?
-- [ ] HRESULT를 숨기지 않는가?
-- [ ] partial failure를 보존하는가?
-- [ ] unsupported data를 임의 변환하지 않는가?
-- [ ] DB/process-data persistence가 추가되지 않았는가?
-- [ ] tag mapping/rename/scaling이 추가되지 않았는가?
-- [ ] common Asset/Metric 모델이 추가되지 않았는가?
-- [ ] Frontend가 새로운ness semantics를 만들지 않는가?
-- [ ] COM object가 owning thread 밖으로 유출되지 않는가?
-- [ ] COM memory ownership이 명시적인가?
-- [ ] queue/cache/result가 bounded인가?
-- [ ] Write가 자동 retry/replay되지 않는가?
-- [ ] disconnected 상태에서 stale Good 값을 반환하지 않는가?
-- [ ] 실제 사용자 요구 또는 compatibility 근거가 있는가?
-
----
-
-## Appendix B. v0 완료 체크리스트
+## Appendix B. v0 completion checklist
 
 - [ ] windows/386 build
 - [ ] windows/amd64 build
-- [ ] dedicated COMd
+- [ ] dedicated COM thread
 - [ ] COM init/uninit
 - [ ] DA Server connect/disconnect
 - [ ] AddGroup
@@ -3308,7 +2970,7 @@ PR 또는 새로운 기능 제안 전에 확인한다.
 - [ ] HTTP read
 - [ ] HTTP write
 - [ ] partial failure
-- [ ] hard resource lis
+- [ ] hard resource limits
 - [ ] no process-value persistence
 - [ ] no process-value logging by default
 - [ ] unit tests

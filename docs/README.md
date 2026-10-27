@@ -1,80 +1,63 @@
 # Documentation
 
-This directory contains the operating guides, protocol references, design
-record, and validation evidence for OPC DA Access Adapter. Pick the path that
-matches what you are trying to do; the root README intentionally keeps only
-the shortest route into the project.
+Choose a guide by task. Current behavior, original design decisions, and dated
+execution evidence have separate entry points.
 
-## Start here
+## Project overview
 
-| Goal | Read |
+Read [architecture](architecture.md) for the current runtime and component
+boundaries, then [implementation status](implementation-status.md) for completed
+work, validation limits, and release blockers.
+
+The adapter runs on Windows, serves one local OPC DA server, and selects one
+frontend per process. HTTP is the default. Write is disabled by default; MCP
+starts only when explicitly selected. UA supports `SecurityPolicy None` only
+and is not production ready.
+
+## Installation and operation
+
+| Task | Guide |
 |---|---|
-| Build and run the adapter for the first time | [Project quick start](../README.md#quick-start) |
-| Select a source, frontend, or Windows Service mode | [Guided setup and Windows Service](setup.md) |
-| Understand why a server appears only to one architecture | [Local OPC DA server detection](local-detection.md) |
-| Diagnose local COM activation or identity failures | [Windows COM security and permissions](security-windows.md) |
-| Check whether an environment has actually been tested | [Compatibility and validation evidence](compatibility.md) |
+| Build and read a known item | [Quick start](../README.md#quick-start) |
+| Select a source/frontend or install a service | [Setup and Windows Service](setup.md) |
+| Find local registrations and select the architecture | [Local detection](local-detection.md) |
+| Diagnose activation and account permissions | [Windows COM security](security-windows.md) |
+| Prepare and verify release archives | [Release procedure](releasing.md) |
 
-## Integrate a client
+## Client integration
 
-| Interface | Reference | Important boundary |
+| Frontend | Contract | Main boundary |
 |---|---|---|
-| HTTP/JSON | [HTTP API](http-api.md) | Request/response only; no Subscribe |
-| Typed gRPC | [gRPC API](grpc-api.md) and [protobuf contract](../api/opcda/v1/opcda_access.proto) | Server-streaming Subscribe maps one stream to one DA group |
-| MCP stdio | [MCP API](mcp-api.md) | 명시적 선택 시에만 활성화; 기존 DA 기능과 구독 생성·조회·해제 |
-| OPC UA | [OPC DA to OPC UA mapping](opcua-mapping.md) | `SecurityPolicy None` only; local interoperability, not production readiness |
+| HTTP/JSON | [HTTP API](http-api.md) | Request/response; no Subscribe |
+| gRPC | [gRPC API](grpc-api.md), [protobuf schema](../api/opcda/v1/opcda_access.proto) | One stream owns one DA group |
+| MCP stdio | [MCP API](mcp-api.md) | Client-launched process; explicit group creation, reads, and release |
+| OPC UA | [UA overview](opcua-mapping.md) | Local interoperability with `SecurityPolicy None` |
 
-All frontends use the same DA runtime. HTTP and gRPC preserve DA-native ItemID,
-VARTYPE, Quality, timestamp-presence, HRESULT, and access-right fields. OPC UA
-applies the documented Part 8 mapping and reports its deliberate losses and
-refusals explicitly; it must not become an undocumented interpretation layer.
+HTTP, gRPC, and MCP preserve DA-native metadata. UA applies its documented
+Part 8 mapping, including information losses and deliberate departures.
 
-## Operate and secure
+## Validation
 
-| Document | Use it for |
+| Question | Reference |
 |---|---|
-| [Guided setup and Windows Service](setup.md) | Configuration versions, safe defaults, service lifecycle, and LocalService identity |
-| [Windows COM security and permissions](security-windows.md) | Activation scope, AppID/RunAs layers, architecture views, and HRESULT-led diagnosis |
-| [Security policy](../SECURITY.md) | Supported versions, deployment posture, and private vulnerability reporting |
-| [Release procedure](releasing.md) | Dry runs, checksums, attestations, tags, and publication gates |
+| What has run, on which server and architecture? | [Compatibility evidence](compatibility.md) |
+| How is the source-built DA fixture tested? | [Windows real-DA procedure](validation/real-da-windows.md) |
+| Which independent UA clients are tested? | [UA client interoperability](validation/ua-client-interop.md) |
+| What do performance measurements establish? | [Benchmarks](validation/benchmarks.md) |
+| What remains before a public release? | [Local destructive review](validation/local-vm-destructive.md) |
 
-The repository does not provide a production authentication, authorization,
-or TLS platform. Loopback is the default boundary; exposing a listener is an
-operator decision that requires an appropriate external security layer.
+Fixture passes, one vendor installation, and client tests have different
+scopes. None establishes broad vendor support or OPC certification.
 
-## Understand the design
+## Design and history
 
-| Document | Authority |
-|---|---|
-| [Design baseline](design.md) | Product definition, invariants, architecture, failure model, and explicit non-goals |
-| [Architecture decision records](adr/) | Reversible engineering decisions and the evidence behind them |
-| [Implementation status](implementation-status.md) | Current completion state, executed validation, known risks, and next work |
+The [design baseline](design.md) defines invariants and records the original
+implementation plan. [ADRs](adr/README.md) record subsequent decisions. Use them
+for design changes; use the current guides for operation and integration.
 
-When documents disagree, the design baseline wins over implementation ideas;
-an accepted ADR records an intentional change or refinement. The
-implementation status is a continuation record, not an alternative design.
+The [implementation history](history/implementation-log.md) preserves earlier
+phase notes and validation runs. Historical headings are not a current backlog.
 
-## Reproduce or review evidence
-
-| Document | Evidence |
-|---|---|
-| [Compatibility](compatibility.md) | Exact server/client versions, architectures, workflow runs, observations, and untested conditions |
-| [Real OPC DA validation](validation/real-da-windows.md) | Reproducible Windows fixture procedure and covered observations |
-| [Third-party UA client interoperability](validation/ua-client-interop.md) | asyncua, open62541, and OPC Foundation .NET client coverage |
-| [Benchmarks](validation/benchmarks.md) | How to run measurements and what they do—and do not—establish |
-| [Local destructive review](validation/local-vm-destructive.md) | Isolated-VM failure/attack matrix; currently not an executed PASS |
-
-Compatibility claims must come from an authorized, executed result recorded in
-`compatibility.md`. A source-built fixture, one vendor installation, or three
-UA clients must never be generalized into certification or broad vendor
-support.
-
-## Contribute to the documentation
-
-Documentation-only changes are welcome. Keep the short path in the root README
-and put protocol detail, operational caveats, and validation evidence here.
-Use relative links so they work in clones and on branches. Behavior changes
-must update the relevant reference, the implementation status, and an ADR when
-they change a decision, default, resource bound, or compatibility claim.
-
-See [CONTRIBUTING.md](../CONTRIBUTING.md) for checks and pull-request workflow.
+Follow [CONTRIBUTING.md](../CONTRIBUTING.md) when making changes. Keep contracts
+in frontend references, evidence in `compatibility.md`, and current completion
+and blockers in `implementation-status.md`.

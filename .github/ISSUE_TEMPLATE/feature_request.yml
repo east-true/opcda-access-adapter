@@ -6,8 +6,8 @@ body:
   - type: markdown
     attributes:
       value: |
-        범위는 OPC DA·로컬 COM 전용이며 한 프로세스는 명시적으로 선택한 HTTP/JSON, gRPC, OPC UA 또는 MCP stdio 하나만 실행합니다.
-        다른 소스 프로토콜·데이터 저장·이름/값 매핑·다중 소스 집계는 범위에 포함하지 않습니다.
+        The scope is OPC DA over local COM, with one explicitly selected HTTP/JSON, gRPC, OPC UA, or MCP stdio frontend per process.
+        Other source protocols, persistent process data, name/value mapping, and multi-source aggregation are outside scope.
   - type: textarea
     id: problem
     attributes:

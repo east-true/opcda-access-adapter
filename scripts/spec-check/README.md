@@ -43,7 +43,7 @@ random; one such pair existed — `StatusBadAttributeIDInvalid` beside
 
 Annex A is prose, not a schema, so it is read from the Markdown export the OPC
 Foundation publishes for each specification version. The URL names the version,
-so a later Part 8 gets a new URL rather than new bytes at this one.
+but digest verification is still required because versioned URLs can change.
 
 The DA side has no CSV, so its authority is the IDL the proxy/stubs are
 generated from, taken from the commit
@@ -76,41 +76,40 @@ refresh the digest — the same discipline
 [ADR-0006](../../docs/adr/0006-real-da-validation-fixture.md) applies to the
 validation fixture.
 
-## CI 실행과 원본 재검토
+## CI and source review
 
-이 검사는 모든 PR의 `spec-check` 작업에서 실행된다. 네트워크 오류나
-검토 해시 불일치는 작업을 실패시키며, 해시 검증을 생략하지 않는다.
-버전과 다운로드 식별자가 포함된 URL도 같은 바이트를 영구히 보장하지
-않으므로 원본을 재검토한 뒤에만 `digests.txt`를 갱신한다.
+Every PR runs `spec-check`. Network errors and digest mismatches fail the job;
+digest verification is never bypassed. Even a URL containing a version and
+download identifier can return changed bytes. Review the source before updating
+`digests.txt`.
 
-2026-10-11에 PR #224와 #225의 공통 실패 원인인 Part 3 Markdown을
-재검토했다. 동일한 `PART3_MARKDOWN` URL의 응답은 HTTP 200이고, 문서의
-버전은 `1.05.06`, 발행일은 `2025-10-22`로 표시되어 있다. SHA-256은
-`b41f19bb865d961f22f1a60f0f1433b82847ebd86240793b4a583198f1b3858d`에서
-`9b017f477fb707745acc61d95b8d9bb5c1074cab1fa53fa18f5cc7d2f2da3c52`로
-달라졌다. 이전 원본은 저장되어 있지 않아 전체 변경분 비교는 불가능했다.
-대신 현재 원본의 Table 18을 기존 필수 속성 테스트와 대조하여 Variable
-10개와 Object 5개가 일치함을 확인했다. 코드와 문서가 의존하는 4.6,
-5.5.1, 5.6.2, 5.6.3, 8.3 및 MinimumSamplingInterval 규칙도 다시 읽고
-기존 구현과 대조했다. 이 과정에서 Object의 HasTypeDefinition 규칙을
-ObjectType 절인 5.5.2로 잘못 가리키던 주석과 문서를 5.5.1로 수정했다.
-해시 갱신 후 전체 규격 검사를 실행하여 나머지 원본 해시와
-속성·상수·구조·인용 검증이 모두 통과함을 확인했다.
+On 2026-10-11 the Part 3 Markdown was reviewed after the common failure in
+PR #224 and #225. The same `PART3_MARKDOWN` URL returned HTTP 200, version
+`1.05.06`, and publication date `2025-10-22`. Its SHA-256 changed from
+`b41f19bb865d961f22f1a60f0f1433b82847ebd86240793b4a583198f1b3858d` to
+`9b017f477fb707745acc61d95b8d9bb5c1074cab1fa53fa18f5cc7d2f2da3c52`.
+The old source was unavailable, so a complete diff was impossible. Instead,
+Table 18 was checked against existing mandatory-attribute tests: 10 Variable
+and 5 Object attributes matched. Rules in 4.6, 5.5.1, 5.6.2, 5.6.3, 8.3, and
+MinimumSamplingInterval were reread against the implementation. Object
+HasTypeDefinition citations pointing to ObjectType clause 5.5.2 were corrected
+to 5.5.1. The full check then passed source digests, attributes, constants,
+structures, and citations.
 
 ## What it does not check
 
 Prose rules, such as which channel may carry a session. Those are checked by
 tests that quote the clause they implement.
 
-Table A.1, the item property mapping, is not checked because it is not
-implemented: the adapter never calls `IOPCItemProperties`. That is recorded in
-`docs/opcua-mapping.md` rather than left to be inferred from this script's
-silence. Tables A.6 to A.9 are the opposite direction — a UA server seen through
-a COM DA client — which this project does not implement either.
+Table A.1's item-property mapping is implemented, but this script does not
+cross-check that prose mapping. Go tests and fixture probes cover it. Tables
+A.6 to A.9 describe the opposite direction, a UA server exposed through a COM
+DA client, which this project does not implement.
 
-It checks that the mapping matches the tables. It cannot check that a real DA
-server ever produces a given error: of the thirteen rows in A.4 and A.5, two
-have been seen from a real server and eleven have not.
+The script checks mappings against specification tables, not whether a source
+produces an error. The fixture has produced three of the thirteen A.4/A.5 rows:
+`OPC_E_UNKNOWNITEMID`, `OPC_E_BADRIGHTS`, and `OPC_E_INVALID_PID`.
+See `docs/compatibility.md` for observed, provoked, and unreachable conditions.
 
 Struct layouts are not checked here either, because Go can check them better:
 `internal/opcda/variant_windows_test.go` asserts the size of `VARIANT`,

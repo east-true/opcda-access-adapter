@@ -103,9 +103,9 @@ limitations under the License.
 
 ## MCP Go SDK
 
-- 모듈: `github.com/modelcontextprotocol/go-sdk` v1.8.0
-- 원본: https://github.com/modelcontextprotocol/go-sdk
-- 라이선스: Apache-2.0 이행 중이며 기존 MIT 기여가 남아 있음. 아래 원문 조건을 그대로 적용한다.
+- Module: `github.com/modelcontextprotocol/go-sdk` v1.8.0
+- Source: https://github.com/modelcontextprotocol/go-sdk
+- License: Transitioning to Apache-2.0 with remaining MIT contributions. The original terms below apply.
 
 ```text
 The MCP project is undergoing a licensing transition from the MIT License to the Apache License, Version 2.0 ("Apache-2.0"). All new code and specification contributions to the project are licensed under Apache-2.0. Documentation contributions (excluding specifications) are licensed under CC-BY-4.0.
@@ -328,9 +328,9 @@ the full license text.
 
 ## JSON Schema Go
 
-- 모듈: `github.com/google/jsonschema-go` v0.4.3
-- 원본: https://github.com/google/jsonschema-go
-- 라이선스: MIT
+- Module: `github.com/google/jsonschema-go` v0.4.3
+- Source: https://github.com/google/jsonschema-go
+- License: MIT
 
 ```text
 MIT License
@@ -358,9 +358,9 @@ SOFTWARE.
 
 ## Segmentio encoding
 
-- 모듈: `github.com/segmentio/encoding` v0.5.4
-- 원본: https://github.com/segmentio/encoding
-- 라이선스: MIT
+- Module: `github.com/segmentio/encoding` v0.5.4
+- Source: https://github.com/segmentio/encoding
+- License: MIT
 
 ```text
 MIT License
@@ -388,9 +388,9 @@ SOFTWARE.
 
 ## Segmentio asm
 
-- 모듈: `github.com/segmentio/asm` v1.1.3
-- 원본: https://github.com/segmentio/asm
-- 라이선스: MIT
+- Module: `github.com/segmentio/asm` v1.1.3
+- Source: https://github.com/segmentio/asm
+- License: MIT
 
 ```text
 MIT License
@@ -418,9 +418,9 @@ SOFTWARE.
 
 ## URI Template
 
-- 모듈: `github.com/yosida95/uritemplate/v3` v3.0.2
-- 원본: https://github.com/yosida95/uritemplate/v3
-- 라이선스: BSD-3-Clause
+- Module: `github.com/yosida95/uritemplate/v3` v3.0.2
+- Source: https://github.com/yosida95/uritemplate/v3
+- License: BSD-3-Clause
 
 ```text
 Copyright (C) 2016, Kohei YOSHIDA <https://yosida95.com/>. All rights reserved.

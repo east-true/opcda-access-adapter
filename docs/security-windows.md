@@ -77,7 +77,7 @@ affect every COM server that relies on them.
 
 ## Diagnosing failures
 
-While disconnected, HTTP `GET /v1/status` and gRPC `Status` expose one bounded
+While disconnected, HTTP `GET /v1/status`, gRPC `Status`, and MCP `da_status` expose one bounded
 source diagnostic with the failing operation and raw HRESULT. Common activation
 results include:
 

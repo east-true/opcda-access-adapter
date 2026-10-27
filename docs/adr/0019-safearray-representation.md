@@ -8,13 +8,16 @@
 
 ## Context
 
+This describes the implementation before the decision. For the present state,
+read [implementation status](../implementation-status.md).
+
 A DA item's value is a `VARIANT`, and a `VARIANT` may carry a `SAFEARRAY`. The
 adapter carries none: `decodeVariant` answers `UNSUPPORTED_VARTYPE` for any
 `VT_ARRAY` or `VT_BYREF` value, so an item whose source reports an array cannot
 be read at all through any frontend.
 
 That is not a defect. `docs/design.md` §20.4 permits it in as many words --
-"v0에서 완전한 SAFEARRAY support가 없다면 명시적으로 unsupported 처리한다" --
+"If v0 lacks full SAFEARRAY support, return an explicit unsupported result." --
 and INV-10 requires the refusal to be explicit rather than a coercion. The
 support matrix row says the same conditionally: `SAFEARRAY | v0 unsupported
 unless full dimensional metadata preserved`.
@@ -27,8 +30,7 @@ What §20.4 forbids is a *lossy* implementation. Five things must survive:
 - length per dimension
 - element values
 
-and it names the shortcut that loses them: "따라서 'JSON array로 flat하게
-만들기'는 허용되지 않는다."
+and it names the shortcut that loses them: "Flattening an array while discarding its dimensional metadata is prohibited."
 
 The cost of carrying none of it is already visible elsewhere in this repository.
 `docs/implementation-status.md` records that one of OPC 10000-8 A.3.1.4's rules
@@ -38,7 +40,7 @@ is an array-valued property the DA layer does not carry. Both are consequences
 of this gap rather than of anything the sources do.
 
 `docs/design.md`'s non-goal list is sometimes read as ruling arrays out. It does
-not. The entry is "full SAFEARRAY support**를 검증 전 약속**" -- what is out of
+not. The entry is "Promising full SAFEARRAY support before validation." -- what is out of
 scope is *promising* the support before it has been validated, which is a
 promise-discipline item alongside `production auth/RBAC`. The open-questions
 list carries "SAFEARRAY support timing" explicitly. The timing was left open;

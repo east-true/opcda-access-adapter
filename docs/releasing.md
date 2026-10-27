@@ -32,11 +32,13 @@ and full commit SHA, which can be inspected on Windows:
 
 Before creating a tag:
 
-1. confirm that the target commit is on protected `main`;
-2. confirm normal CI and real-DA validation for that exact executable revision;
-3. reconcile `docs/implementation-status.md` and `docs/compatibility.md`;
-4. review the generated archives and `SHA256SUMS` from a manual dry run; and
-5. confirm the release notes do not overstate vendor compatibility or
+1. complete the [local destructive review](validation/local-vm-destructive.md)
+   for the proposed revision; hosted runner results do not replace it;
+2. confirm that the target commit is on protected `main`;
+3. confirm normal CI and real-DA validation for that exact executable revision;
+4. reconcile `docs/implementation-status.md` and `docs/compatibility.md`;
+5. review the generated archives and `SHA256SUMS` from a manual dry run; and
+6. confirm the release notes do not overstate vendor compatibility or
    production readiness.
 
 Push an annotated `vMAJOR.MINOR.PATCH` tag only after those gates pass. The

@@ -60,13 +60,13 @@ on an operator's behalf.
 `run --config` or Windows Service execution. File-based execution does not
 merge ambient environment variables. See [guided setup](setup.md). The
 existing no-argument mode reads the environment variables below. New files use
-configuration version 3; versions 1 and 2 remain readable.
+configuration version 4; versions 1, 2, and 3 remain readable.
 
 | Environment variable | Default | Purpose |
 |---|---:|---|
 | `OPCDA_SOURCE_PROG_ID` | *one of two* | the local OPC DA source's ProgID |
 | `OPCDA_SOURCE_CLSID` | *one of two* | the same source's exact CLSID, when there is no ProgID |
-| `OPCDA_FRONTEND` | `http` | select `http`, `grpc`, or `opcua` |
+| `OPCDA_FRONTEND` | `http` | select `http`, `grpc`, `opcua`, or `mcp` |
 | `OPCDA_HTTP_LISTEN` | `127.0.0.1:8080` | HTTP bind address |
 | `OPCDA_WRITE_ENABLED` | `false` | enable value Write explicitly |
 | `OPCDA_MAX_HTTP_BODY_BYTES` | `1048576` | request body bound |
@@ -97,8 +97,8 @@ configuration version 3; versions 1 and 2 remain readable.
 
 gRPC-specific listener and transport bounds are documented in the
 [gRPC API reference](grpc-api.md), and the OPC UA endpoint settings in the
-[OPC UA mapping](opcua-mapping.md#configuration). Only one frontend listener is
-selected per adapter process; all three frontends call the same DA runtime
+[OPC UA configuration](opcua-mapping.md#configuration). Only one frontend is
+selected per adapter process; all frontends call the same DA runtime
 semantics.
 
 The runtime also applies the hard per-batch, Browse, ItemID, BSTR, command

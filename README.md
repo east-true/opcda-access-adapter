@@ -157,11 +157,11 @@ Only one frontend runs in an adapter process.
 | [HTTP/JSON](docs/http-api.md) | Scripts and simple integrations | Status, Browse, Read, Write, item properties | Loopback by default; no built-in TLS or authentication |
 | [Typed gRPC](docs/grpc-api.md) | Generated clients and DA-native streaming | HTTP surface plus server-streaming Subscribe | Plaintext loopback by default; no built-in TLS or authentication |
 | [OPC UA](docs/opcua-mapping.md) | Local UA interoperability work | Browse, Read, Write, Subscriptions, DA-to-UA properties | `SecurityPolicy None` only; anonymous, unsigned, unencrypted, not production ready |
-| [MCP stdio](docs/mcp-api.md) | AI 클라이언트의 로컬 DA 접근 | 기존 DA 기능과 구독 생성·조회·해제 | 명시적 `mcp` 선택 시에만 실행; 네트워크 리스너 없음; Write 기본 비활성화 |
+| [MCP stdio](docs/mcp-api.md) | Local AI client access | DA operations and explicit group create/read/release | Inactive until selected; no network listener; Write disabled by default |
 
-MCP는 기본 비활성화다. 설정 버전 4의 `frontend: {"type":"mcp"}`로 선택하고,
-MCP 클라이언트가 `opcda-access-adapter.exe run --config <파일>`을 stdio로 실행한다.
-기존 기본 프런트엔드는 HTTP이며, MCP와 다른 프런트엔드를 동시에 실행하지 않는다.
+MCP is inactive by default. Select `frontend: {"type":"mcp"}` in a version 4
+configuration, then let the MCP host launch `opcda-access-adapter.exe run --config <file>`
+with stdio. HTTP remains the default; frontends do not run simultaneously.
 
 The authoritative gRPC contract is
 [`api/opcda/v1/opcda_access.proto`](api/opcda/v1/opcda_access.proto). HTTP does
@@ -260,7 +260,7 @@ task:
   [OPC UA mapping](docs/opcua-mapping.md)
 - **Operate safely:** [Windows COM security](docs/security-windows.md),
   [real-DA validation](docs/validation/real-da-windows.md)
-- **Understand the project:** [design](docs/design.md),
+- **Understand the project:** [architecture](docs/architecture.md), [design baseline](docs/design.md),
   [ADRs](docs/adr/), [implementation status](docs/implementation-status.md)
 - **Evaluate evidence:** [compatibility](docs/compatibility.md),
   [benchmarks](docs/validation/benchmarks.md),

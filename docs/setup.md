@@ -140,10 +140,10 @@ frontend unambiguous: an HTTP config has only `httpListen`, a gRPC config only
 A file below version 3 that names the OPC UA frontend is refused rather than
 half-understood, and a non-UA frontend may not carry OPC UA settings.
 
-MCP는 네 번째 선택지이며 `"frontend": {"type":"mcp"}`로 저장한다.
-버전 4부터 지원하고 다른 프런트엔드 주소나 UA 설정을 함께 저장하면 거부한다.
-기본 HTTP는 유지한다. MCP setup은 저장만 제공하고 클라이언트가 stdio를 소유해 실행하도록
-안내한다. Windows Service 설치는 지원하지 않는다. [MCP API](mcp-api.md)에 실행 예시가 있다.
+MCP is the fourth choice and stores `"frontend": {"type":"mcp"}`. It requires
+version 4 and rejects other frontend addresses or UA settings. HTTP remains the
+default. MCP setup saves configuration only; the MCP host launches the process
+and owns stdio. Windows Service installation is unsupported. See the [MCP guide](mcp-api.md).
 
 Unknown or duplicate fields, multiple JSON values, unsupported versions,
 invalid listener/bounds, and zero or multiple sources fail closed. Environment

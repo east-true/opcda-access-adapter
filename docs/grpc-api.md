@@ -249,11 +249,11 @@ choice:
 ```
 
 Select `gRPC`, then foreground, Windows Service, or save only. New setup files
-use strict configuration version 3:
+use strict configuration version 4:
 
 ```json
 {
-  "version": 3,
+  "version": 4,
   "source": {
     "clsid": "{00000000-0000-0000-0000-000000000000}"
   },
@@ -265,7 +265,8 @@ use strict configuration version 3:
 }
 ```
 
-Versions 1 and 2 remain readable. A gRPC configuration contains no HTTP or
+Versions 1–3 remain readable within their supported frontend scope (gRPC starts
+at version 2). A gRPC configuration contains no HTTP or
 OPC UA listener and a single adapter process still owns one runtime and one
 source.
 
@@ -273,7 +274,7 @@ The original environment workflow can select gRPC explicitly:
 
 | Environment variable | Default | Purpose |
 |---|---:|---|
-| `OPCDA_FRONTEND` | `http` | select `http`, `grpc`, or `opcua` |
+| `OPCDA_FRONTEND` | `http` | select `http`, `grpc`, `opcua`, or `mcp` |
 | `OPCDA_GRPC_LISTEN` | `127.0.0.1:50051` | gRPC bind address |
 | `OPCDA_MAX_GRPC_RECEIVE_BYTES` | `1048576` | inbound message bound |
 | `OPCDA_MAX_GRPC_SEND_BYTES` | `4194304` | outbound message bound |
