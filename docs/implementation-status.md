@@ -2,6 +2,13 @@
 
 ## Current phase
 
+**MCP STDIO IMPLEMENTED AND FIXTURE-VALIDATED** — 명시적으로 선택하는 MCP
+프런트엔드를 추가했다. 기본값은 HTTP이며 `mcp`를 선택하기 전에는 MCP를 실행하지 않는다.
+독립 Python 클라이언트가 OPC Foundation DA 2.05a fixture의 Windows 386·amd64 양쪽에서
+초기화·아홉 도구 발견·Browse·부분 Read·Write 기본 차단/엄격한 타입/동일 값 쓰기·
+Item Properties·초기 DA callback 조회·명시적 해제·EOF 종료를 통과했다.
+이는 해당 fixture의 범위 내 결과이며 다른 벤더나 MCP 클라이언트 전체의 호환성을 뜻하지 않는다.
+
 **V0 IMPLEMENTATION COMPLETE**
 
 **V0 VALIDATED** — the scoped local-COM path passed against the source-built
@@ -70,6 +77,13 @@ are dated facts and are left alone; `gh pr checks` answers what a pull request
 faces now, which is the same reason no SHA is pinned above.
 
 ## Completed
+
+- 이슈 #226에서 MCP stdio를 명시적으로 선택하는 네 번째 프런트엔드로 구현했다.
+  기존 DA Runtime과 HTTP의 DA JSON 값 코덱을 재사용하며 다른 프런트엔드는 동시에 실행하지 않는다.
+  설정 버전 4, setup 저장 전용 선택, Windows Service 거부, 프레임·동시 요청·작업 시간 제한과
+  EOF·취소·실패 정리를 포함한다. ADR-0020과 `docs/mcp-api.md`에 계약과 의존성 검토를 기록했다.
+  구독은 세션 소유 DA 그룹의 기존 항목별 병합 집합을 직접 조회하며 별도 큐·재샘플링·자동
+  재구독을 추가하지 않는다. MCP는 선택하기 전에는 비활성 상태이며 Write 기본값도 유지한다.
 
 - The public repository entry points were reorganized after the first
   third-party DA validation: the root README now leads with scope, status, a
@@ -339,6 +353,15 @@ faces now, which is the same reason no SHA is pinned above.
   `docs/validation/local-vm-destructive.md`.
 
 ## Validation results
+
+- 2026-10-27 PR #227의 head `c239c6d932b4a6a613a9def8fe00891938f20687`에서
+  [일반 CI 8개](https://github.com/east-true/opcda-access-adapter/actions/runs/40433423777)와
+  [실제 DA 검증 2개](https://github.com/east-true/opcda-access-adapter/actions/runs/40433423781)가
+  통과했다. Windows 386·amd64 로그 모두 `MCP_STDIO_PASS`를 기록했다.
+  로컬 전체 테스트·race·vet·의존성 검증·양쪽 Windows 빌드와 독립 Python stdio 검증도 통과했다.
+  MCP의 구독 무효화·동시 소비·취소·모호한 입력·출력 한계는 Go 클라이언트/전송 테스트로 검증했다.
+  이후 JSON 텍스트 이스케이프 후 출력 크기와 과대 구독 생성 응답의 원자적 정리를 보완했으며,
+  PR의 최종 상태는 최신 head의 CI 결과로 판단한다. 실행된 범위는 `docs/compatibility.md`에 있다.
 
 - On 2026-09-16, current `main` at
   `c6738571b5bce613c0d1579fb97f6bca23fc3892` passed native

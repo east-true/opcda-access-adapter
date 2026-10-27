@@ -26,9 +26,17 @@ import (
 // change.
 func TestModuleDependsOnOnlyTheReviewedSet(t *testing.T) {
 	reviewed := map[string]string{
-		"golang.org/x/sys":           "syscall access for the Windows COM and service work",
-		"google.golang.org/grpc":     "the gRPC frontend's transport",
-		"google.golang.org/protobuf": "the generated bindings for the committed schema",
+		"github.com/modelcontextprotocol/go-sdk": "ADR-0020: MCP stdio의 프로토콜·취소·도구 수명주기",
+		"github.com/google/jsonschema-go":        "ADR-0020: MCP 도구의 정확한 입력 스키마 검증",
+		"github.com/segmentio/encoding":          "간접: MCP SDK의 JSON 인코딩",
+		"github.com/segmentio/asm":               "간접: segmentio JSON 구현의 CPU별 연산",
+		"github.com/yosida95/uritemplate/v3":     "간접: MCP SDK의 URI template 지원, 본 프런트엔드는 리소스를 제공하지 않음",
+		"golang.org/x/oauth2":                    "간접: MCP SDK의 HTTP 인증 지원, stdio에서는 사용하지 않음",
+		"golang.org/x/sync":                      "간접: MCP SDK의 동시성 도구",
+		"golang.org/x/time":                      "간접: MCP SDK의 시간·속도 제한 도구",
+		"golang.org/x/sys":                       "syscall access for the Windows COM and service work",
+		"google.golang.org/grpc":                 "the gRPC frontend's transport",
+		"google.golang.org/protobuf":             "the generated bindings for the committed schema",
 		// Pulled in by grpc rather than chosen here. They are listed so that a
 		// change in what grpc drags along is visible too.
 		"golang.org/x/net":                          "indirect: grpc's HTTP/2 implementation",

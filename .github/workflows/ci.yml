@@ -30,6 +30,10 @@ jobs:
         run: scripts/fuzz-smoke.sh
       - name: Vet
         run: go vet ./...
+      - name: Independent MCP stdio client
+        run: |
+          go build -o "${{ runner.temp }}/opcda-mcp-check" ./cmd/adapter
+          python3 scripts/mcp/check.py --adapter "${{ runner.temp }}/opcda-mcp-check"
 
   release-package:
     runs-on: ubuntu-latest

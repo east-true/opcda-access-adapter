@@ -53,6 +53,7 @@ const (
 	FrontendHTTP  FrontendType = "http"
 	FrontendGRPC  FrontendType = "grpc"
 	FrontendOPCUA FrontendType = "opcua"
+	FrontendMCP   FrontendType = "mcp"
 )
 
 const (
@@ -244,9 +245,9 @@ func (config *Config) finalizeAndValidate() error {
 		return fmt.Errorf("HTTP bounds and timeouts must be positive")
 	}
 	switch config.Frontend {
-	case FrontendHTTP, FrontendGRPC, FrontendOPCUA:
+	case FrontendHTTP, FrontendGRPC, FrontendOPCUA, FrontendMCP:
 	default:
-		return fmt.Errorf("frontend must be http, grpc, or opcua")
+		return fmt.Errorf("frontend must be http, grpc, opcua, or mcp")
 	}
 	if config.MaxGRPCReceiveBytes <= 0 || config.MaxGRPCSendBytes <= 0 || config.MaxGRPCConnections <= 0 ||
 		config.MaxConcurrentGRPCRPCs <= 0 || config.MaxGRPCStreams == 0 || config.MaxGRPCMetadataBytes == 0 ||
@@ -297,12 +298,14 @@ func (config *Config) finalizeAndValidate() error {
 			return err
 		}
 	}
-	_, port, err := net.SplitHostPort(listenAddress)
-	if err != nil {
-		return fmt.Errorf("%s must be a host:port address: %w", listenSetting, err)
-	}
-	if _, err := strconv.ParseUint(port, 10, 16); err != nil {
-		return fmt.Errorf("%s port must be numeric and between 0 and 65535: %w", listenSetting, err)
+	if config.Frontend != FrontendMCP {
+		_, port, err := net.SplitHostPort(listenAddress)
+		if err != nil {
+			return fmt.Errorf("%s must be a host:port address: %w", listenSetting, err)
+		}
+		if _, err := strconv.ParseUint(port, 10, 16); err != nil {
+			return fmt.Errorf("%s port must be numeric and between 0 and 65535: %w", listenSetting, err)
+		}
 	}
 	if config.Runtime.ReconnectInitial <= 0 || config.Runtime.ReconnectMax <= 0 || config.Runtime.COMCallWatchdog <= 0 {
 		return fmt.Errorf("reconnect and COM watchdog durations must be positive")

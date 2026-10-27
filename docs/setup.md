@@ -10,7 +10,7 @@ inventory into one reviewed adapter configuration:
 It asks for:
 
 1. one locally registered OPC DA 2.0 source;
-2. one frontend (`HTTP/JSON`, DA-native gRPC, or OPC UA);
+2. one frontend (`HTTP/JSON`, DA-native gRPC, OPC UA, or MCP stdio);
 3. foreground, Windows Service, or save-only execution;
 4. final confirmation.
 
@@ -133,12 +133,17 @@ For OPC UA it carries the endpoint settings as well:
 }
 ```
 
-Setup writes **version 3**. Versions 1 and 2 remain readable, so an installed
+Setup writes **version 4**. Versions 1, 2 and 3 remain readable, so an installed
 adapter keeps running after an upgrade. Each version keeps the selected
 frontend unambiguous: an HTTP config has only `httpListen`, a gRPC config only
 `grpcListen`, and an OPC UA config only `opcuaListen` plus its `opcua` object.
 A file below version 3 that names the OPC UA frontend is refused rather than
 half-understood, and a non-UA frontend may not carry OPC UA settings.
+
+MCP는 네 번째 선택지이며 `"frontend": {"type":"mcp"}`로 저장한다.
+버전 4부터 지원하고 다른 프런트엔드 주소나 UA 설정을 함께 저장하면 거부한다.
+기본 HTTP는 유지한다. MCP setup은 저장만 제공하고 클라이언트가 stdio를 소유해 실행하도록
+안내한다. Windows Service 설치는 지원하지 않는다. [MCP API](mcp-api.md)에 실행 예시가 있다.
 
 Unknown or duplicate fields, multiple JSON values, unsupported versions,
 invalid listener/bounds, and zero or multiple sources fail closed. Environment

@@ -6,8 +6,8 @@ body:
   - type: markdown
     attributes:
       value: |
-        The boundary is OPC DA only, local COM only, and one explicitly selected HTTP/JSON or unary gRPC frontend per process.
-        Requests for OPC UA, Subscribe/streaming, other source protocols, persistence, mapping, or aggregation are currently out of scope.
+        범위는 OPC DA·로컬 COM 전용이며 한 프로세스는 명시적으로 선택한 HTTP/JSON, gRPC, OPC UA 또는 MCP stdio 하나만 실행합니다.
+        다른 소스 프로토콜·데이터 저장·이름/값 매핑·다중 소스 집계는 범위에 포함하지 않습니다.
   - type: textarea
     id: problem
     attributes:

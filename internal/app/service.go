@@ -43,6 +43,9 @@ func New(config Config, runtime opcda.Runtime) (*Service, error) {
 	if err := config.finalizeAndValidate(); err != nil {
 		return nil, fmt.Errorf("invalid application configuration: %w", err)
 	}
+	if config.Frontend == FrontendMCP {
+		return nil, fmt.Errorf("MCP stdio requires foreground RunMCP and cannot run as a network service")
+	}
 	if runtime == nil {
 		var err error
 		runtime, err = opcda.New(config.Runtime)

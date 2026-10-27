@@ -7,12 +7,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"math"
 	stdhttp "net/http"
-	"strconv"
-	"time"
 	"unicode/utf8"
 
+	"github.com/east-true/opcda-access-adapter/internal/frontend/dajson"
 	"github.com/east-true/opcda-access-adapter/internal/opcda"
 )
 
@@ -23,20 +21,7 @@ type readHTTPRequest struct {
 	} `json:"items"`
 }
 
-type readHTTPResult struct {
-	ItemID            string                `json:"itemId"`
-	OK                bool                  `json:"ok"`
-	DataType          *opcda.DAVarTypeInfo  `json:"dataType,omitempty"`
-	CanonicalDataType *opcda.DAVarTypeInfo  `json:"canonicalDataType,omitempty"`
-	ValueEncoding     string                `json:"valueEncoding,omitempty"`
-	Value             json.RawMessage       `json:"value,omitempty"`
-	Quality           *uint16               `json:"quality,omitempty"`
-	Timestamp         *string               `json:"timestamp"`
-	TimestampPresent  bool                  `json:"timestampPresent"`
-	HRESULT           *opcda.HRESULTValue   `json:"hresult"`
-	AccessRights      *opcda.DAAccessRights `json:"accessRights,omitempty"`
-	ErrorCode         string                `json:"errorCode,omitempty"`
-}
+type readHTTPResult = dajson.ReadResult
 
 func (s *Server) handleRead(ctx context.Context, w stdhttp.ResponseWriter, request *stdhttp.Request) {
 	if !validateJSONRequest(w, request) {
@@ -138,111 +123,17 @@ func writeDecodeError(w stdhttp.ResponseWriter, err error) {
 	writeError(w, stdhttp.StatusBadRequest, opcda.CodeInvalidRequest, "request body is not valid for this endpoint")
 }
 
-type exactJSONString string
+type exactJSONString = dajson.ExactString
 
-func (value *exactJSONString) UnmarshalJSON(data []byte) error {
-	if !validJSONSurrogates(data) {
-		return fmt.Errorf("JSON string contains an unpaired UTF-16 surrogate")
-	}
-	// The outer decoder has already established that this is one JSON string
-	// literal, and a literal with nothing to unescape is its own value: the
-	// bytes between the quotes. Handing it to a second decoder parses every
-	// ItemID twice, which is what the profile showed the Read path doing once
-	// per item.
-	//
-	// Anything with an escape, or anything that is not a plain literal, goes
-	// the long way, so the fast path decides only whether a second parse is
-	// needed and never what the answer is.
-	if unquoted, ok := unquotedJSONString(data); ok {
-		*value = exactJSONString(unquoted)
-		return nil
-	}
-	var decoded string
-	if err := json.Unmarshal(data, &decoded); err != nil {
-		return err
-	}
-	*value = exactJSONString(decoded)
-	return nil
-}
-
-// unquotedJSONString reports the value of a JSON string literal that is its own
-// value, and whether it was one.
-//
-// Three things disqualify a literal from the fast path, and the third is easy
-// to miss. A backslash has something to unescape. A byte below 0x20 is
-// malformed, which is the decoder's answer to give. And invalid UTF-8 is not
-// passed through by the decoder either -- it replaces each bad byte with
-// U+FFFD, so returning the bytes unchanged would be a different value under the
-// same name. The repository's own fuzz target caught exactly that.
-func unquotedJSONString(data []byte) (string, bool) {
-	if len(data) < 2 || data[0] != '"' || data[len(data)-1] != '"' {
-		return "", false
-	}
-	body := data[1 : len(data)-1]
-	for _, character := range body {
-		if character == '\\' || character == '"' || character < 0x20 {
-			return "", false
-		}
-	}
-	if !utf8.Valid(body) {
-		return "", false
-	}
-	return string(body), true
-}
-
+// 공유 DA JSON 값 계약에 위임한다.
 func validJSONSurrogates(data []byte) bool {
-	for index := 0; index+1 < len(data); {
-		if data[index] != '\\' {
-			index++
-			continue
-		}
-		if data[index+1] != 'u' {
-			index += 2
-			continue
-		}
-		code, ok := parseHexQuad(data[index+2:])
-		if !ok {
-			return true // The JSON decoder will report malformed escape syntax.
-		}
-		if 0xD800 <= code && code <= 0xDBFF {
-			if index+12 > len(data) || data[index+6] != '\\' || data[index+7] != 'u' {
-				return false
-			}
-			low, ok := parseHexQuad(data[index+8:])
-			if !ok || low < 0xDC00 || low > 0xDFFF {
-				return false
-			}
-			index += 12
-		} else if 0xDC00 <= code && code <= 0xDFFF {
-			return false
-		} else {
-			index += 6
-		}
-	}
-	return true
+	return dajson.ValidSurrogates(data)
 }
 
+// 공유 DA JSON 값 계약에 위임한다.
 func parseHexQuad(data []byte) (uint16, bool) {
-	if len(data) < 4 {
-		return 0, false
-	}
-	var value uint16
-	for _, character := range data[:4] {
-		value <<= 4
-		switch {
-		case '0' <= character && character <= '9':
-			value |= uint16(character - '0')
-		case 'a' <= character && character <= 'f':
-			value |= uint16(character-'a') + 10
-		case 'A' <= character && character <= 'F':
-			value |= uint16(character-'A') + 10
-		default:
-			return 0, false
-		}
-	}
-	return value, true
+	return dajson.ParseHexQuad(data)
 }
-
 func (s *Server) decodeRequestBody(w stdhttp.ResponseWriter, request *stdhttp.Request, target any) error {
 	body, err := io.ReadAll(stdhttp.MaxBytesReader(w, request.Body, s.config.MaxBodyBytes))
 	if err != nil {
@@ -283,179 +174,21 @@ func ensureJSONEOF(decoder *json.Decoder) error {
 // Handing out pointers into slices allocated once per response is the same
 // output for a fixed cost. The slices are sized up front and never grown, so no
 // pointer handed out can be invalidated by a later item.
-type readResultFields struct {
-	types      []opcda.DAVarTypeInfo
-	canonical  []opcda.DAVarTypeInfo
-	hresults   []opcda.HRESULTValue
-	qualities  []uint16
-	timestamps []string
-	// scratch is reused to format each timestamp, so the only string a
-	// timestamp allocates is the one the response carries.
-	scratch []byte
-	next    int
-}
+type readResultFields = dajson.ReadResultFields
 
+// 공유 DA JSON 값 계약에 위임한다.
 func newReadResultFields(count int) readResultFields {
-	return readResultFields{
-		types:      make([]opcda.DAVarTypeInfo, count),
-		canonical:  make([]opcda.DAVarTypeInfo, count),
-		hresults:   make([]opcda.HRESULTValue, count),
-		qualities:  make([]uint16, count),
-		timestamps: make([]string, count),
-		scratch:    make([]byte, 0, 64),
-	}
+	return dajson.NewReadResultFields(count)
 }
 
+// 공유 DA JSON 값 계약에 위임한다.
 func encodeReadResult(result opcda.ReadResult, fields *readResultFields) readHTTPResult {
-	slot := fields.next
-	fields.next++
-	encoded := readHTTPResult{
-		ItemID:       string(result.ItemID),
-		ErrorCode:    result.ErrorCode,
-		AccessRights: result.AccessRights,
-	}
-	if result.VarType != nil {
-		fields.types[slot] = result.VarType.Information()
-		encoded.DataType = &fields.types[slot]
-	}
-	if result.CanonicalType != nil {
-		fields.canonical[slot] = result.CanonicalType.Information()
-		encoded.CanonicalDataType = &fields.canonical[slot]
-	}
-	if result.HRESULTPresent {
-		fields.hresults[slot] = result.HRESULT.Representation()
-		encoded.HRESULT = &fields.hresults[slot]
-	}
-	if result.Value == nil || result.ErrorCode != "" || !result.HRESULTPresent || result.HRESULT.Failed() {
-		return encoded
-	}
-
-	value, encoding, err := encodeDAValue(result.Value.VarType, result.Value.Value)
-	if err != nil {
-		// A value this frontend cannot carry is a limit of the frontend rather
-		// than a malformed one, and the two codes send a client to different
-		// places: one to check what it sent, the other to check what this
-		// adapter supports.
-		encoded.ErrorCode = string(opcda.CodeInvalidValue)
-		if adapterErr, ok := opcda.AsAdapterError(err); ok {
-			encoded.ErrorCode = string(adapterErr.Code)
-		}
-		return encoded
-	}
-	var timestamp *string
-	if result.Value.TimestampPresent {
-		// RFC 3339 with nanoseconds is what MarshalText writes, and appending
-		// into a reused buffer means the only string a timestamp allocates is
-		// the one the response carries.
-		//
-		// The year check comes with it. MarshalText refuses a year RFC 3339
-		// cannot represent and AppendFormat does not, so a source reporting
-		// one would have been published as a timestamp no client can parse.
-		// That refusal was doing work, and it is stated here rather than
-		// inherited.
-		utc := result.Value.Timestamp.UTC()
-		if year := utc.Year(); year < 0 || year >= 10000 {
-			encoded.ErrorCode = string(opcda.CodeInvalidValue)
-			return encoded
-		}
-		fields.timestamps[slot] = string(utc.AppendFormat(fields.scratch[:0], time.RFC3339Nano))
-		timestamp = &fields.timestamps[slot]
-	}
-	encoded.OK = true
-	encoded.Value = value
-	encoded.ValueEncoding = encoding
-	fields.qualities[slot] = result.Value.QualityRaw
-	encoded.Quality = &fields.qualities[slot]
-	encoded.TimestampPresent = result.Value.TimestampPresent
-	encoded.Timestamp = timestamp
-	return encoded
+	return dajson.EncodeReadResult(result, fields)
 }
 
+// 공유 DA JSON 값 계약에 위임한다.
 func encodeDAValue(varType opcda.DAVarType, value any) (json.RawMessage, string, error) {
-	if varType.IsByRef() {
-		return nil, "", opcda.NewAdapterError(opcda.CodeUnsupportedVarType,
-			fmt.Sprintf("this frontend does not publish %s values", varType))
-	}
-	if varType.IsArray() {
-		array, ok := value.(opcda.DAArray)
-		if !ok {
-			return nil, "", opcda.NewAdapterError(opcda.CodeInvalidValue,
-				fmt.Sprintf("a %s value did not carry an array", varType))
-		}
-		encoded, err := encodeDAArray(array)
-		if err != nil {
-			return nil, "", err
-		}
-		return encoded, arrayValueEncoding, nil
-	}
-	encoding := "json"
-	var transportValue any
-	var typeMatches bool
-	switch varType.Base() {
-	case opcda.VTEmpty, opcda.VTNull:
-		typeMatches = value == nil
-	case opcda.VTI1:
-		transportValue, typeMatches = value.(int8)
-	case opcda.VTUI1:
-		transportValue, typeMatches = value.(uint8)
-	case opcda.VTI2:
-		transportValue, typeMatches = value.(int16)
-	case opcda.VTUI2:
-		transportValue, typeMatches = value.(uint16)
-	case opcda.VTI4, opcda.VTInt, opcda.VTError:
-		transportValue, typeMatches = value.(int32)
-	case opcda.VTUI4, opcda.VTUInt:
-		transportValue, typeMatches = value.(uint32)
-	case opcda.VTI8:
-		typed, ok := value.(int64)
-		typeMatches = ok
-		transportValue = strconv.FormatInt(typed, 10)
-	case opcda.VTUI8:
-		typed, ok := value.(uint64)
-		typeMatches = ok
-		transportValue = strconv.FormatUint(typed, 10)
-	case opcda.VTR4:
-		typed, ok := value.(float32)
-		typeMatches = ok
-		transportValue = typed
-		if math.IsNaN(float64(typed)) || math.IsInf(float64(typed), 0) {
-			transportValue = specialFloat(float64(typed))
-			encoding = "float-special"
-		}
-	case opcda.VTR8:
-		typed, ok := value.(float64)
-		typeMatches = ok
-		transportValue = typed
-		if math.IsNaN(typed) || math.IsInf(typed, 0) {
-			transportValue = specialFloat(typed)
-			encoding = "float-special"
-		}
-	case opcda.VTBool:
-		transportValue, typeMatches = value.(bool)
-	case opcda.VTBSTR:
-		transportValue, typeMatches = value.(string)
-	default:
-		return nil, "", fmt.Errorf("unsupported VARTYPE %s", varType)
-	}
-	if !typeMatches {
-		return nil, "", fmt.Errorf("value type does not match VARTYPE %s", varType)
-	}
-	encoded, err := json.Marshal(transportValue)
-	if err != nil {
-		return nil, "", err
-	}
-	return encoded, encoding, nil
-}
-
-func specialFloat(value float64) string {
-	switch {
-	case math.IsNaN(value):
-		return "NaN"
-	case math.IsInf(value, 1):
-		return "+Infinity"
-	default:
-		return "-Infinity"
-	}
+	return dajson.EncodeValue(varType, value)
 }
 
 func writeOperationError(w stdhttp.ResponseWriter, err error) {
@@ -494,62 +227,7 @@ func writeOperationError(w stdhttp.ResponseWriter, err error) {
 // arrays must not read it as one.
 const arrayValueEncoding = "array"
 
-// jsonArrayDimension is one dimension as a client sees it.
-type jsonArrayDimension struct {
-	LowerBound int32  `json:"lowerBound"`
-	Length     uint32 `json:"length"`
-}
-
-// jsonArrayValue is the shape ADR-0019 decision 5 publishes. The elements are
-// flat and the dimensions are beside them, which is what separates this from
-// the flattening design.md §20.4 forbids: that one discards the shape, and this
-// one carries it.
-type jsonArrayValue struct {
-	ElementDataType opcda.DAVarTypeInfo  `json:"elementDataType"`
-	Dimensions      []jsonArrayDimension `json:"dimensions"`
-	Elements        []json.RawMessage    `json:"elements"`
-}
-
-// encodeDAArray writes an array as its description plus its elements in the
-// published order: the last dimension varies fastest.
-//
-// Elements use the same per-type rules a scalar uses, so nothing new has to be
-// learned to read one. The exception is a non-finite float, which a scalar
-// names through a sibling valueEncoding field that an element does not have:
-// inside an array it is spelled in place, which keeps the array
-// self-describing because a string in a float array is exactly one of the
-// three names and a number is a number.
+// 공유 DA JSON 값 계약에 위임한다.
 func encodeDAArray(array opcda.DAArray) (json.RawMessage, error) {
-	dimensions := make([]jsonArrayDimension, len(array.Dimensions))
-	for index, dimension := range array.Dimensions {
-		dimensions[index] = jsonArrayDimension{
-			LowerBound: dimension.LowerBound,
-			Length:     dimension.Length,
-		}
-	}
-	elements := make([]json.RawMessage, len(array.Elements))
-	for index, element := range array.Elements {
-		encoded, _, err := encodeDAValue(array.ElementType, element)
-		if err != nil {
-			return nil, arrayElementError(index, err)
-		}
-		elements[index] = encoded
-	}
-	return json.Marshal(jsonArrayValue{
-		ElementDataType: array.ElementType.Information(),
-		Dimensions:      dimensions,
-		Elements:        elements,
-	})
-}
-
-// arrayElementError says which element was wrong while keeping the reason. A
-// client told only that an element is invalid has to guess which of a thousand
-// it was.
-func arrayElementError(index int, err error) error {
-	adapterErr, ok := opcda.AsAdapterError(err)
-	if !ok {
-		return fmt.Errorf("array element %d: %w", index, err)
-	}
-	return opcda.NewAdapterError(adapterErr.Code,
-		fmt.Sprintf("array element %d: %s", index, adapterErr.Message))
+	return dajson.EncodeArray(array)
 }

@@ -79,7 +79,16 @@ func runForegroundConfig(path string) error {
 	return runForeground(withBuildInfo(config))
 }
 
+// runForeground는 선택한 단일 프런트엔드의 전경 실행과 종료를 관리한다.
 func runForeground(config app.Config) error {
+	// 1. MCP의 stdout은 프로토콜 전용으로 두고 네트워크 리스너를 만들지 않는다.
+	if config.Frontend == app.FrontendMCP {
+		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+		defer stop()
+		return app.RunMCP(ctx, config, nil, os.Stdin, os.Stdout, version)
+	}
+
+	// 2. 기존 네트워크 프런트엔드는 같은 서비스 수명주기로 실행한다.
 	service, err := app.New(config, nil)
 	if err != nil {
 		return fmt.Errorf("create adapter: %w", err)
