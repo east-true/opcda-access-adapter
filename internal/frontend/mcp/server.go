@@ -103,7 +103,12 @@ func result(value any) (*mcp.CallToolResult, error) {
 	if len(body) > (MaxOutputBytes-4096)/2 {
 		return toolError(opcda.NewAdapterError(opcda.CodeRequestLimitExceeded, "MCP result exceeds the output limit; use a smaller batch")), nil
 	}
-	return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: string(body)}}, StructuredContent: json.RawMessage(body)}, nil
+	response := &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: string(body)}}, StructuredContent: json.RawMessage(body)}
+	encoded, err := json.Marshal(response)
+	if err != nil || len(encoded) > MaxOutputBytes-4096 {
+		return toolError(opcda.NewAdapterError(opcda.CodeRequestLimitExceeded, "MCP escaped result exceeds the output limit; use a smaller batch")), nil
+	}
+	return response, nil
 }
 
 // toolError는 원본 값과 원본 입력을 포함하지 않는 명시적 도구 실패를 구성한다.

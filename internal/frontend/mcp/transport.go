@@ -101,6 +101,9 @@ func (c *boundedConnection) Read(ctx context.Context) (jsonrpc.Message, error) {
 			}
 			continue
 		}
+		if id, ok := request.ID.Raw().(string); ok && len(id) > 128 {
+			return nil, fmt.Errorf("MCP request identifier exceeds the byte limit")
+		}
 
 		// 2. 중복 ID는 세션 오류이며 과도한 요청은 보관하지 않고 거부한다.
 		c.mu.Lock()

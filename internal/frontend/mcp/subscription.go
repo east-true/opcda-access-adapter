@@ -2,7 +2,6 @@ package mcpfrontend
 
 import (
 	"context"
-	"encoding/json"
 	"math"
 	"sync"
 	"time"
@@ -100,8 +99,8 @@ func (s *Server) subscribe(ctx context.Context, input subscribeInput) (any, erro
 		return nil, mismatch()
 	}
 	response := map[string]any{"subscriptionId": info.ID, "connectionGeneration": info.ConnectionGeneration, "requestedUpdateRateMs": info.RequestedUpdateRate.Milliseconds(), "revisedUpdateRateMs": info.RevisedUpdateRate.Milliseconds(), "percentDeadband": info.Deadband, "activeItemCount": info.ActiveItemCount, "items": items}
-	body, err := json.Marshal(response)
-	if err != nil || len(body) > (MaxOutputBytes-4096)/2 {
+	packed, err := result(response)
+	if err != nil || packed.IsError {
 		return nil, opcda.NewAdapterError(opcda.CodeRequestLimitExceeded, "subscription response exceeds the output limit")
 	}
 	if err := ctx.Err(); err != nil {

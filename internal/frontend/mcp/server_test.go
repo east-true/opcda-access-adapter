@@ -382,6 +382,10 @@ func TestArgumentLimits(t *testing.T) {
 	if !response.IsError {
 		t.Fatal("oversized output accepted")
 	}
+	response, _ = result(map[string]any{"value": strings.Repeat("\\", (MaxOutputBytes-5000)/5)})
+	if !response.IsError {
+		t.Fatal("JSON string escaping exceeded the output limit")
+	}
 }
 
 // TestClientCancellationReachesDAOnce는 MCP 취소가 작업에 전달되고 자동 재시도가 없는지 검증한다.
