@@ -30,7 +30,7 @@ one-off run against the x86 Graybox Gray Simulator 1.7.9.701 passed Connect,
 Browse, Read, strict typed Write with restoration, Item Properties, Subscribe,
 and reconnect through the DA core plus HTTP, gRPC unary/streaming, and
 read-only OPC UA paths on a local Windows host. ADR-0017 records the choice and
-`docs/compatibility.md` records the exact observations and provenance limits.
+`docs/validation/compatibility.md` records the exact observations and provenance limits.
 This is not a repeatable CI gate or a claim about other copies or vendors.
 
 **PHASE 6 gRPC IMPLEMENTATION COMPLETE AND FIXTURE-VALIDATED** — the DA-native
@@ -53,7 +53,7 @@ against the source-built OPC Foundation fixture on both architectures. Only
 
 **Three third-party UA clients now run against the frontend** — asyncua,
 open62541 and the OPC Foundation .NET stack, 425 checks in total, recorded in
-docs/compatibility.md. All three are gated in CI. Two of them were not, until
+docs/validation/compatibility.md. All three are gated in CI. Two of them were not, until
 gating open62541 found a stale assertion in it on the first run. Three clients are not conformance and no conformance or
 interoperability claim is made; ADR-0016 forbids describing this as certified or
 compliant. What they establish is narrower and worth having: two of the six
@@ -92,7 +92,7 @@ faces now, which is the same reason no SHA is pinned above.
   It reuses the DA runtime and HTTP's DA JSON codec without simultaneous frontends.
   Configuration version 4, save-only setup, Windows Service rejection, bounded
   frames/concurrency/deadlines, and EOF/cancellation/failure cleanup are recorded
-  in ADR-0020 and `docs/mcp-api.md`. Session-owned groups drain the core's
+  in ADR-0020 and `docs/frontend/mcp/README.md`. Session-owned groups drain the core's
   coalesced set without another queue, resampling, or automatic resubscribe.
   MCP remains inactive until selected, and the default Write policy is unchanged.
 
@@ -161,7 +161,7 @@ faces now, which is the same reason no SHA is pinned above.
   passed. The runtime no longer advertises `capabilities.subscribe` without
   probing the group's `IOPCDataCallback` connection point, and a source without
   one is refused as `SUBSCRIBE_UNSUPPORTED` instead of failing late. ADR-0015
-  records the decision, and `docs/compatibility.md` records the vendor
+  records the decision, and `docs/validation/compatibility.md` records the vendor
   variations a third-party run must observe. The later manual Graybox run
   observed a supported connection point and is recorded there separately.
 
@@ -267,7 +267,7 @@ faces now, which is the same reason no SHA is pinned above.
   function, three provoked but not produced by this server, and eight
   unreachable, six of them because of decisions made on purpose (ADR-0004's
   strict typing, adapter-owned item handles, unimplemented Table A.1, and a
-  2.05a Write that carries a value only). `docs/compatibility.md` records the
+  2.05a Write that carries a value only). `docs/validation/compatibility.md` records the
   executed result.
 
   So the remaining exposure is not that ten rows are untested. It is that five
@@ -278,13 +278,13 @@ faces now, which is the same reason no SHA is pinned above.
   does not.
 
 - OPC 10000-8 Table A.1, the DA item property mapping, is **implemented**.
-  [ADR-0018](../adr/0018-da-item-properties.md) decided to build it, and both
+  [ADR-0018](../design/adr/0018-da-item-properties.md) decided to build it, and both
   halves now exist. The adapter queries `IOPCItemProperties` once per
   connection and reports it as a capability the way it reports Browse;
   `EngineeringUnits`, `EURange`, `InstrumentRange`, `TrueState` and `FalseState`
   appear as properties of a source variable when the source offers the DA
   properties they are built from, and Item Description answers the `Description`
-  attribute. Values are read live and never cached. `docs/design.md` §11 already
+  attribute. Values are read live and never cached. `docs/design/baseline.md` §11 already
   listed that interface in the DA baseline, so the code now matches the
   document.
 
@@ -305,7 +305,7 @@ faces now, which is the same reason no SHA is pinned above.
   A.3.1.4's array-valued property rule was unapplied while the DA layer carried
   no array VARIANTs. It carries them now, and the rule is applied: such a
   property is exposed with `ValueRank` `OneOrMoreDimensions`.
-  `docs/opcua-mapping.md` carries the detail.
+  `docs/frontend/opcua/README.md` carries the detail.
 
   This is also the part of Table A.1 the OPC Foundation fixture exercises: it
   offers exactly these properties and none of the nine named ones.
@@ -314,12 +314,12 @@ faces now, which is the same reason no SHA is pinned above.
   an item whose EU Type is Analog but which offers neither EU bound has no
   mandatory `EURange` to publish, and `MultiStateDiscreteType` needs
   `EnumStrings`, which is `LocalizedText[]` where the DA property behind it is
-  `String[]`. [ADR-0018](../adr/0018-da-item-properties.md) records both; the
+  `String[]`. [ADR-0018](../design/adr/0018-da-item-properties.md) records both; the
   second reason narrowed once the DA layer began carrying arrays, and is now
   about the type rather than about the array.
 
 - SAFEARRAY values are carried by the DA layer and published by all three
-  frontends. [ADR-0019](../adr/0019-safearray-representation.md) decides the
+  frontends. [ADR-0019](../design/adr/0019-safearray-representation.md) decides the
   representation: element VARTYPE, dimension count, per-dimension lower bound
   and length, and the element values all survive, which is what design.md §20.4
   requires of any implementation.
@@ -333,7 +333,7 @@ faces now, which is the same reason no SHA is pinned above.
   array: element order as a vendor produces it, and whether non-zero lower
   bounds appear in practice, are exactly the properties a round trip through
   the adapter's own encoder cannot check. The accepted one-off run under
-  [ADR-0017](../adr/0017-third-party-vendor-da-fixture.md) found only scalar items,
+  [ADR-0017](../design/adr/0017-third-party-vendor-da-fixture.md) found only scalar items,
   so neither has been seen from a real source.
 
   All three frontends publish them. HTTP carries the shape as an object under
@@ -371,7 +371,7 @@ faces now, which is the same reason no SHA is pinned above.
   concurrent consumers, cancellation, ambiguous input, and output bounds.
   A later fix bounded escaped output and cleaned up oversized subscription
   creation results atomically. Judge final PR state by the latest head's CI.
-  Executed scope is recorded in `docs/compatibility.md`.
+  Executed scope is recorded in `docs/validation/compatibility.md`.
 
 - On 2026-09-16, current `main` at
   `c6738571b5bce613c0d1579fb97f6bca23fc3892` passed native
@@ -406,7 +406,7 @@ faces now, which is the same reason no SHA is pinned above.
   Quality `216` with timestamps present before the induced outage to Quality
   `32` with timestamps absent after reconnect; both were preserved. Exact
   versions, digest, resource deltas, and caveats are in
-  `docs/compatibility.md`; the binary was operator-supplied and did not enter
+  `docs/validation/compatibility.md`; the binary was operator-supplied and did not enter
   the repository or CI.
 - On 2026-08-25, the Phase 7 Subscribe branch passed `gofmt -l .`,
   `go vet ./...`, `go test ./...` (207 tests in 8 packages), and
@@ -428,7 +428,7 @@ faces now, which is the same reason no SHA is pinned above.
   passed on both x86/386 and x64/amd64. The UA probe created a Subscription and
   MonitoredItem against the fixture, received the server's initial snapshot and
   two change-driven notifications induced through UA Write, and deleted the
-  subscription. Exact figures are in `docs/compatibility.md`.
+  subscription. Exact figures are in `docs/validation/compatibility.md`.
 - That run caught the same class of error a second time: OPC DA reports an
   item's canonical type in the AddItems result rather than in Browse, just as it
   does access rights, so every browsed node reported the abstract base type and
@@ -449,7 +449,7 @@ faces now, which is the same reason no SHA is pinned above.
   `GetEndpoints`, a session, a Browse walk down to the fixture's three DA
   items with the address space filled on demand, and a Read returning `Good`
   with the source timestamp present. Exact figures are in
-  `docs/compatibility.md`.
+  `docs/validation/compatibility.md`.
 - That run caught a design error the unit tests could not: OPC DA carries access
   rights in the `AddItems` result rather than in Browse, so every browsed item
   arrived with no rights and the adapter refused every read as
@@ -478,7 +478,7 @@ faces now, which is the same reason no SHA is pinned above.
   return to zero after the client closed the stream. The DA Subscribe core
   probe and the existing HTTP, gRPC unary, reconnect, failure-cycle, load, and
   200-Read soak regression also passed. Exact figures are in
-  `docs/compatibility.md`.
+  `docs/validation/compatibility.md`.
 - Post-merge CI run
   [`32806556135`](https://github.com/east-true/opcda-access-adapter/actions/runs/32806556135)
   passed quality, release packaging, both Windows builds, and both native
@@ -511,7 +511,7 @@ faces now, which is the same reason no SHA is pinned above.
   pending values, restoring anything implicitly, or reusing the identifier
   after reconnect. The existing HTTP, gRPC, reconnect, failure-cycle, load, and
   200-Read soak regression also passed. Exact figures are in
-  `docs/compatibility.md`.
+  `docs/validation/compatibility.md`.
 - The first attempt of that run failed and is kept as evidence of what the
   probe actually proves: the fixture created the group and delivered one
   `OnDataChange`, then delivered nothing more because its `Test` items are
@@ -695,7 +695,7 @@ faces now, which is the same reason no SHA is pinned above.
 - Both real jobs observed actual/canonical `VT_I4`, raw Quality `192`, a
   source-provided timestamp, successful HRESULT `0x00000000`, and invalid
   ItemID HRESULT `0xC0040007`. Exact evidence and bounded resource deltas are
-  recorded in `docs/compatibility.md` without process values.
+  recorded in `docs/validation/compatibility.md` without process values.
 - Long-running workflow run
   [`32630548279`](https://github.com/east-true/opcda-access-adapter/actions/runs/32630548279)
   repeated the full scenario and passed 100,000 device Reads on each
@@ -735,7 +735,7 @@ faces now, which is the same reason no SHA is pinned above.
 
 ## Final v0 audit
 
-- All Appendix B implementation items in `docs/design.md` have code, unit or
+- All Appendix B implementation items in `docs/design/baseline.md` have code, unit or
   Windows-platform coverage, and the scoped x86/x64 real-server result above.
 - Production Go code has one reviewed general-purpose Windows syscall module
   and no OPC SDK dependency, process-data file or database persistence,
@@ -751,7 +751,7 @@ faces now, which is the same reason no SHA is pinned above.
 
 The adapter's own share of a DA Read is 34-54 microseconds, separated from the
 vendor's COM call by timestamps around it rather than estimated. It does not
-grow with the batch size. `docs/compatibility.md` carries the table and the
+grow with the batch size. `docs/validation/compatibility.md` carries the table and the
 caveats, the most important being that the source's call is the rest of the
 figure and is not this adapter's to answer for.
 
@@ -795,7 +795,7 @@ and a default build collects no timings at all.
   scenario matrix ran.
 - Broad third-party/vendor DA compatibility remains untested. One authorized,
   operator-supplied Graybox installation now has the bounded manual result in
-  `docs/compatibility.md`; it must not be generalized to another version, copy,
+  `docs/validation/compatibility.md`; it must not be generalized to another version, copy,
   or vendor.
 - No proprietary or provenance-weak simulator binary is stored, downloaded, or
   used by CI. The one-off Graybox run used an installation already supplied and
@@ -848,20 +848,20 @@ and a default build collects no timings at all.
 
 ## Decisions
 
-- [ADR-0001: v0 bounds and runtime defaults](../adr/0001-v0-bounds-and-runtime-defaults.md)
-- [ADR-0002: STA runtime and local COM activation](../adr/0002-sta-runtime-and-local-com-activation.md)
-- [ADR-0003: v0 Read types and FILETIME presence](../adr/0003-read-types-and-filetime-presence.md)
-- [ADR-0004: strict typed value Write](../adr/0004-strict-typed-value-write.md)
-- [ADR-0005: reconnect and COM-hang policy](../adr/0005-reconnect-and-com-hang-policy.md)
-- [ADR-0006: real-DA validation fixture and supply-chain controls](../adr/0006-real-da-validation-fixture.md)
-- [ADR-0007: bounded source failure diagnostic](../adr/0007-bounded-source-failure-diagnostic.md)
-- [ADR-0008: HTTP browser boundary and aggregate resource ceilings](../adr/0008-http-origin-and-aggregate-bounds.md)
-- [ADR-0009: request parser and lifecycle hardening](../adr/0009-request-parser-and-lifecycle-hardening.md)
-- [ADR-0010: local OPC DA registration detection](../adr/0010-local-da-registration-detection.md)
-- [ADR-0011: guided setup and Windows Service lifecycle](../adr/0011-guided-setup-and-windows-service.md)
-- [ADR-0012: DA-native gRPC frontend](../adr/0012-grpc-da-native-frontend.md)
-- [ADR-0013: DA-native Subscribe core](../adr/0013-da-native-subscribe-core.md)
-- [ADR-0014: gRPC Subscribe server streaming](../adr/0014-grpc-subscribe-streaming.md)
-- [ADR-0015: probe the Subscribe capability](../adr/0015-subscribe-capability-probe.md)
-- [ADR-0016: OPC UA frontend scope and the DA mapping foundation](../adr/0016-opcua-frontend-scope-and-mapping.md)
-- [ADR-0017: a third-party vendor DA server for validation](../adr/0017-third-party-vendor-da-fixture.md) — **accepted, option C executed once**
+- [ADR-0001: v0 bounds and runtime defaults](../design/adr/0001-v0-bounds-and-runtime-defaults.md)
+- [ADR-0002: STA runtime and local COM activation](../design/adr/0002-sta-runtime-and-local-com-activation.md)
+- [ADR-0003: v0 Read types and FILETIME presence](../design/adr/0003-read-types-and-filetime-presence.md)
+- [ADR-0004: strict typed value Write](../design/adr/0004-strict-typed-value-write.md)
+- [ADR-0005: reconnect and COM-hang policy](../design/adr/0005-reconnect-and-com-hang-policy.md)
+- [ADR-0006: real-DA validation fixture and supply-chain controls](../design/adr/0006-real-da-validation-fixture.md)
+- [ADR-0007: bounded source failure diagnostic](../design/adr/0007-bounded-source-failure-diagnostic.md)
+- [ADR-0008: HTTP browser boundary and aggregate resource ceilings](../design/adr/0008-http-origin-and-aggregate-bounds.md)
+- [ADR-0009: request parser and lifecycle hardening](../design/adr/0009-request-parser-and-lifecycle-hardening.md)
+- [ADR-0010: local OPC DA registration detection](../design/adr/0010-local-da-registration-detection.md)
+- [ADR-0011: guided setup and Windows Service lifecycle](../design/adr/0011-guided-setup-and-windows-service.md)
+- [ADR-0012: DA-native gRPC frontend](../design/adr/0012-grpc-da-native-frontend.md)
+- [ADR-0013: DA-native Subscribe core](../design/adr/0013-da-native-subscribe-core.md)
+- [ADR-0014: gRPC Subscribe server streaming](../design/adr/0014-grpc-subscribe-streaming.md)
+- [ADR-0015: probe the Subscribe capability](../design/adr/0015-subscribe-capability-probe.md)
+- [ADR-0016: OPC UA frontend scope and the DA mapping foundation](../design/adr/0016-opcua-frontend-scope-and-mapping.md)
+- [ADR-0017: a third-party vendor DA server for validation](../design/adr/0017-third-party-vendor-da-fixture.md) — **accepted, option C executed once**

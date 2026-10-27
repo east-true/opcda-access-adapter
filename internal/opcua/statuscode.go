@@ -74,7 +74,7 @@ const (
 	// Bad_LastKnown "shall be mapped to Uncertain_NoCommunicationLastUsable"
 	// and gives the reason -- a Bad severity must return a Null value, so a
 	// Bad code would throw away the last known value the quality exists to
-	// carry. docs/opcua-mapping.md records the conflict and this decision.
+	// carry. docs/frontend/opcua/README.md records the conflict and this decision.
 	StatusUncertainNoCommunicationLastUsableValue StatusCode = 0x408F0000
 
 	StatusBadConfigurationError    StatusCode = 0x80890000

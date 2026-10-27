@@ -228,7 +228,7 @@ internal static class Program
         // Uncertain_NoCommunicationLastUsable", because a Bad severity must
         // return a Null value, which would discard the last known value
         // LAST_KNOWN exists to carry. scripts/spec-check/check.py records the
-        // deviation and docs/opcua-mapping.md explains it; asserting Table A.3
+        // deviation and docs/frontend/opcua/README.md explains it; asserting Table A.3
         // here would ask a foreign client to confirm a mapping this server
         // deliberately does not implement.
         var lastKnown = ReadItem(session, "Quality.LastKnown").StatusCode;

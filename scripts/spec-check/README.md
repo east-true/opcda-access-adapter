@@ -47,7 +47,7 @@ but digest verification is still required because versioned URLs can change.
 
 The DA side has no CSV, so its authority is the IDL the proxy/stubs are
 generated from, taken from the commit
-[ADR-0006](../../docs/adr/0006-real-da-validation-fixture.md) pins for the
+[ADR-0006](../../docs/design/adr/0006-real-da-validation-fixture.md) pins for the
 validation fixture. The constants are therefore checked against the source the
 server this project tests against was itself built from.
 
@@ -73,7 +73,7 @@ would otherwise silently change what "conformant" means here.
 If a digest no longer matches, the script stops and prints both. Read what
 changed upstream, decide whether the adapter should follow, and only then
 refresh the digest — the same discipline
-[ADR-0006](../../docs/adr/0006-real-da-validation-fixture.md) applies to the
+[ADR-0006](../../docs/design/adr/0006-real-da-validation-fixture.md) applies to the
 validation fixture.
 
 ## CI and source review
@@ -109,7 +109,7 @@ DA client, which this project does not implement.
 The script checks mappings against specification tables, not whether a source
 produces an error. The fixture has produced three of the thirteen A.4/A.5 rows:
 `OPC_E_UNKNOWNITEMID`, `OPC_E_BADRIGHTS`, and `OPC_E_INVALID_PID`.
-See `docs/compatibility.md` for observed, provoked, and unreachable conditions.
+See `docs/validation/compatibility.md` for observed, provoked, and unreachable conditions.
 
 Struct layouts are not checked here either, because Go can check them better:
 `internal/opcda/variant_windows_test.go` asserts the size of `VARIANT`,

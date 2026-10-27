@@ -8,10 +8,10 @@ Browse, Read, and typed value Write without changing source semantics.
 
 ## Authoritative documents
 
-- `docs/design.md` is the design baseline and overrides implementation ideas.
+- `docs/design/baseline.md` is the design baseline and overrides implementation ideas.
 - `docs/implementation-status.md` records current completion and next work.
 - `docs/architecture.md` explains the current implementation; the baseline and ADRs remain authoritative.
-- `docs/adr/` records reversible engineering decisions and any required design
+- `docs/design/adr/` records reversible engineering decisions and any required design
   change.
 
 ## Critical invariants
@@ -55,7 +55,7 @@ GOOS=windows GOARCH=amd64 go build ./cmd/adapter
 `main` is updated only through a green PR. Work one implementation phase per
 branch, update the status document, run the commands above, push, open a PR,
 confirm CI, merge, and continue. Do not claim real DA compatibility without a
-real server result in `docs/compatibility.md`.
+real server result in `docs/validation/compatibility.md`.
 
 ## Current implementation definition
 

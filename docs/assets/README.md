@@ -2,15 +2,15 @@
 
 ## `setup-demo.gif`
 
-The root README's setup animation is a sanitized visual replay of an executed
+The quick-start guide's setup animation is a sanitized visual replay of an executed
 Windows `386` foreground run against the operator-supplied Graybox installation
-recorded in [`docs/compatibility.md`](../compatibility.md). The live run
+recorded in [`docs/validation/compatibility.md`](../validation/compatibility.md). The live run
 confirmed guided selection, HTTP startup, and a connected status response
 before the animation was rendered.
 
 The GIF is orientation, not compatibility evidence. It deliberately omits
 timestamps, machine paths, process values, and the complete status payload.
-The adjacent README steps are the accessible and copyable source of truth.
+The matching [quick-start steps](../quick-start.md) are the accessible and copyable source of truth.
 
 When replacing it:
 

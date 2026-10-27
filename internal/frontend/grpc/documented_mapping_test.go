@@ -49,7 +49,7 @@ func TestDocumentedGRPCMappingMatchesTheFrontend(t *testing.T) {
 // arrive as, and flattens it to one entry per code.
 func documentedMapping(t *testing.T) map[string]string {
 	t.Helper()
-	body := readNormalised(t, repositoryRootFromGRPCTest(t), "docs", "grpc-api.md")
+	body := readNormalised(t, repositoryRootFromGRPCTest(t), "docs", "frontend", "grpc", "errors.md")
 	row := regexp.MustCompile("(?m)^\\| `([A-Za-z]+)` \\| (.+) \\|$")
 	mapping := map[string]string{}
 	for _, match := range row.FindAllStringSubmatch(body, -1) {

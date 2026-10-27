@@ -353,7 +353,7 @@ func TestTheServerObjectCarriesItsMandatoryComponents(t *testing.T) {
 			t.Errorf("Table 9 makes %s mandatory and the Server object does not carry it", name)
 		}
 	}
-	// The one departure, recorded in docs/opcua-mapping.md. Asserting its
+	// The one departure, recorded in docs/frontend/opcua/README.md. Asserting its
 	// absence keeps the document honest: adding it without saying so fails.
 	if _, found := present["ServerDiagnostics"]; found {
 		t.Error("ServerDiagnostics is published but recorded as a departure")

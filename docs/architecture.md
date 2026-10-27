@@ -4,8 +4,8 @@ The adapter runs beside one local OPC DA server on Windows. One explicitly
 selected frontend provides client access while retaining source identifiers,
 types, errors, and quality.
 
-This page describes the current implementation. The numbered [design baseline](design.md)
-records the original plan; [ADRs](adr/README.md) record later decisions.
+This page describes the current implementation. The numbered [design baseline](design/baseline.md)
+records the original plan; [ADRs](design/adr/README.md) record later decisions.
 
 ## Components
 
@@ -51,7 +51,7 @@ Network frontends support Windows Service mode. An MCP client launches and
 owns its stdio process.
 
 Setup writes configuration version 4. Versions 1–3 remain readable within their
-frontend scope. File execution does not merge environment settings. See [setup](setup.md).
+frontend scope. File execution does not merge environment settings. See [setup](operations/setup.md).
 
 ## COM ownership
 
@@ -83,7 +83,7 @@ explicit names, and arrays with types, dimensions, lower bounds, and lengths.
 gRPC uses typed protobuf fields. UA documents its standard mappings and losses,
 including vendor Quality bits and rejection of nonzero array lower bounds.
 UA array Writes and ordinary-item array rank metadata remain limited; see the
-[array contract](opcua/data-access.md#arrays).
+[array contract](frontend/opcua/data-access.md#arrays).
 
 Write is disabled by default, value-only, and strictly typed. The adapter does
 not retry, replay, or promise rollback. A timeout does not prove that the source
@@ -117,4 +117,19 @@ and protocol state have explicit bounds. Setup does not change COM/DCOM or
 firewall policy. Services depend on the vendor accepting LocalService.
 
 Read [implementation status](implementation-status.md) for remaining work and
-[compatibility evidence](compatibility.md) before making deployment claims.
+[compatibility evidence](validation/compatibility.md) before making deployment claims.
+
+## Scope boundaries
+
+This project is not a general industrial gateway. It does not provide:
+
+- remote DCOM or remote server discovery;
+- aggregation of multiple DA servers in one process;
+- tag mapping, renaming, scaling, normalization, or a common asset model;
+- process-value persistence or historical storage;
+- automatic source selection, transparent resubscription, or last-good data;
+- a plugin framework or non-DA source protocols;
+- production authentication, authorization, TLS, or OPC UA security modes
+  other than `None`.
+
+These boundaries are part of the correctness model, not a feature backlog.

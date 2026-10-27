@@ -1663,7 +1663,7 @@ func TestAHeldPublishDoesNotBlockTheConnection(t *testing.T) {
 	}
 }
 
-// The service inventory in docs/opcua-mapping.md is a claim about this switch,
+// The service inventory in docs/frontend/opcua/README.md is a claim about this switch,
 // and a claim about code drifts unless something compares the two. A service
 // added or removed without the document changing fails here.
 func TestTheDispatchAnswersTheDocumentedServices(t *testing.T) {

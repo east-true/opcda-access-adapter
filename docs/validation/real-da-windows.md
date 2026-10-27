@@ -7,7 +7,7 @@ upstream x64 server.
 
 This is not a mock test and it is not broad vendor certification. The external
 fixture, license, source pin, audit findings, and isolation controls are
-recorded in [ADR-0006](../adr/0006-real-da-validation-fixture.md).
+recorded in [ADR-0006](../design/adr/0006-real-da-validation-fixture.md).
 
 ## Covered observations
 
@@ -118,7 +118,7 @@ scripts, or validation records also runs it. Fork pull requests do not execute
 the privileged COM registration job.
 
 Passing the workflow is evidence only after the exact GitHub run URL and
-commit SHA are recorded in `docs/compatibility.md`. A workflow definition or
+commit SHA are recorded in `docs/validation/compatibility.md`. A workflow definition or
 cross-build alone is not a compatibility result.
 
 The first recorded passing result is run

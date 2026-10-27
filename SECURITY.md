@@ -31,7 +31,7 @@ be protected by an appropriate deployment boundary.
 The adapter requests only in-process or same-machine COM activation. It does
 not request remote DCOM. Windows AppID Launch/Activation, Access, server
 identity, and 32/64-bit registry-view considerations are documented in
-[Windows COM security and permissions](docs/security-windows.md). Do not
+[Windows COM security and permissions](docs/operations/windows-security.md). Do not
 weaken machine-wide DCOM defaults to troubleshoot one server.
 
 The `detect` command is a local CLI operation, not an HTTP endpoint. It reads
@@ -43,6 +43,6 @@ Guided setup creates configuration only after an explicit review and refuses
 implicit overwrite. A background installation uses the low-privilege Windows
 LocalService account and never stores a password or changes DCOM permissions.
 The executable and configuration must remain in stable paths readable by that
-account. Follow [guided setup](docs/setup.md) and the scoped
-[Windows COM permission guidance](docs/security-windows.md); do not grant
+account. Follow [guided setup](docs/operations/setup.md) and the scoped
+[Windows COM permission guidance](docs/operations/windows-security.md); do not grant
 machine-wide or remote DCOM rights to make a service work.

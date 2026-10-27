@@ -40,9 +40,16 @@ func TestCanonicalRequestFieldsCoverEveryRequestField(t *testing.T) {
 		}
 	}
 
-	reference := readNormalised(t, repositoryRootFromTest(t), "docs", "http-api.md")
+	documents, err := filepath.Glob(filepath.Join(repositoryRootFromTest(t), "docs", "frontend", "http", "*.md"))
+	if err != nil {
+		t.Fatalf("find the HTTP reference: %v", err)
+	}
+	var reference strings.Builder
+	for _, document := range documents {
+		reference.WriteString(readNormalised(t, document))
+	}
 	for field := range declared {
-		if !strings.Contains(reference, `"`+field+`"`) {
+		if !strings.Contains(reference.String(), `"`+field+`"`) {
 			t.Errorf("%q is a request field and the HTTP reference never shows it", field)
 		}
 	}

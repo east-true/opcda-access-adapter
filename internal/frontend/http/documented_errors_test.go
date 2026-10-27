@@ -107,7 +107,7 @@ func statusFromName(t *testing.T, name string) int {
 
 func documentedErrorRows(t *testing.T) map[string]int {
 	t.Helper()
-	body := readNormalised(t, repositoryRootFromTest(t), "docs", "http-api.md")
+	body := readNormalised(t, repositoryRootFromTest(t), "docs", "frontend", "http", "errors.md")
 	row := regexp.MustCompile("(?m)^\\| `([A-Z][A-Z0-9_]+)` \\| (\\d{3}) \\|")
 	rows := map[string]int{}
 	for _, match := range row.FindAllStringSubmatch(body, -1) {

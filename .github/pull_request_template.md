@@ -10,7 +10,7 @@
 - [ ] Windows 386 and amd64 builds/tests (when applicable)
 - [ ] Documentation and `docs/implementation-status.md` updated
 - [ ] No process values or secrets included in logs, fixtures, or screenshots
-- [ ] Scope/invariants in `docs/design.md` remain unchanged, or an ADR is included
+- [ ] Scope/invariants in `docs/design/baseline.md` remain unchanged, or an ADR is included
 
 ## Validation notes
 
