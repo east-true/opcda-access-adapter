@@ -149,8 +149,12 @@ func resolveServiceFiles(options serviceInstallOptions) (serviceInstallOptions, 
 	if err != nil {
 		return serviceInstallOptions{}, "", fmt.Errorf("resolve configuration path: %w", err)
 	}
-	if _, err := app.LoadConfigFile(configPath); err != nil {
+	config, err := app.LoadConfigFile(configPath)
+	if err != nil {
 		return serviceInstallOptions{}, "", fmt.Errorf("validate service configuration: %w", err)
+	}
+	if config.Frontend == app.FrontendMCP {
+		return serviceInstallOptions{}, "", fmt.Errorf("MCP stdio must be launched by an MCP client and cannot be installed as a Windows Service")
 	}
 	configInfo, err := os.Stat(configPath)
 	if err != nil {

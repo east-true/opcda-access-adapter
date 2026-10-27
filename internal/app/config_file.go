@@ -12,9 +12,9 @@ import (
 )
 
 const (
-	// ConfigFileVersion 3 adds the OPC UA frontend. Versions 1 and 2 are still
-	// read so an installed adapter keeps running after an upgrade.
-	ConfigFileVersion       = 3
+	// ConfigFileVersion 4는 명시적으로 선택하는 MCP stdio를 추가하며 이전 버전을 읽는다.
+	ConfigFileVersion       = 4
+	opcuaConfigFileVersion  = 3
 	grpcConfigFileVersion   = 2
 	legacyConfigFileVersion = 1
 	MaximumConfigFileBytes  = 64 << 10
@@ -91,11 +91,15 @@ func guidedSetupConfig(source opcda.SourceConfig, frontend FrontendType, listen 
 		config.HTTPListenAddress = listen
 	case FrontendGRPC:
 		config.GRPCListenAddress = listen
+	case FrontendMCP:
+		if listen != "" {
+			return Config{}, fmt.Errorf("MCP stdio must not have a listen address")
+		}
 	case FrontendOPCUA:
 		config.OPCUAListenAddress = listen
 		config.OPCUA = endpoint
 	default:
-		return Config{}, fmt.Errorf("guided setup frontend must be http, grpc, or opcua")
+		return Config{}, fmt.Errorf("guided setup frontend must be http, grpc, opcua, or mcp")
 	}
 	config.WriteEnabled = writeEnabled
 	if source.ProgID == "" && source.CLSID == "" {
@@ -141,7 +145,7 @@ func LoadConfigFile(path string) (Config, error) {
 		return Config{}, err
 	}
 	switch stored.Version {
-	case legacyConfigFileVersion, grpcConfigFileVersion, ConfigFileVersion:
+	case legacyConfigFileVersion, grpcConfigFileVersion, opcuaConfigFileVersion, ConfigFileVersion:
 	default:
 		return Config{}, fmt.Errorf("unsupported configuration version %d", stored.Version)
 	}
@@ -162,7 +166,7 @@ func LoadConfigFile(path string) (Config, error) {
 		}
 		listen = stored.Frontend.GRPCListen
 	case FrontendOPCUA:
-		if stored.Version < ConfigFileVersion {
+		if stored.Version < opcuaConfigFileVersion {
 			return Config{}, fmt.Errorf("configuration version %d does not support the OPC UA frontend", stored.Version)
 		}
 		if stored.Frontend.OPCUAListen == "" || stored.Frontend.HTTPListen != "" || stored.Frontend.GRPCListen != "" {
@@ -186,6 +190,13 @@ func LoadConfigFile(path string) (Config, error) {
 			opcda.SourceConfig{ProgID: stored.Source.ProgID, CLSID: stored.Source.CLSID},
 			stored.Frontend.OPCUAListen, endpoint, stored.WriteEnabled,
 		)
+	case FrontendMCP:
+		if stored.Version < ConfigFileVersion {
+			return Config{}, fmt.Errorf("configuration version %d does not support MCP", stored.Version)
+		}
+		if stored.Frontend.HTTPListen != "" || stored.Frontend.GRPCListen != "" {
+			return Config{}, fmt.Errorf("MCP stdio must not carry listen addresses")
+		}
 	default:
 		return Config{}, fmt.Errorf("unsupported frontend %q", stored.Frontend.Type)
 	}
@@ -308,6 +319,8 @@ func WriteConfigFileExclusive(path string, config Config) error {
 		stored.Frontend.HTTPListen = config.HTTPListenAddress
 	case FrontendGRPC:
 		stored.Frontend.GRPCListen = config.GRPCListenAddress
+	case FrontendMCP:
+		// stdio에는 네트워크 주소나 별도 세션 설정이 없다.
 	case FrontendOPCUA:
 		stored.Frontend.OPCUAListen = config.OPCUAListenAddress
 		stored.Frontend.OPCUA = &persistedOPCUA{

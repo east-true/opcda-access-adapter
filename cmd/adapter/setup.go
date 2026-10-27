@@ -149,7 +149,8 @@ func runSetup(
 	fmt.Fprintln(output, "  1) HTTP/JSON (v0)")
 	fmt.Fprintln(output, "  2) gRPC (typed DA-native unary API)")
 	fmt.Fprintln(output, "  3) OPC UA (SecurityPolicy None; local interoperability only, not production ready)")
-	frontendChoice, err := prompt.selectNumber("Select one frontend", 3)
+	fmt.Fprintln(output, "  4) MCP (stdio; launched by an MCP client)")
+	frontendChoice, err := prompt.selectNumber("Select one frontend", 4)
 	if err != nil {
 		fmt.Fprintf(errorOutput, "select frontend: %v\n", err)
 		return 1
@@ -161,6 +162,10 @@ func runSetup(
 		selectedListenAddress string
 	)
 	switch frontendChoice {
+	case 4:
+		frontendLabel = "MCP (stdio)"
+		config, err = app.GuidedSetupFrontendConfig(
+			opcda.SourceConfig{CLSID: selected.CLSID}, app.FrontendMCP, "", *writeEnabled)
 	case 2:
 		frontendLabel = "gRPC"
 		selectedListenAddress = *grpcListenAddress
@@ -206,22 +211,36 @@ func runSetup(
 		return 2
 	}
 
-	fmt.Fprintln(output, "\nAfter saving:")
-	fmt.Fprintln(output, "  1) Run in this terminal")
-	fmt.Fprintln(output, "  2) Install and start a Windows Service (background; Administrator required)")
-	fmt.Fprintln(output, "  3) Save configuration only")
-	executionChoice, err := prompt.selectNumber("Select one action", 3)
-	if err != nil {
-		fmt.Fprintf(errorOutput, "select action: %v\n", err)
-		return 1
+	execution := setupSaveOnly
+	if config.Frontend == app.FrontendMCP {
+		fmt.Fprintln(output, "\nMCP stdio must be launched by an MCP client; setup saves configuration only.")
+		fmt.Fprintln(output, "  1) Save configuration only")
+		if _, err := prompt.selectNumber("Select one action", 1); err != nil {
+			fmt.Fprintf(errorOutput, "select action: %v\n", err)
+			return 1
+		}
+	} else {
+		fmt.Fprintln(output, "\nAfter saving:")
+		fmt.Fprintln(output, "  1) Run in this terminal")
+		fmt.Fprintln(output, "  2) Install and start a Windows Service (background; Administrator required)")
+		fmt.Fprintln(output, "  3) Save configuration only")
+		executionChoice, err := prompt.selectNumber("Select one action", 3)
+		if err != nil {
+			fmt.Fprintf(errorOutput, "select action: %v\n", err)
+			return 1
+		}
+		execution = setupExecution(executionChoice)
 	}
-	execution := setupExecution(executionChoice)
 
 	fmt.Fprintln(output, "\nReview:")
 	fmt.Fprintf(output, "  source ProgID: %s\n", displayOptional(selected.ProgID))
 	fmt.Fprintf(output, "  source CLSID: %s\n", selected.CLSID)
 	fmt.Fprintf(output, "  frontend: %s\n", frontendLabel)
-	fmt.Fprintf(output, "  listen: %s\n", selectedListenAddress)
+	if config.Frontend == app.FrontendMCP {
+		fmt.Fprintln(output, "  transport: stdio (no network listener)")
+	} else {
+		fmt.Fprintf(output, "  listen: %s\n", selectedListenAddress)
+	}
 	fmt.Fprintf(output, "  typed value Write enabled: %t\n", config.WriteEnabled)
 	if config.Frontend == app.FrontendOPCUA {
 		fmt.Fprintf(output, "  OPC UA endpoint: %s\n", config.OPCUA.EndpointURL)

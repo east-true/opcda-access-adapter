@@ -108,7 +108,7 @@ func TestLoadConfigFileRejectsInvalidInput(t *testing.T) {
 		"unknown field":   `{"version":1,"source":{"clsid":"{A}"},"frontend":{"type":"http","httpListen":"127.0.0.1:8080"},"writeEnabled":false,"extra":true}`,
 		"duplicate field": `{"version":1,"version":1,"source":{"clsid":"{A}"},"frontend":{"type":"http","httpListen":"127.0.0.1:8080"},"writeEnabled":false}`,
 		"trailing value":  `{"version":1,"source":{"clsid":"{A}"},"frontend":{"type":"http","httpListen":"127.0.0.1:8080"},"writeEnabled":false} {}`,
-		"future version":  `{"version":4,"source":{"clsid":"{A}"},"frontend":{"type":"http","httpListen":"127.0.0.1:8080"},"writeEnabled":false}`,
+		"future version":  `{"version":99,"source":{"clsid":"{A}"},"frontend":{"type":"http","httpListen":"127.0.0.1:8080"},"writeEnabled":false}`,
 		// An older version may not carry OPC UA settings, and a non-UA frontend
 		// may not carry them at any version.
 		"opcua before version 3": `{"version":2,"source":{"clsid":"{A}"},"frontend":{"type":"opcua","opcuaListen":"127.0.0.1:4840"},"writeEnabled":false}`,

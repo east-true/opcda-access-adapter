@@ -64,7 +64,7 @@ function Assert-True {
 
 # The configuration file version the adapter writes. Kept in one place so
 # adding a frontend does not require editing every assertion.
-$script:ConfigFileVersion = 3
+$script:ConfigFileVersion = 4
 
 function Invoke-NativeProcess {
     param(
@@ -858,6 +858,25 @@ function Test-GuidedSetupGRPCWindowsService {
     }
 }
 
+# Test-MCPFrontend는 독립 Python 클라이언트로 실제 DA의 MCP stdio 경로를 검증한다.
+function Test-MCPFrontend {
+    # 1. 다른 시나리오가 남긴 fixture 프로세스를 정리한다.
+    Stop-ServerProcesses
+    try {
+        # 2. stdout에는 프로토콜만 흐르며 probe는 값 없이 판정만 출력한다.
+        $pythonExecutable = (Get-Command python -ErrorAction Stop).Source
+        $mcpProbe = Join-Path $PSScriptRoot '../mcp/check.py'
+        Invoke-NativeProcess -FilePath $pythonExecutable -ArgumentList @(
+            $mcpProbe, '--adapter', $script:AdapterExecutable,
+            '--clsid', $expectedCLSID, '--real-da'
+        ) -TimeoutSeconds 180
+    }
+    finally {
+        # 3. stdin EOF 후 어댑터와 소스가 다음 시나리오에 남지 않게 한다.
+        Stop-ServerProcesses
+    }
+}
+
 function Test-SubscribeCore {
     Assert-True ($null -ne $script:SubscribeProbeExecutable) 'subscribe probe path is required for Subscribe validation'
     Write-Host 'Starting DA Subscribe core validation against the real local COM server'
@@ -1099,6 +1118,7 @@ try {
     Test-GuidedSetupWindowsService
     Test-GuidedSetupGRPCWindowsService
     Test-GRPCWriteEnabledForeground
+    Test-MCPFrontend
     if ($null -ne $script:SubscribeProbeExecutable) {
         Test-SubscribeCore
     }

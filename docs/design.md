@@ -20,6 +20,7 @@
 > |---|---|---|
 > | DA Subscribe core (§18) | 구현됨. `IOPCDataCallback` connection point 기반 | ADR-0013 |
 > | gRPC server streaming `Subscribe` (§34) | 구현됨 | [gRPC API](grpc-api.md#subscribe) |
+> | MCP stdio (ADR-0020) | 명시적 `mcp` 선택으로 기존 DA Runtime에 접근; 기본 HTTP 유지 | [MCP API](mcp-api.md), [ADR-0020](adr/0020-mcp-stdio-frontend.md) |
 > | OPC UA Frontend (§35) | 구현됨, `SecurityPolicy None` 한정. production ready가 아니며 conformance 주장도 아니다 | [OPC UA mapping](opcua-mapping.md), ADR-0016 |
 > | UA Subscription / MonitoredItem / Publish (§5.2 부근) | 구현됨 | [OPC UA mapping](opcua-mapping.md#subscriptions-and-monitoreditems) |
 > | SAFEARRAY (§20.4) | DA 계층은 §20.4가 요구하는 다섯 가지를 모두 보존해 읽고 쓴다. 어떤 실제 소스로도 아직 검증되지 않았고, frontend는 아직 공개하지 않는다 | [ADR-0019](adr/0019-safearray-representation.md) |

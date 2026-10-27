@@ -157,6 +157,16 @@ faces now, which is the same reason no SHA is pinned above.
 
 ## In progress
 
+- 이슈 #226에서 MCP stdio를 명시적으로 선택하는 네 번째 프런트엔드로 추가한다.
+  기본 HTTP와 기존 세 프런트엔드의 동작은 유지하며 MCP는 선택 전에는 비활성 상태다.
+  Status·Browse·Device Read·엄격한 Write·Item Properties와 세션 소유 구독 생성/조회/해제를
+  기존 DA Runtime에 직접 연결한다. JSON 값 코덱을 HTTP와 공유하고 기존 HTTP 회귀 검증을 유지한다.
+  설정 버전 4, setup 저장 전용 선택, Windows Service 거부, 유한 stdio 자원 한계와
+  종료 정리를 ADR-0020 및 `docs/mcp-api.md`에 기록했다.
+  로컬 전체 Go 테스트·vet·의존성 검증·Windows 386/amd64 빌드와 MCP/앱/CLI race 검증,
+  Go SDK 통합 테스트 및 독립 Python 실행 파일 검증은 통과했다. Windows 실제 DA 경로는
+  PR fixture 실행 결과를 확인하기 전까지 검증 완료로 기록하지 않는다.
+
 - PR #224와 #225의 CI 실패는 의존성 변경이 아니라 같은 버전 URL에서
   제공하는 OPC Foundation Part 3 Markdown과 검토 해시의 불일치였다.
   2026-10-11에 현재 원본의 필수 속성 표와 구현에서 참조하는 규칙을

@@ -21,6 +21,7 @@ the shortest route into the project.
 |---|---|---|
 | HTTP/JSON | [HTTP API](http-api.md) | Request/response only; no Subscribe |
 | Typed gRPC | [gRPC API](grpc-api.md) and [protobuf contract](../api/opcda/v1/opcda_access.proto) | Server-streaming Subscribe maps one stream to one DA group |
+| MCP stdio | [MCP API](mcp-api.md) | 명시적 선택 시에만 활성화; 기존 DA 기능과 구독 생성·조회·해제 |
 | OPC UA | [OPC DA to OPC UA mapping](opcua-mapping.md) | `SecurityPolicy None` only; local interoperability, not production readiness |
 
 All frontends use the same DA runtime. HTTP and gRPC preserve DA-native ItemID,

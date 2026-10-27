@@ -19,6 +19,9 @@ on:
       - internal/app/**
       - internal/frontend/http/**
       - internal/frontend/grpc/**
+      - internal/frontend/mcp/**
+      - internal/frontend/dajson/**
+      - scripts/mcp/**
       - internal/validation/stabilityprobe/**
       - internal/validation/grpcprobe/**
       - internal/validation/subscribeprobe/**

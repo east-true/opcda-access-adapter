@@ -102,6 +102,8 @@ func TestValueStoreWalkReachesTheValuePackages(t *testing.T) {
 		filepath.Join("internal", "opcua"),
 		filepath.Join("internal", "frontend", "http"),
 		filepath.Join("internal", "frontend", "grpc"),
+		filepath.Join("internal", "frontend", "mcp"),
+		filepath.Join("internal", "frontend", "dajson"),
 	} {
 		matches, err := filepath.Glob(filepath.Join(root, pkg, "*.go"))
 		if err != nil || len(matches) == 0 {

@@ -5,7 +5,7 @@
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
 A thin Windows adapter that gives modern applications HTTP/JSON, typed gRPC,
-or OPC UA access to one local OPC DA server—without making DA-native clients
+OPC UA, or explicitly selected MCP stdio access to one local OPC DA server—without making DA-native clients
 speak COM or silently rewriting source semantics.
 
 [Quick start](#quick-start) · [Interfaces](#choose-an-interface) ·
@@ -46,8 +46,8 @@ process values.
 | | Current scope |
 |---|---|
 | Source | Exactly one local OPC DA 2.05a server per process |
-| Frontend | Exactly one of HTTP/JSON, typed gRPC, or OPC UA |
-| Operations | Browse, device Read, strict typed Write, item properties; Subscribe over gRPC and OPC UA |
+| Frontend | Exactly one of HTTP/JSON, typed gRPC, OPC UA, or MCP stdio |
+| Operations | Browse, device Read, strict typed Write, item properties; Subscribe over gRPC/OPC UA and MCP group tools |
 | Platform | Native Windows `386` and `amd64` |
 | Execution | Foreground process or SCM-managed `LocalService` |
 | Safe defaults | Loopback listeners; Write disabled |
@@ -107,7 +107,7 @@ result. See [local server detection](docs/local-detection.md).
 The guided flow requires four explicit decisions:
 
 1. choose one detected source;
-2. choose HTTP, gRPC, or OPC UA;
+2. choose HTTP, gRPC, OPC UA, or MCP stdio;
 3. choose foreground, Windows Service, or save-only execution;
 4. review the exact configuration before it is written or started.
 
@@ -157,6 +157,11 @@ Only one frontend runs in an adapter process.
 | [HTTP/JSON](docs/http-api.md) | Scripts and simple integrations | Status, Browse, Read, Write, item properties | Loopback by default; no built-in TLS or authentication |
 | [Typed gRPC](docs/grpc-api.md) | Generated clients and DA-native streaming | HTTP surface plus server-streaming Subscribe | Plaintext loopback by default; no built-in TLS or authentication |
 | [OPC UA](docs/opcua-mapping.md) | Local UA interoperability work | Browse, Read, Write, Subscriptions, DA-to-UA properties | `SecurityPolicy None` only; anonymous, unsigned, unencrypted, not production ready |
+| [MCP stdio](docs/mcp-api.md) | AI 클라이언트의 로컬 DA 접근 | 기존 DA 기능과 구독 생성·조회·해제 | 명시적 `mcp` 선택 시에만 실행; 네트워크 리스너 없음; Write 기본 비활성화 |
+
+MCP는 기본 비활성화다. 설정 버전 4의 `frontend: {"type":"mcp"}`로 선택하고,
+MCP 클라이언트가 `opcda-access-adapter.exe run --config <파일>`을 stdio로 실행한다.
+기존 기본 프런트엔드는 HTTP이며, MCP와 다른 프런트엔드를 동시에 실행하지 않는다.
 
 The authoritative gRPC contract is
 [`api/opcda/v1/opcda_access.proto`](api/opcda/v1/opcda_access.proto). HTTP does
