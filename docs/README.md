@@ -1,6 +1,6 @@
 # Documentation
 
-Start with the [quick start](quick-start.md) for a first connection. Read
+Start with the [quick start](../README.md#quick-start) for a first connection. Read
 [architecture](architecture.md) for the runtime boundaries or
 [implementation status](implementation-status.md) for completion and release blockers.
 
