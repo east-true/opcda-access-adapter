@@ -11,6 +11,29 @@ cross-builds, and Windows ABI tests are not interoperability results.
 | OPC Foundation OPC Classic Core Components TestServer | source commit `efe0d1d1` | Server 2025 | x64 | amd64 | PASS | PASS | PASS | PASS | PASS | PASS | DA 2.05a fixture; [HTTP/reconnect evidence](https://github.com/east-true/opcda-access-adapter/actions/runs/32632091320), [gRPC evidence](https://github.com/east-true/opcda-access-adapter/actions/runs/32752269529), [Subscribe evidence](https://github.com/east-true/opcda-access-adapter/actions/runs/32803232555) |
 | Graybox Software Gray Simulator | file `1.7.9.701`, product `1.7.0.0` | build 10.0.26200.9168 | x86 | 386 | PASS | PASS | PASS | PASS | PASS | PASS | One operator-supplied installation, manual run on 2026-09-16; provenance is not independently established; HTTP, gRPC unary/streaming, DA Subscribe core, and read-only OPC UA exercised |
 
+## 실행 기록: MCP stdio와 OPC Foundation fixture
+
+- 실행일: 2026-10-27. PR #227의 head
+  `c239c6d932b4a6a613a9def8fe00891938f20687`에 대한
+  [실제 DA 실행 40433423781](https://github.com/east-true/opcda-access-adapter/actions/runs/40433423781).
+  Windows Server 2025에서 Windows 386·amd64 양쪽 job이 통과했고 각각
+  `MCP_STDIO_PASS tools=9 source=explicit stdout=protocol-only valuesLogged=false realDA=true`를 기록했다.
+- 원본은 기존에 고정한 OPC Foundation DA 2.05a fixture다. 별도 벤더 바이너리를 추가하지 않았다.
+  어댑터와 같은 SDK를 사용하지 않는 Python 표준 라이브러리 클라이언트가 실제 실행 파일의
+  stdin/stdout으로 MCP `2025-11-25` 초기화·도구 발견·호출·EOF 종료를 검증했다.
+- 기본 Write 차단과 명시적 Write 활성화를 별도 프로세스에서 검증했다.
+  Status의 정확한 CLSID·capability, root/nested Browse, `Test/Int32`와 잘못된 ItemID의
+  순서 있는 부분 Read가 통과했다. 알려진 항목은 `VT_I4`, raw Quality `192`, 소스 시각 존재,
+  잘못된 항목은 `0xC0040007`을 보존했다.
+- Available Item Properties와 값/Quality/시각 속성을 제외한 속성 조회 순서가 유지됐다.
+  `Test/Float`의 `VT_R8` Write는 `TYPE_MISMATCH`, 읽어 둔 값의 `VT_R4` Write 한 번은 성공했다.
+  프로세스 값은 출력하거나 저장하지 않았다.
+- 단일 항목 DA 그룹 생성·원본 수정 주기 보고·초기 callback 조회·명시적 해제 후 그룹 수 0을
+  확인했다. 해제하지 않은 두 번째 그룹을 둔 상태에서 stdin EOF로 어댑터가 정상 종료했다.
+  세션 소유권·병합·무효화 뒤 값 폐기·취소·수용량·정리 호출은 Go 통합 테스트에서 별도로 확인했다.
+- 이 MCP 실행은 change-driven callback·MCP 세션 중 재연결·실제 SAFEARRAY·다른 벤더·
+  다른 MCP 호스트 전체를 검증한 결과가 아니다. 기존 gRPC/DA core 결과와 범위를 혼동하지 않는다.
+
 ## Recorded result: Graybox Gray Simulator
 
 - Executed: 2026-09-16 on one local Windows build 10.0.26200.9168 host.
