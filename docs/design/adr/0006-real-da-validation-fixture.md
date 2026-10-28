@@ -71,7 +71,7 @@ this test fixture is shipped with the adapter.
 ## Validation record
 
 GitHub Actions run
-[`32628886186`](https://github.com/east-true/opcda-access-adapter/actions/runs/32628886186)
+[`32628886186`](https://github.com/jiind/opcda-access-adapter/actions/runs/32628886186)
 passed the complete isolated workflow on 2026-08-23 for both x86/386 and
 x64/amd64. Its source and output Defender scans found no threats, and its real
 local-COM results are recorded without process values in

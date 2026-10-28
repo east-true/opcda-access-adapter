@@ -5,7 +5,7 @@ import (
 	"math"
 	"testing"
 
-	"github.com/east-true/opcda-access-adapter/internal/opcda"
+	"github.com/jiind/opcda-access-adapter/internal/opcda"
 )
 
 // decodeWriteValue turns the JSON a client sent into the exact Go type the

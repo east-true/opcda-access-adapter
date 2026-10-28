@@ -122,24 +122,24 @@ commit SHA are recorded in `docs/validation/compatibility.md`. A workflow defini
 cross-build alone is not a compatibility result.
 
 The first recorded passing result is run
-[`32628886186`](https://github.com/east-true/opcda-access-adapter/actions/runs/32628886186)
+[`32628886186`](https://github.com/jiind/opcda-access-adapter/actions/runs/32628886186)
 for adapter head `5267aec6e05f98dff5da4721ded6315e5a2ba990`. See the compatibility
 matrix for the observations, source pin, executable hashes, and resource
 deltas.
 
 Long-running run
-[`32630548279`](https://github.com/east-true/opcda-access-adapter/actions/runs/32630548279)
+[`32630548279`](https://github.com/jiind/opcda-access-adapter/actions/runs/32630548279)
 passed 100,000 device Reads per architecture at adapter head
 `995c387cb977a37ab80ecd0fc5deb2f4a98e191d`. Its bounded resource deltas are
 also recorded in the compatibility matrix.
 
 Final main run
-[`32632091320`](https://github.com/east-true/opcda-access-adapter/actions/runs/32632091320)
+[`32632091320`](https://github.com/jiind/opcda-access-adapter/actions/runs/32632091320)
 passed the same 100,000-Read scenario for both architectures at main SHA
 `9e8928d729300a67197da35e7bfee6623a861495`.
 
 Windows stability run
-[`32634777223`](https://github.com/east-true/opcda-access-adapter/actions/runs/32634777223)
+[`32634777223`](https://github.com/jiind/opcda-access-adapter/actions/runs/32634777223)
 passed the normal, invalid-input, slow-header, rapid, concurrent, deterministic
 backpressure/recovery, three-cycle source failure, and 200-Read soak profiles
 for both architectures at adapter head
@@ -147,12 +147,12 @@ for both architectures at adapter head
 resource deltas are recorded in the compatibility matrix.
 
 Final-main run
-[`32635274825`](https://github.com/east-true/opcda-access-adapter/actions/runs/32635274825)
+[`32635274825`](https://github.com/jiind/opcda-access-adapter/actions/runs/32635274825)
 repeated and passed the same stability profile for both architectures at merge
 SHA `f55b4bb8e8c092fa2a21f4f35089a14703c81a8d`.
 
 Guided-setup run
-[`32734190245`](https://github.com/east-true/opcda-access-adapter/actions/runs/32734190245)
+[`32734190245`](https://github.com/jiind/opcda-access-adapter/actions/runs/32734190245)
 passed explicit source/frontend/service selection, strict configuration,
 LocalService SCM identity and automatic-start metadata, service-mode local-COM
 connection and device Read, bounded Application Event Log output, and complete
@@ -163,7 +163,7 @@ regression. See the compatibility matrix for the exact observations and the
 limits of this evidence.
 
 Phase 6 gRPC run
-[`32752269529`](https://github.com/east-true/opcda-access-adapter/actions/runs/32752269529)
+[`32752269529`](https://github.com/jiind/opcda-access-adapter/actions/runs/32752269529)
 passed the explicit gRPC guided LocalService lifecycle plus unary Status,
 root/nested Browse, ordered partial Read, disabled Write, strict typed Write,
 source-denied Write, loopback-listener, cleanup, and no-value-logging checks on

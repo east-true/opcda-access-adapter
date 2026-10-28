@@ -9,9 +9,9 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"github.com/east-true/opcda-access-adapter/internal/frontend/dajson"
-	"github.com/east-true/opcda-access-adapter/internal/opcda"
 	"github.com/google/jsonschema-go/jsonschema"
+	"github.com/jiind/opcda-access-adapter/internal/frontend/dajson"
+	"github.com/jiind/opcda-access-adapter/internal/opcda"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 

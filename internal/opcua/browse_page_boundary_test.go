@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/east-true/opcda-access-adapter/internal/opcda"
+	"github.com/jiind/opcda-access-adapter/internal/opcda"
 )
 
 // A Browse answer either fits in one page or it does not, and the value that

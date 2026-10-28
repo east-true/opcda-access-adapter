@@ -21,15 +21,15 @@ cross-builds, and Windows ABI tests are not interoperability results.
 
 | DA Server | Version | Windows | Server bitness | Adapter arch | Connect | Browse | Read | Write | Subscribe | Reconnect | Notes |
 |---|---|---|---|---|---|---|---|---|---|---|---|
-| OPC Foundation OPC Classic Core Components TestServer | source commit `efe0d1d1` | Server 2025 | x86 | 386 | PASS | PASS | PASS | PASS | PASS | PASS | DA 2.05a fixture; [HTTP/reconnect evidence](https://github.com/east-true/opcda-access-adapter/actions/runs/32632091320), [gRPC evidence](https://github.com/east-true/opcda-access-adapter/actions/runs/32752269529), [Subscribe evidence](https://github.com/east-true/opcda-access-adapter/actions/runs/32803232555) |
-| OPC Foundation OPC Classic Core Components TestServer | source commit `efe0d1d1` | Server 2025 | x64 | amd64 | PASS | PASS | PASS | PASS | PASS | PASS | DA 2.05a fixture; [HTTP/reconnect evidence](https://github.com/east-true/opcda-access-adapter/actions/runs/32632091320), [gRPC evidence](https://github.com/east-true/opcda-access-adapter/actions/runs/32752269529), [Subscribe evidence](https://github.com/east-true/opcda-access-adapter/actions/runs/32803232555) |
+| OPC Foundation OPC Classic Core Components TestServer | source commit `efe0d1d1` | Server 2025 | x86 | 386 | PASS | PASS | PASS | PASS | PASS | PASS | DA 2.05a fixture; [HTTP/reconnect evidence](https://github.com/jiind/opcda-access-adapter/actions/runs/32632091320), [gRPC evidence](https://github.com/jiind/opcda-access-adapter/actions/runs/32752269529), [Subscribe evidence](https://github.com/jiind/opcda-access-adapter/actions/runs/32803232555) |
+| OPC Foundation OPC Classic Core Components TestServer | source commit `efe0d1d1` | Server 2025 | x64 | amd64 | PASS | PASS | PASS | PASS | PASS | PASS | DA 2.05a fixture; [HTTP/reconnect evidence](https://github.com/jiind/opcda-access-adapter/actions/runs/32632091320), [gRPC evidence](https://github.com/jiind/opcda-access-adapter/actions/runs/32752269529), [Subscribe evidence](https://github.com/jiind/opcda-access-adapter/actions/runs/32803232555) |
 | Graybox Software Gray Simulator | file `1.7.9.701`, product `1.7.0.0` | build 10.0.26200.9168 | x86 | 386 | PASS | PASS | PASS | PASS | PASS | PASS | One operator-supplied installation, manual run on 2026-09-16; provenance is not independently established; HTTP, gRPC unary/streaming, DA Subscribe core, and read-only OPC UA exercised |
 
 ## Recorded result: MCP stdio and OPC Foundation fixture
 
 - Executed on 2026-10-27 for PR #227 head
   `c239c6d932b4a6a613a9def8fe00891938f20687` in
-  [real-DA run 40433423781](https://github.com/east-true/opcda-access-adapter/actions/runs/40433423781).
+  [real-DA run 40433423781](https://github.com/jiind/opcda-access-adapter/actions/runs/40433423781).
   Both Windows Server 2025 jobs, 386 and amd64, passed and recorded
   `MCP_STDIO_PASS tools=9 source=explicit stdout=protocol-only valuesLogged=false realDA=true`.
 - The source was the existing pinned OPC Foundation DA 2.05a fixture; no vendor
@@ -167,7 +167,7 @@ only, so it added no real-source SAFEARRAY evidence.
 ### Phase 7 DA Subscribe core result
 
 PR #31 workflow run
-[`32803232555`](https://github.com/east-true/opcda-access-adapter/actions/runs/32803232555)
+[`32803232555`](https://github.com/jiind/opcda-access-adapter/actions/runs/32803232555)
 tested adapter head `a287b215960a251ececa5003480d027cff9f6210` on both native
 x86/386 and x64/amd64. No frontend exposes Subscribe, so the probe drove the DA
 runtime directly. Each architecture passed:
@@ -201,7 +201,7 @@ versions.
 ### Phase 8 OPC UA frontend result
 
 PR #51 workflow run
-[`32921155696`](https://github.com/east-true/opcda-access-adapter/actions/runs/32921155696)
+[`32921155696`](https://github.com/jiind/opcda-access-adapter/actions/runs/32921155696)
 tested adapter head `cc228a16f1b154b2c1e109f5a52161b7db32f7c6` on both native x86/386 and
 x64/amd64. Each architecture passed, against the source-built OPC Foundation DA
 2.05a fixture:
@@ -231,7 +231,7 @@ with it. No conformance or interoperability claim is made.
 ### OPC UA subscription result
 
 PR #53 workflow run
-[`32928909002`](https://github.com/east-true/opcda-access-adapter/actions/runs/32928909002)
+[`32928909002`](https://github.com/jiind/opcda-access-adapter/actions/runs/32928909002)
 tested adapter head `e989553efb9d9ab8b7c3e537b54804b314c024d1` on both native x86/386
 and x64/amd64. On top of the earlier UA result, each architecture passed:
 
@@ -253,7 +253,7 @@ The write-disabled default stays covered by the HTTP and gRPC scenarios.
 ### DA error code result
 
 PR #71 workflow run
-[`33069731246`](https://github.com/east-true/opcda-access-adapter/actions/runs/33069731246)
+[`33069731246`](https://github.com/jiind/opcda-access-adapter/actions/runs/33069731246)
 ran `internal/validation/daerrorprobe` against the fixture on both native
 x86/386 and x64/amd64. **Both architectures produced identical results.**
 
@@ -495,7 +495,7 @@ creating an account.
 ### Phase 7 gRPC Subscribe streaming result
 
 PR #34 workflow run
-[`32809889799`](https://github.com/east-true/opcda-access-adapter/actions/runs/32809889799)
+[`32809889799`](https://github.com/jiind/opcda-access-adapter/actions/runs/32809889799)
 tested adapter head `a24c0eca5ab598028d413ef04276c1567257431e` on both native x86/386 and
 x64/amd64. The write-enabled gRPC scenario drove the server-streaming
 `Subscribe` RPC against the fixture. Each architecture passed:
@@ -520,7 +520,7 @@ broad vendor-compatibility claim.
 ### Phase 6 gRPC frontend result
 
 PR #29 workflow run
-[`32752269529`](https://github.com/east-true/opcda-access-adapter/actions/runs/32752269529)
+[`32752269529`](https://github.com/jiind/opcda-access-adapter/actions/runs/32752269529)
 tested adapter head `b83b7c2b159194cbac94ce66f52b325b9c22031f` on both native
 x86/386 and x64/amd64 before merge SHA
 `21345739af98de981d12de36c6805f64e5b502ff`. Each architecture passed:
@@ -548,7 +548,7 @@ or external network exposure.
 `latencyprobe` runs in-process against the fixture and timestamps the
 boundaries of a DA command's life, so the adapter's share is separable from the
 source's call rather than estimated around it. Workflow run
-[`33980592074`](https://github.com/east-true/opcda-access-adapter/actions/runs/33980592074),
+[`33980592074`](https://github.com/jiind/opcda-access-adapter/actions/runs/33980592074),
 2,000 Reads per case after a warm-up.
 
 | | 386 | amd64 |
@@ -577,7 +577,7 @@ document applies to every other fixture result.
 ### Long-running resource result
 
 Workflow run
-[`32630548279`](https://github.com/east-true/opcda-access-adapter/actions/runs/32630548279)
+[`32630548279`](https://github.com/jiind/opcda-access-adapter/actions/runs/32630548279)
 at adapter head `995c387cb977a37ab80ecd0fc5deb2f4a98e191d` repeated the complete
 scenario and then passed 100,000 device Reads per architecture. The x86 job
 took 3m04s overall and observed adapter handles `+18`, adapter private bytes
@@ -590,7 +590,7 @@ operation failed and no process value was logged.
 ### Final main confirmation
 
 Workflow run
-[`32632091320`](https://github.com/east-true/opcda-access-adapter/actions/runs/32632091320)
+[`32632091320`](https://github.com/jiind/opcda-access-adapter/actions/runs/32632091320)
 repeated the complete 100,000-Read scenario at main SHA
 `9e8928d729300a67197da35e7bfee6623a861495`. Both source and built-output
 Defender scans found no threats. The x86 result observed adapter handles
@@ -603,7 +603,7 @@ Write, outage, and reconnect observations matched the recorded result above.
 ### Windows HTTP and failure stability result
 
 Workflow run
-[`32634777223`](https://github.com/east-true/opcda-access-adapter/actions/runs/32634777223)
+[`32634777223`](https://github.com/jiind/opcda-access-adapter/actions/runs/32634777223)
 passed the bounded stability profile on Windows Server 2025 for adapter head
 `ccc28487dfc33e1767e3f42c547a6d59a5ae4ca4` on both native x86/386 and
 x64/amd64. Each architecture passed:
@@ -639,7 +639,7 @@ Microsoft Defender threats. This antivirus result is a bounded observation,
 not proof that arbitrary code is harmless. No process value was logged.
 
 Final-main workflow run
-[`32635274825`](https://github.com/east-true/opcda-access-adapter/actions/runs/32635274825)
+[`32635274825`](https://github.com/jiind/opcda-access-adapter/actions/runs/32635274825)
 repeated the entire profile at merge SHA
 `f55b4bb8e8c092fa2a21f4f35089a14703c81a8d`. The x86 profile completed in
 9.322s with adapter deltas of `+16` handles and `+6,725,632` private bytes;
@@ -653,7 +653,7 @@ both source/output Defender scans found no threats.
 ### Local registration detection result
 
 PR #24 workflow run
-[`32706109366`](https://github.com/east-true/opcda-access-adapter/actions/runs/32706109366)
+[`32706109366`](https://github.com/jiind/opcda-access-adapter/actions/runs/32706109366)
 executed at adapter head `387ba9c269848035980b544cb816dafdef92d2d1`
 on ephemeral GitHub-hosted Windows Server 2025 VMs. On both x86/386 and
 x64/amd64, the matching detector returned the pinned fixture's exact registered
@@ -661,7 +661,7 @@ ProgID and CLSID exactly once. The fixture process count was zero immediately
 before and after the command, so registration detection did not activate that
 vendor server. Native repeated COM lifecycle tests also passed on both
 architectures in CI run
-[`32706109315`](https://github.com/east-true/opcda-access-adapter/actions/runs/32706109315).
+[`32706109315`](https://github.com/jiind/opcda-access-adapter/actions/runs/32706109315).
 
 This observation confirms bounded local component-category enumeration for
 the pinned fixture only. A detected registration is not evidence that the
@@ -671,7 +671,7 @@ behavior is compatible, so it does not add or upgrade a matrix PASS row.
 ### Guided setup and Windows Service result
 
 PR #26 workflow run
-[`32734190245`](https://github.com/east-true/opcda-access-adapter/actions/runs/32734190245)
+[`32734190245`](https://github.com/jiind/opcda-access-adapter/actions/runs/32734190245)
 executed at adapter head `0fc3684128919ff28f94b9257c0dbc30e34ae328`
 on ephemeral GitHub-hosted Windows Server 2025 VMs. Both native x86/386 and
 x64/amd64 jobs passed the following assertions against the pinned fixture:

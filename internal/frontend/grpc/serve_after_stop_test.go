@@ -4,7 +4,7 @@ import (
 	"net"
 	"testing"
 
-	"github.com/east-true/opcda-access-adapter/internal/opcda"
+	"github.com/jiind/opcda-access-adapter/internal/opcda"
 )
 
 // Serve is started in a goroutine, so a shutdown can arrive before it runs.

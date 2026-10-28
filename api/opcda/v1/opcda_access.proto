@@ -2,7 +2,7 @@ syntax = "proto3";
 
 package opcda.access.v1;
 
-option go_package = "github.com/east-true/opcda-access-adapter/api/opcda/v1;opcdav1";
+option go_package = "github.com/jiind/opcda-access-adapter/api/opcda/v1;opcdav1";
 
 // OPCDAAccess exposes one explicitly configured local OPC DA source.
 service OPCDAAccess {

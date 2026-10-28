@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/east-true/opcda-access-adapter/internal/app"
-	"github.com/east-true/opcda-access-adapter/internal/opcda"
+	"github.com/jiind/opcda-access-adapter/internal/app"
+	"github.com/jiind/opcda-access-adapter/internal/opcda"
 )
 
 // The exit code is the whole of what a supervisor sees. A Windows Service

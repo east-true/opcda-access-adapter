@@ -5,8 +5,8 @@ import (
 	"encoding/json"
 	stdhttp "net/http"
 
-	"github.com/east-true/opcda-access-adapter/internal/frontend/dajson"
-	"github.com/east-true/opcda-access-adapter/internal/opcda"
+	"github.com/jiind/opcda-access-adapter/internal/frontend/dajson"
+	"github.com/jiind/opcda-access-adapter/internal/opcda"
 )
 
 type writeHTTPRequest struct {

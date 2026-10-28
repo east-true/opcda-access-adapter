@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/east-true/opcda-access-adapter/internal/app"
-	"github.com/east-true/opcda-access-adapter/internal/opcda"
+	"github.com/jiind/opcda-access-adapter/internal/app"
+	"github.com/jiind/opcda-access-adapter/internal/opcda"
 )
 
 // TestGuidedMCPSetupSavesOnly는 프롬프트 출력과 MCP stdio가 섞이지 않게 한다.

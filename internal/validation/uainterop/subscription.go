@@ -6,7 +6,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/east-true/opcda-access-adapter/internal/opcda"
+	"github.com/jiind/opcda-access-adapter/internal/opcda"
 )
 
 // revisedUpdateRateFor rounds a requested rate up to a whole multiple of

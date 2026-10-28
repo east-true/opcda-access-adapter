@@ -6,7 +6,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/east-true/opcda-access-adapter/internal/opcda"
+	"github.com/jiind/opcda-access-adapter/internal/opcda"
 )
 
 // UA Subscriptions follow OPC 10000-4 Tables 82, 63, 89, 164, 161, 140 and 148.

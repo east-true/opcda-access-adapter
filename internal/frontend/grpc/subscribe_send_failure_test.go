@@ -10,8 +10,8 @@ import (
 	grpcgo "google.golang.org/grpc"
 	"google.golang.org/grpc/metadata"
 
-	opcdav1 "github.com/east-true/opcda-access-adapter/api/opcda/v1"
-	"github.com/east-true/opcda-access-adapter/internal/opcda"
+	opcdav1 "github.com/jiind/opcda-access-adapter/api/opcda/v1"
+	"github.com/jiind/opcda-access-adapter/internal/opcda"
 )
 
 // The Subscribe stream is tested end to end over a real connection, which

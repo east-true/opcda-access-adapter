@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/east-true/opcda-access-adapter/internal/opcda"
+	"github.com/jiind/opcda-access-adapter/internal/opcda"
 )
 
 // Table 74 has the server refuse a response that *exceeds* the MaxMessageSize

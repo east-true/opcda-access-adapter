@@ -63,9 +63,9 @@ GitHub's artifact attestation can also be verified with the GitHub CLI:
 
 ```bash
 gh attestation verify opcda-access-adapter_*.zip \
-  --repo east-true/opcda-access-adapter
+  --repo jiind/opcda-access-adapter
 gh attestation verify SHA256SUMS \
-  --repo east-true/opcda-access-adapter
+  --repo jiind/opcda-access-adapter
 ```
 
 Checksums and attestations establish artifact integrity and build provenance;

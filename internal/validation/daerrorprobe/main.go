@@ -24,9 +24,9 @@ import (
 	"os"
 	"time"
 
-	opcdav1 "github.com/east-true/opcda-access-adapter/api/opcda/v1"
-	"github.com/east-true/opcda-access-adapter/internal/opcda"
-	"github.com/east-true/opcda-access-adapter/internal/opcua"
+	opcdav1 "github.com/jiind/opcda-access-adapter/api/opcda/v1"
+	"github.com/jiind/opcda-access-adapter/internal/opcda"
+	"github.com/jiind/opcda-access-adapter/internal/opcua"
 	grpcgo "google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 )

@@ -11,7 +11,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/east-true/opcda-access-adapter/internal/opcua"
+	"github.com/jiind/opcda-access-adapter/internal/opcua"
 )
 
 func main() {

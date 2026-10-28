@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/east-true/opcda-access-adapter/internal/opcda"
+	"github.com/jiind/opcda-access-adapter/internal/opcda"
 )
 
 // The rows are OPC 10000-8 Table A.2 exactly, plus the adapter's stated choice

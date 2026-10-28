@@ -12,10 +12,10 @@ import (
 	"sync"
 	"time"
 
-	grpcfrontend "github.com/east-true/opcda-access-adapter/internal/frontend/grpc"
-	frontend "github.com/east-true/opcda-access-adapter/internal/frontend/http"
-	"github.com/east-true/opcda-access-adapter/internal/opcda"
-	"github.com/east-true/opcda-access-adapter/internal/opcua"
+	grpcfrontend "github.com/jiind/opcda-access-adapter/internal/frontend/grpc"
+	frontend "github.com/jiind/opcda-access-adapter/internal/frontend/http"
+	"github.com/jiind/opcda-access-adapter/internal/opcda"
+	"github.com/jiind/opcda-access-adapter/internal/opcua"
 )
 
 type Service struct {

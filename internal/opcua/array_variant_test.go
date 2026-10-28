@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"testing"
 
-	"github.com/east-true/opcda-access-adapter/internal/opcda"
+	"github.com/jiind/opcda-access-adapter/internal/opcda"
 )
 
 // A UA Variant carries an array as the array bit, a length prefix and an
