@@ -2,7 +2,7 @@
 
 - Status: Accepted
 - Date: 2026-10-27
-- Issue: [#226](https://github.com/east-true/opcda-access-adapter/issues/226)
+- Issue: [#226](https://github.com/jiind/opcda-access-adapter/issues/226)
 
 ## Context
 

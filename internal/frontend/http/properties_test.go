@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/east-true/opcda-access-adapter/internal/opcda"
+	"github.com/jiind/opcda-access-adapter/internal/opcda"
 )
 
 // Go's JSON decoder matches field names case-insensitively, which is why every

@@ -5,7 +5,7 @@ import (
 	"io"
 	"runtime"
 
-	"github.com/east-true/opcda-access-adapter/internal/app"
+	"github.com/jiind/opcda-access-adapter/internal/app"
 )
 
 // version and commit are set only by the release build. Source builds retain

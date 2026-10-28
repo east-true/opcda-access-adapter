@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	opcdav1 "github.com/east-true/opcda-access-adapter/api/opcda/v1"
-	"github.com/east-true/opcda-access-adapter/internal/opcda"
+	opcdav1 "github.com/jiind/opcda-access-adapter/api/opcda/v1"
+	"github.com/jiind/opcda-access-adapter/internal/opcda"
 )
 
 // Every bound in this frontend says what a client may ask for, and the gRPC

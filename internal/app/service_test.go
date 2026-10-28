@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	opcdav1 "github.com/east-true/opcda-access-adapter/api/opcda/v1"
-	"github.com/east-true/opcda-access-adapter/internal/opcda"
+	opcdav1 "github.com/jiind/opcda-access-adapter/api/opcda/v1"
+	"github.com/jiind/opcda-access-adapter/internal/opcda"
 	grpcgo "google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 )

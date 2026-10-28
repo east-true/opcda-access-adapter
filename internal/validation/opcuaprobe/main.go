@@ -15,7 +15,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/east-true/opcda-access-adapter/internal/opcua"
+	"github.com/jiind/opcda-access-adapter/internal/opcua"
 )
 
 // errSourceNotConnected is the one Browse status that means "not yet" rather

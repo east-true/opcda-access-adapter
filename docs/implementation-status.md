@@ -76,4 +76,4 @@ apply to their recorded revisions.
 The [decision index](design/adr/README.md) lists the accepted design decisions.
 Documentation uses frontend, operations, validation, and design directories.
 Each frontend has an overview and can add operation-specific pages.
-The documentation cleanup is tracked in [#228](https://github.com/east-true/opcda-access-adapter/issues/228).
+The documentation cleanup is tracked in [#228](https://github.com/jiind/opcda-access-adapter/issues/228).

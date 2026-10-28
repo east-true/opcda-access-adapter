@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/east-true/opcda-access-adapter/internal/opcda"
+	"github.com/jiind/opcda-access-adapter/internal/opcda"
 )
 
 // FuzzDecodeUABinary drives the decoder with arbitrary bytes. A malformed

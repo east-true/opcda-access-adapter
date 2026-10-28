@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	opcdav1 "github.com/east-true/opcda-access-adapter/api/opcda/v1"
-	"github.com/east-true/opcda-access-adapter/internal/opcda"
+	opcdav1 "github.com/jiind/opcda-access-adapter/api/opcda/v1"
+	"github.com/jiind/opcda-access-adapter/internal/opcda"
 )
 
 // A Write result carries an ok flag, and the flag is what a client reads to

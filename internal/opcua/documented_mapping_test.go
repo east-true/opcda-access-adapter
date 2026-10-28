@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/east-true/opcda-access-adapter/internal/opcda"
+	"github.com/jiind/opcda-access-adapter/internal/opcda"
 )
 
 // Part 8 Tables A.4 and A.5 map what the source said, and the mapping document

@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	opcdav1 "github.com/east-true/opcda-access-adapter/api/opcda/v1"
-	"github.com/east-true/opcda-access-adapter/internal/opcda"
+	opcdav1 "github.com/jiind/opcda-access-adapter/api/opcda/v1"
+	"github.com/jiind/opcda-access-adapter/internal/opcda"
 )
 
 // A.3.1.2 lets a branch carry an ItemID and lets it not: a wrapper obtains one

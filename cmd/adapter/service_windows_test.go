@@ -6,8 +6,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/east-true/opcda-access-adapter/internal/app"
-	"github.com/east-true/opcda-access-adapter/internal/opcda"
+	"github.com/jiind/opcda-access-adapter/internal/app"
+	"github.com/jiind/opcda-access-adapter/internal/opcda"
 )
 
 // TestMCPServiceRejectedBeforeSCM는 stdio 설정으로 서비스 설치를 시작하지 않게 한다.

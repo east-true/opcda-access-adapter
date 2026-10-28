@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/east-true/opcda-access-adapter/internal/opcda"
+	"github.com/jiind/opcda-access-adapter/internal/opcda"
 )
 
 // The address space is populated from DA Browse lazily: a branch is browsed the

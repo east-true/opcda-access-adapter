@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/east-true/opcda-access-adapter/internal/opcda"
+	"github.com/jiind/opcda-access-adapter/internal/opcda"
 )
 
 // The listener serves every connection on its own goroutine and the owning

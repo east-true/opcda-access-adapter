@@ -4,8 +4,8 @@ import (
 	"context"
 	"testing"
 
-	opcdav1 "github.com/east-true/opcda-access-adapter/api/opcda/v1"
-	"github.com/east-true/opcda-access-adapter/internal/opcda"
+	opcdav1 "github.com/jiind/opcda-access-adapter/api/opcda/v1"
+	"github.com/jiind/opcda-access-adapter/internal/opcda"
 )
 
 // INV-10 says an unsupported VARTYPE fails explicitly rather than being coerced

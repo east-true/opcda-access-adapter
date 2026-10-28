@@ -4,8 +4,8 @@ import (
 	"math"
 	"testing"
 
-	opcdav1 "github.com/east-true/opcda-access-adapter/api/opcda/v1"
-	"github.com/east-true/opcda-access-adapter/internal/opcda"
+	opcdav1 "github.com/jiind/opcda-access-adapter/api/opcda/v1"
+	"github.com/jiind/opcda-access-adapter/internal/opcda"
 )
 
 // A Write carries its value in a protobuf field wider than the VARTYPE it

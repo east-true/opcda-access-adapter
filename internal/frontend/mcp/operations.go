@@ -5,8 +5,8 @@ import (
 	"encoding/json"
 	"slices"
 
-	"github.com/east-true/opcda-access-adapter/internal/frontend/dajson"
-	"github.com/east-true/opcda-access-adapter/internal/opcda"
+	"github.com/jiind/opcda-access-adapter/internal/frontend/dajson"
+	"github.com/jiind/opcda-access-adapter/internal/opcda"
 )
 
 // status는 선택한 소스와 DA 런타임의 실제 상태를 값 없이 보고한다.

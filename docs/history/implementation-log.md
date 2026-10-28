@@ -363,8 +363,8 @@ faces now, which is the same reason no SHA is pinned above.
 ## Validation results
 
 - On 2026-10-27, PR #227 head `c239c6d932b4a6a613a9def8fe00891938f20687`
-  passed [eight CI jobs](https://github.com/east-true/opcda-access-adapter/actions/runs/40433423777)
-  and [two real-DA jobs](https://github.com/east-true/opcda-access-adapter/actions/runs/40433423781).
+  passed [eight CI jobs](https://github.com/jiind/opcda-access-adapter/actions/runs/40433423777)
+  and [two real-DA jobs](https://github.com/jiind/opcda-access-adapter/actions/runs/40433423781).
   Both Windows architecture logs recorded `MCP_STDIO_PASS`. Local full tests,
   race checks, vet, module verification, both Windows builds, and independent
   Python stdio validation passed. Go client/transport tests covered invalidation,
@@ -424,7 +424,7 @@ faces now, which is the same reason no SHA is pinned above.
   written rather than that the runner happened to be fast. No product behavior
   and no assertion were weakened.
 - PR #53 real-DA run
-  [`32928909002`](https://github.com/east-true/opcda-access-adapter/actions/runs/32928909002)
+  [`32928909002`](https://github.com/jiind/opcda-access-adapter/actions/runs/32928909002)
   passed on both x86/386 and x64/amd64. The UA probe created a Subscription and
   MonitoredItem against the fixture, received the server's initial snapshot and
   two change-driven notifications induced through UA Write, and deleted the
@@ -439,11 +439,11 @@ faces now, which is the same reason no SHA is pinned above.
   notifications, since both come back through AddItems.
 
 - PR #51 CI run
-  [`32921155729`](https://github.com/east-true/opcda-access-adapter/actions/runs/32921155729)
+  [`32921155729`](https://github.com/jiind/opcda-access-adapter/actions/runs/32921155729)
   passed quality, race/fuzz checks, release packaging, both Windows builds, and
   both native Windows test jobs at head `cc228a16f1b154b2c1e109f5a52161b7db32f7c6`.
 - PR #51 real-DA run
-  [`32921155696`](https://github.com/east-true/opcda-access-adapter/actions/runs/32921155696)
+  [`32921155696`](https://github.com/jiind/opcda-access-adapter/actions/runs/32921155696)
   passed on both x86/386 and x64/amd64. A new `opcuaprobe` drove the UA frontend
   against the fixture through the connection sequence, a secure channel,
   `GetEndpoints`, a session, a Browse walk down to the fixture's three DA
@@ -461,7 +461,7 @@ faces now, which is the same reason no SHA is pinned above.
   version is now a single script constant.
 
 - PR #34 CI run
-  [`32809889776`](https://github.com/east-true/opcda-access-adapter/actions/runs/32809889776)
+  [`32809889776`](https://github.com/jiind/opcda-access-adapter/actions/runs/32809889776)
   passed quality, race/fuzz checks, release packaging, both Windows builds, and
   both native Windows test jobs at head
   `a24c0eca5ab598028d413ef04276c1567257431e`. The protobuf bindings were
@@ -469,7 +469,7 @@ faces now, which is the same reason no SHA is pinned above.
   `protoc-gen-go-grpc 1.6.2`, after first confirming that toolchain reproduced
   the committed files byte-for-byte.
 - PR #34 real-DA run
-  [`32809889799`](https://github.com/east-true/opcda-access-adapter/actions/runs/32809889799)
+  [`32809889799`](https://github.com/jiind/opcda-access-adapter/actions/runs/32809889799)
   passed on both x86/386 and x64/amd64. The write-enabled gRPC scenario opened
   the Subscribe stream, received a `created` message reporting the source
   revised rate of `300ms` for a requested `250ms` with all three items active,
@@ -480,11 +480,11 @@ faces now, which is the same reason no SHA is pinned above.
   200-Read soak regression also passed. Exact figures are in
   `docs/validation/compatibility.md`.
 - Post-merge CI run
-  [`32806556135`](https://github.com/east-true/opcda-access-adapter/actions/runs/32806556135)
+  [`32806556135`](https://github.com/jiind/opcda-access-adapter/actions/runs/32806556135)
   passed quality, release packaging, both Windows builds, and both native
   Windows test jobs at main SHA `717b04dadadc165cef78efdd70bda21f0af836a2`.
 - PR #31 CI run
-  [`32803232566`](https://github.com/east-true/opcda-access-adapter/actions/runs/32803232566)
+  [`32803232566`](https://github.com/jiind/opcda-access-adapter/actions/runs/32803232566)
   passed quality, race/fuzz checks, release packaging, both Windows builds, and
   both native Windows test jobs at head
   `a287b215960a251ececa5003480d027cff9f6210`. The Windows jobs run
@@ -496,7 +496,7 @@ faces now, which is the same reason no SHA is pinned above.
   populated vtable also confirms `syscall.NewCallback` accepts every
   IOPCDataCallback signature, including the eleven-argument `OnDataChange`.
 - PR #31 real-DA run
-  [`32803232555`](https://github.com/east-true/opcda-access-adapter/actions/runs/32803232555)
+  [`32803232555`](https://github.com/jiind/opcda-access-adapter/actions/runs/32803232555)
   passed on Windows Server 2025 for both x86/386 and x64/amd64. A new
   `subscribeprobe` drove the DA runtime directly, since no frontend exposes
   Subscribe. Both architectures created a DA group per subscription with all
@@ -537,12 +537,12 @@ faces now, which is the same reason no SHA is pinned above.
   licenses, provenance, and binary deltas are recorded in ADR-0012 and
   `THIRD_PARTY_NOTICES.md`.
 - PR #29 CI run
-  [`32752269432`](https://github.com/east-true/opcda-access-adapter/actions/runs/32752269432)
+  [`32752269432`](https://github.com/jiind/opcda-access-adapter/actions/runs/32752269432)
   passed quality, race/fuzz checks, release packaging, Windows builds, and
   native Windows tests on 386 and amd64 at head
   `b83b7c2b159194cbac94ce66f52b325b9c22031f`.
 - PR #29 real-DA run
-  [`32752269529`](https://github.com/east-true/opcda-access-adapter/actions/runs/32752269529)
+  [`32752269529`](https://github.com/jiind/opcda-access-adapter/actions/runs/32752269529)
   passed on Windows Server 2025 for x86/386 and x64/amd64. Both jobs passed
   gRPC Status, root/nested Browse, ordered partial Read with exact DA metadata,
   disabled Write, strict typed Write, source-denied Write, explicit guided
@@ -565,12 +565,12 @@ faces now, which is the same reason no SHA is pinned above.
   (6.68%) on 386 and 464,896 bytes (7.01%) on amd64. License, provenance, and
   runtime impact are recorded in ADR-0011 and `THIRD_PARTY_NOTICES.md`.
 - PR #26 CI run
-  [`32734190208`](https://github.com/east-true/opcda-access-adapter/actions/runs/32734190208)
+  [`32734190208`](https://github.com/jiind/opcda-access-adapter/actions/runs/32734190208)
   passed quality, race/fuzz checks, release packaging, both Windows builds,
   and native Windows tests on 386 and amd64 at head
   `0fc3684128919ff28f94b9257c0dbc30e34ae328`.
 - PR #26 real-DA run
-  [`32734190245`](https://github.com/east-true/opcda-access-adapter/actions/runs/32734190245)
+  [`32734190245`](https://github.com/jiind/opcda-access-adapter/actions/runs/32734190245)
   passed on Windows Server 2025 for both x86/386 and x64/amd64. Guided setup
   required explicit fixture and HTTP selections, wrote version 1 configuration
   with the exact CLSID and Write disabled, installed an automatic-start
@@ -581,11 +581,11 @@ faces now, which is the same reason no SHA is pinned above.
   concurrent requests, bounded overload recovery, three outage/reconnect
   cycles, and 200-Read soak regression also passed on both architectures.
 - Post-merge CI run
-  [`32734895495`](https://github.com/east-true/opcda-access-adapter/actions/runs/32734895495)
+  [`32734895495`](https://github.com/jiind/opcda-access-adapter/actions/runs/32734895495)
   passed quality, race/fuzz checks, release packaging, both Windows builds, and
   both native Windows test jobs at main SHA
   `8c166ebafbd562a8c94b4857ff4ba82e10c550e1`. Dependency Graph run
-  [`32734900512`](https://github.com/east-true/opcda-access-adapter/actions/runs/32734900512)
+  [`32734900512`](https://github.com/jiind/opcda-access-adapter/actions/runs/32734900512)
   also passed at that SHA.
 
 - On 2026-08-24, `feat/local-da-detection` passed `go test ./...`,
@@ -603,7 +603,7 @@ faces now, which is the same reason no SHA is pinned above.
   APIs. Its BSD-3-Clause license, provenance, module graph, and runtime impact
   are reviewed in ADR-0011; it is not an OPC SDK.
 - PR #24 CI run
-  [`32706109315`](https://github.com/east-true/opcda-access-adapter/actions/runs/32706109315)
+  [`32706109315`](https://github.com/jiind/opcda-access-adapter/actions/runs/32706109315)
   passed quality, release packaging, both Windows builds, and native Windows
   tests on 386 and amd64 at head
   `387ba9c269848035980b544cb816dafdef92d2d1`. An initial run exposed and
@@ -611,7 +611,7 @@ faces now, which is the same reason no SHA is pinned above.
   registration inventory cannot change during the test; no product behavior
   was weakened.
 - PR #24 real-DA run
-  [`32706109366`](https://github.com/east-true/opcda-access-adapter/actions/runs/32706109366)
+  [`32706109366`](https://github.com/jiind/opcda-access-adapter/actions/runs/32706109366)
   passed on Windows Server 2025 for both x86/386 and x64/amd64. After the
   pinned OPC Foundation DA 2.05a fixture was registered, `detect` returned its
   exact ProgID and CLSID exactly once. The fixture process count was zero both
@@ -621,7 +621,7 @@ faces now, which is the same reason no SHA is pinned above.
   registration-detection evidence for that fixture, not broad vendor
   compatibility.
 - Post-merge CI run
-  [`32706475946`](https://github.com/east-true/opcda-access-adapter/actions/runs/32706475946)
+  [`32706475946`](https://github.com/jiind/opcda-access-adapter/actions/runs/32706475946)
   passed quality, release packaging, both Windows builds, and both native
   Windows test jobs at main SHA
   `1fc9b803973af81efca4ab3bbe47a14334dac123`.
@@ -636,15 +636,15 @@ faces now, which is the same reason no SHA is pinned above.
   were not executed locally on Windows.
 - `go mod verify` passed and `go list -m all` still reports only this module.
 - PR #22 CI run
-  [`32698464078`](https://github.com/east-true/opcda-access-adapter/actions/runs/32698464078)
+  [`32698464078`](https://github.com/jiind/opcda-access-adapter/actions/runs/32698464078)
   passed quality, race/fuzz checks, release packaging, both Windows builds, and
   both native Windows test jobs. Its OPC Foundation regression run
-  [`32698464069`](https://github.com/east-true/opcda-access-adapter/actions/runs/32698464069)
+  [`32698464069`](https://github.com/jiind/opcda-access-adapter/actions/runs/32698464069)
   passed the expanded anomalous-input profile and the full local-COM scenario
   on x86/386 and x64/amd64. This hosted evidence does not replace the paused
   local destructive matrix.
 - Post-merge CI run
-  [`32699178370`](https://github.com/east-true/opcda-access-adapter/actions/runs/32699178370)
+  [`32699178370`](https://github.com/jiind/opcda-access-adapter/actions/runs/32699178370)
   passed at `62a5aae82b3dd8acbe9b7019d3732ca69d072c3a`.
 - On 2026-08-24, the VM-free hardening branch passed `go test ./...`,
   `go vet ./...`, `go test -race ./...`, and 20 consecutive full-suite runs
@@ -661,15 +661,15 @@ faces now, which is the same reason no SHA is pinned above.
 - `go mod verify` passed and `go list -m all` reported only this module; the
   production code still has no third-party Go module dependency.
 - PR #20 CI run
-  [`32688123759`](https://github.com/east-true/opcda-access-adapter/actions/runs/32688123759)
+  [`32688123759`](https://github.com/jiind/opcda-access-adapter/actions/runs/32688123759)
   passed formatting, unit tests, race detection, fuzz smoke tests, vet, release
   packaging, both Windows builds, and both native Windows test jobs. Its
   separate OPC Foundation regression run
-  [`32688123745`](https://github.com/east-true/opcda-access-adapter/actions/runs/32688123745)
+  [`32688123745`](https://github.com/jiind/opcda-access-adapter/actions/runs/32688123745)
   passed on x86/386 and x64/amd64. Those hosted results are regression evidence,
   not the paused local destructive result.
 - Post-merge CI run
-  [`32688595542`](https://github.com/east-true/opcda-access-adapter/actions/runs/32688595542)
+  [`32688595542`](https://github.com/jiind/opcda-access-adapter/actions/runs/32688595542)
   passed all six required checks at `c010e6c2042c8c532ab22d747dae1e4afb0bff72`.
 - PRs #1 through #9 were merged only after all required checks passed.
 - Main CI run `32623072909` passed at the Phase 5 merge SHA with five checks:
@@ -686,7 +686,7 @@ faces now, which is the same reason no SHA is pinned above.
 - No test double, cross-build, or Windows ABI result is recorded as real OPC
   DA interoperability.
 - Real-DA workflow run
-  [`32628886186`](https://github.com/east-true/opcda-access-adapter/actions/runs/32628886186)
+  [`32628886186`](https://github.com/jiind/opcda-access-adapter/actions/runs/32628886186)
   passed on Windows Server 2025 for native x86/386 and x64/amd64. Both jobs
   source-built the pinned OPC Foundation DA 2.05a fixture, passed pre/post
   Defender scans, then passed local-COM Connect, root/nested Browse, ordered
@@ -697,23 +697,23 @@ faces now, which is the same reason no SHA is pinned above.
   ItemID HRESULT `0xC0040007`. Exact evidence and bounded resource deltas are
   recorded in `docs/validation/compatibility.md` without process values.
 - Long-running workflow run
-  [`32630548279`](https://github.com/east-true/opcda-access-adapter/actions/runs/32630548279)
+  [`32630548279`](https://github.com/jiind/opcda-access-adapter/actions/runs/32630548279)
   repeated the full scenario and passed 100,000 device Reads on each
   architecture. Adapter handle growth was `+18` on each; private-byte growth
   was `+5,373,952` on 386 and `+5,787,648` on amd64, all within the explicit
   harness ceilings. Server deltas also remained within their bounds.
 - Final-main CI run
-  [`32632024080`](https://github.com/east-true/opcda-access-adapter/actions/runs/32632024080)
+  [`32632024080`](https://github.com/jiind/opcda-access-adapter/actions/runs/32632024080)
   passed formatting, Linux tests, vet, both Windows builds, and both native
   Windows test jobs at main SHA `9e8928d729300a67197da35e7bfee6623a861495`.
 - Final-main real-DA run
-  [`32632091320`](https://github.com/east-true/opcda-access-adapter/actions/runs/32632091320)
+  [`32632091320`](https://github.com/jiind/opcda-access-adapter/actions/runs/32632091320)
   passed the full scenario plus 100,000 device Reads on each architecture at
   the same SHA. Adapter growth was 386 `+16` handles/`+5,287,936` private
   bytes and amd64 `+18` handles/`+5,730,304` private bytes; source and built
   outputs passed Defender scans and all resource ceilings held.
 - PR #11 run
-  [`32634777223`](https://github.com/east-true/opcda-access-adapter/actions/runs/32634777223)
+  [`32634777223`](https://github.com/jiind/opcda-access-adapter/actions/runs/32634777223)
   passed on both Windows x86/386 and x64/amd64: strict anomalous-input checks,
   48 incomplete-header connections, 5,000 rapid Reads, 3,200 mixed requests
   from 16 workers, deterministic saturation of 32 request slots with 16
@@ -722,12 +722,12 @@ faces now, which is the same reason no SHA is pinned above.
   `+5,640,192` private bytes, and x64 `+8` handles and `+6,463,488` private
   bytes; all explicit ceilings held.
 - Final-main CI run
-  [`32635094747`](https://github.com/east-true/opcda-access-adapter/actions/runs/32635094747)
+  [`32635094747`](https://github.com/jiind/opcda-access-adapter/actions/runs/32635094747)
   passed formatting, Linux tests, vet, both Windows builds, and both native
   Windows test jobs at merge SHA
   `f55b4bb8e8c092fa2a21f4f35089a14703c81a8d`.
 - Final-main stability run
-  [`32635274825`](https://github.com/east-true/opcda-access-adapter/actions/runs/32635274825)
+  [`32635274825`](https://github.com/jiind/opcda-access-adapter/actions/runs/32635274825)
   repeated the complete profile on the same SHA. Both x86/386 and x64/amd64
   passed all stages. Adapter deltas were x86 `+16` handles/`+6,725,632`
   private bytes and x64 `+16` handles/`+5,763,072` private bytes; source and

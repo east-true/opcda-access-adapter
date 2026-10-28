@@ -11,8 +11,8 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/east-true/opcda-access-adapter/internal/app"
-	"github.com/east-true/opcda-access-adapter/internal/opcda"
+	"github.com/jiind/opcda-access-adapter/internal/app"
+	"github.com/jiind/opcda-access-adapter/internal/opcda"
 )
 
 // mainDependencies is what the top-level command needs from outside itself.

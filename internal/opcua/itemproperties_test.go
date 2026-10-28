@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/east-true/opcda-access-adapter/internal/opcda"
+	"github.com/jiind/opcda-access-adapter/internal/opcda"
 )
 
 // OPC 10000-8 Annex A.3.1.3 chooses a DA item's UA VariableType from the

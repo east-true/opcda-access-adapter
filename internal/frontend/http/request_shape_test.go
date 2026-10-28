@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/east-true/opcda-access-adapter/internal/opcda"
+	"github.com/jiind/opcda-access-adapter/internal/opcda"
 )
 
 // Eight survivors in this package, all in the shape a request may take rather

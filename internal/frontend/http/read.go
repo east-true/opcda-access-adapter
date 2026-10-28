@@ -10,8 +10,8 @@ import (
 	stdhttp "net/http"
 	"unicode/utf8"
 
-	"github.com/east-true/opcda-access-adapter/internal/frontend/dajson"
-	"github.com/east-true/opcda-access-adapter/internal/opcda"
+	"github.com/jiind/opcda-access-adapter/internal/frontend/dajson"
+	"github.com/jiind/opcda-access-adapter/internal/opcda"
 )
 
 type readHTTPRequest struct {

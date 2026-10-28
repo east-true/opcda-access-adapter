@@ -1,7 +1,7 @@
 # OPC DA Access Adapter
 
-[![CI](https://github.com/east-true/opcda-access-adapter/actions/workflows/ci.yml/badge.svg)](https://github.com/east-true/opcda-access-adapter/actions/workflows/ci.yml)
-[![Real DA validation](https://github.com/east-true/opcda-access-adapter/actions/workflows/real-da-validation.yml/badge.svg)](https://github.com/east-true/opcda-access-adapter/actions/workflows/real-da-validation.yml)
+[![CI](https://github.com/jiind/opcda-access-adapter/actions/workflows/ci.yml/badge.svg)](https://github.com/jiind/opcda-access-adapter/actions/workflows/ci.yml)
+[![Real DA validation](https://github.com/jiind/opcda-access-adapter/actions/workflows/real-da-validation.yml/badge.svg)](https://github.com/jiind/opcda-access-adapter/actions/workflows/real-da-validation.yml)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
 A Windows adapter that gives modern clients access to one local OPC DA server
@@ -54,7 +54,7 @@ steps are available below. [Open the animation](docs/assets/setup-demo.gif).
 ### 1. Build
 
 ```powershell
-git clone https://github.com/east-true/opcda-access-adapter.git
+git clone https://github.com/jiind/opcda-access-adapter.git
 Set-Location opcda-access-adapter
 go build -trimpath -o opcda-access-adapter.exe ./cmd/adapter
 ```

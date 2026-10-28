@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"io"
 
-	mcpfrontend "github.com/east-true/opcda-access-adapter/internal/frontend/mcp"
-	"github.com/east-true/opcda-access-adapter/internal/opcda"
+	mcpfrontend "github.com/jiind/opcda-access-adapter/internal/frontend/mcp"
+	"github.com/jiind/opcda-access-adapter/internal/opcda"
 )
 
 // RunMCP는 MCP가 명시적으로 선택된 경우에만 stdio와 DA Runtime을 실행한다.

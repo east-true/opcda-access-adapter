@@ -10,7 +10,7 @@ import (
 
 	"google.golang.org/grpc/status"
 
-	"github.com/east-true/opcda-access-adapter/internal/opcda"
+	"github.com/jiind/opcda-access-adapter/internal/opcda"
 )
 
 // The gRPC reference used to describe this mapping as a "typical" status per

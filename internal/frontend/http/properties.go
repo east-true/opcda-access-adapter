@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	stdhttp "net/http"
 
-	"github.com/east-true/opcda-access-adapter/internal/opcda"
+	"github.com/jiind/opcda-access-adapter/internal/opcda"
 )
 
 // OPC DA item properties, the same two operations the DA runtime offers and

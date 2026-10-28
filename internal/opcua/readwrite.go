@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/east-true/opcda-access-adapter/internal/opcda"
+	"github.com/jiind/opcda-access-adapter/internal/opcda"
 )
 
 // Read and Write follow OPC 10000-4 Tables 47, 53, 167 and 180.

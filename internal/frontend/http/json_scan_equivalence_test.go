@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/east-true/opcda-access-adapter/internal/opcda"
+	"github.com/jiind/opcda-access-adapter/internal/opcda"
 )
 
 // The pre-scan is a security boundary: it is what stops a body from nesting

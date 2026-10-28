@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/east-true/opcda-access-adapter/internal/app"
-	"github.com/east-true/opcda-access-adapter/internal/opcda"
+	"github.com/jiind/opcda-access-adapter/internal/app"
+	"github.com/jiind/opcda-access-adapter/internal/opcda"
 )
 
 // The review an operator confirms is the last thing shown before a

@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/east-true/opcda-access-adapter/internal/opcda"
+	"github.com/jiind/opcda-access-adapter/internal/opcda"
 )
 
 func testBrowseService(t *testing.T, limits BrowseLimits) (*BrowseService, *AddressSpace) {

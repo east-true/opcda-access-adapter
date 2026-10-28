@@ -6,7 +6,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/east-true/opcda-access-adapter/internal/opcda"
+	"github.com/jiind/opcda-access-adapter/internal/opcda"
 )
 
 // OPC 10000-8 Table A.1, the OPC COM DA to OPC UA properties mapping.

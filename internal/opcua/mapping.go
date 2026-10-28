@@ -1,6 +1,6 @@
 package opcua
 
-import "github.com/east-true/opcda-access-adapter/internal/opcda"
+import "github.com/jiind/opcda-access-adapter/internal/opcda"
 
 // DataType is a symbolic OPC UA built-in DataType name. Numeric built-in
 // identifiers belong with the UA Binary encoder and are deliberately not bound

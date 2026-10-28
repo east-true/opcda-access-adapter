@@ -3,7 +3,7 @@ package opcua
 import (
 	"testing"
 
-	"github.com/east-true/opcda-access-adapter/internal/opcda"
+	"github.com/jiind/opcda-access-adapter/internal/opcda"
 )
 
 // A UA Write is strictly typed: the variant a client sends has to be the built-in
